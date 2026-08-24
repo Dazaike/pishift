@@ -1,8 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { rmSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
+import { existsSync, rmSync } from "node:fs";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-
 import {
   BrowserWindow,
   Notification,
@@ -189,6 +188,35 @@ function registerIpc(): void {
   ipcMain.on(CH.copyText, (_e, text: string) => clipboard.writeText(text));
 }
 
+async function ensureControlBridgeInstalled(): Promise<void> {
+  try {
+    const extDir = join(app.getPath("home"), ".omp", "agent", "extensions");
+    const targetFile = join(extDir, "control-bridge.ts");
+    const candidates = [
+      join(app.getAppPath(), "extensions", "control-bridge.ts"),
+      join(__dirname, "../../extensions/control-bridge.ts"),
+      join(process.resourcesPath, "extensions", "control-bridge.ts"),
+      join(process.resourcesPath, "app.asar.unpacked", "extensions", "control-bridge.ts"),
+    ];
+    let sourcePath: string | null = null;
+    for (const c of candidates) {
+      try {
+        if (existsSync(c)) {
+          sourcePath = c;
+          break;
+        }
+      } catch {}
+    }
+    if (sourcePath) {
+      await mkdir(extDir, { recursive: true });
+      const content = await readFile(sourcePath, "utf-8");
+      await writeFile(targetFile, content, "utf-8");
+    }
+  } catch (err) {
+    console.error("Failed to ensure control-bridge extension is installed:", err);
+  }
+}
+
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
@@ -198,7 +226,8 @@ if (!app.requestSingleInstanceLock()) {
     win.focus();
   });
 
-  void app.whenReady().then(() => {
+  void app.whenReady().then(async () => {
+    await ensureControlBridgeInstalled();
     nativeTheme.themeSource = "dark";
     store = new StateStore(app.getPath("userData"), app.getPath("home"));
     ptys = new PtyManager(send, () => store.ompPath);
