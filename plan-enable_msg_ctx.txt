@@ -1,0 +1,108 @@
+{
+        if (s.mode === "plan" || s.mode === "plan_paused") {
+          this.sessionManager.appendModeChange("none");
+        }
+        return;
+      }
+      if (s.mode === "plan") {
+        const l = s.modeData?.planFilePath;
+        await this.#_t({ planFilePath: l, preserveRestoredModel: true });
+      } else if (s.mode === "plan_paused") {
+        this.planModePaused = true;
+        this.#B = true;
+        this.#gt();
+      }
+    }
+    async#_t(e) {
+      if (this.planModeEnabled) {
+        return;
+      }
+      if (this.goalModeEnabled || this.goalModePaused) {
+        this.showWarning("Exit goal mode first.");
+        return;
+      }
+      if (this.vibeModeEnabled) {
+        this.showWarning("Exit vibe mode first.");
+        return;
+      }
+      this.planModePaused = false;
+      const t = e?.planFilePath ?? await this.#ct();
+      const s = this.session.getEnabledToolNames();
+      const n = [];
+      if (this.session.hasBuiltInTool("write")) {
+        n.push("write");
+      }
+      const o = [...new Set([...s, ...n])];
+      this.#A = s;
+      this.planModePlanFilePath = t;
+      this.planModeEnabled = true;
+      this.lastAssistantUsage = undefined;
+      const r = this.session.getPlanModeState();
+      this.session.setPlanModeState({
+        enabled: true,
+        planFilePath: t,
+        workflow: e?.workflow ?? "parallel",
+        reentry: this.#B
+      });
+      try {
+        await this.session.setActiveToolsByName(o);
+      } catch (i) {
+        this.session.setPlanModeState(r);
+        this.planModeEnabled = false;
+        throw i;
+      }
+      this.session.setPlanProposalHandler?.((i) => this.session.preparePlanForReview(i));
+      if (this.session.isStreaming) {
+        await this.session.sendPlanModeContext({ deliverAs: "steer" });
+      }
+      this.#B = true;
+      if (!e?.preserveRestoredModel) {
+        await this.#Nt();
+      }
+      this.#gt();
+      this.sessionManager.appendModeChange("plan", { planFilePath: t });
+      this.showStatus(`Plan mode enabled. Plan file: ${t}`);
+    }
+    async#Lt(e) {
+      if (So(this.session.model, e.model)) {
+        this.session.setThinkingLevel(e.thinkingLevel);
+      } else if (this.session.isStreaming) {
+        this.#_ = { model: e.model, thinkingLevel: e.thinkingLevel };
+        this.#W = false;
+      } else {
+        await this.session.setModelTemporary(e.model, e.thinkingLevel);
+      }
+    }
+    async#jt(e, t) {
+      const s = this.#q;
+      if (s === undefined || e === "failed")
+        return;
+      this.#q = undefined;
+      if (t) {
+        await this.#rs(t);
+      } else {
+        await this.#Lt(s);
+      }
+    }
+    async#Pt(e) {
+      if (!this.planModeEnabled) {
+        return;
+      }
+      const t = this.session.getPlanModeState();
+      const s = this.session.getEnabledToolNames();
+      const n = this.session.getMountedXdevToolNames();
+      const o = this.session.model ? { model: this.session.model, thinkingLevel: this.session.configuredThinkingLevel() } : undefined;
+      this.session.setPlanModeState(undefined);
+      try {
+        if (this.#A !== undefined) {
+          await this.session.setActiveToolsByName(this.#A);
+        }
+        if (this.#q && !e?.deferModelRestore) {
+          await this.#Lt(this.#q);
+        }
+        if (this.#q)
+          this.#Et();
+      } catch (i) {
+        this.session.setPlanModeState(t);
+        if (o && (!So(this.session.model, o.model) || this.session.configuredThinkingLevel() !== o.thinkingLevel)) {
+          try
