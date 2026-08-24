@@ -6,6 +6,7 @@ directories:
   buildResources: build
 files:
   - out/**
+  - extensions/**
   - package.json
 asarUnpack:
   - "**/node_modules/node-pty/**"
