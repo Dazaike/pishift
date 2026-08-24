@@ -1,0 +1,25 @@
+appId: dev.ohmypi.pishift
+productName: PiShift
+npmRebuild: false
+directories:
+  output: release
+  buildResources: build
+files:
+  - out/**
+  - extensions/**
+  - package.json
+asarUnpack:
+  - "**/node_modules/node-pty/**"
+win:
+  icon: build/icon.png
+  target:
+    - target: nsis
+      arch:
+        - x64
+    - target: zip
+      arch:
+        - x64
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
