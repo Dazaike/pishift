@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; script-src 'self'"
+    />
+    <title>PiShift</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header id="chrome">
+      <div id="tabs" role="tablist"></div>
+      <button id="new-tab" title="New OMP session (Ctrl+Shift+T)">+</button>
+      <div id="header-usage" title="Session token & cost metrics (Click for provider breakdown)">
+        <img src="./assets/icons/usage.png" alt="" class="btn-icon" />
+        <span id="header-usage-text">Usage &middot; $0.00</span>
+      </div>
+      <div id="drag-region"></div>
+      <button id="btn-settings" title="Theme and Color Settings">
+        <img src="./assets/icons/settings.png" alt="" class="btn-icon" />
+        <span>Themes</span>
+      </button>
+    </header>
+    <main id="views"></main>
+    <footer id="dock">
+      <div id="dock-chips"></div>
+      <div id="dock-editor">
+        <pre id="dock-highlight" aria-hidden="true"></pre>
+        <textarea
+          id="dock-input"
+          spellcheck="false"
+          rows="1"
+          placeholder="Message omp — / for commands, ! for bash, Enter to send"
+        ></textarea>
+        <button id="dock-expand-btn" type="button" title="Expand composer (Ctrl+Shift+E)">&#x2922;</button>
+      </div>
+      <div id="dock-bar">
+        <div id="dock-cwd-wrap">
+          <button id="dock-change-dir" type="button" title="Change working directory (/move)">
+            <img src="./assets/icons/folder.png" alt="" class="btn-icon" />
+            <span>Move</span>
+          </button>
+          <span id="dock-cwd"></span>
+        </div>
+        <div class="dock-spacer"></div>
+        <div id="dock-controls">
+          <div id="dock-tools-wrap">
+            <button id="dock-tools-btn" type="button" class="ctrl-btn" title="Terminal & Tools Menu">
+              <span class="dock-tools-icon">&#9881;</span>
+              <span>Tools</span>
+            </button>
+          </div>
+          <button id="dock-usage-btn" type="button" class="ctrl-btn" title="View provider token usage & cost metrics">
+            <img src="./assets/icons/usage.png" alt="" class="btn-icon" />
+            <span>Usage</span>
+          </button>
+          <button id="dock-plan" type="button" class="ctrl-btn plan-off" title="Toggle Plan Mode (OFF <-> ON)">
+            <img src="./assets/icons/plan.png" alt="" class="btn-icon" />
+            <span class="dock-plan-label">Plan: OFF</span>
+          </button>
+          <div id="dock-model-wrap">
+            <button id="dock-model" type="button" class="ctrl-btn" title="Switch Model">
+              <span class="dock-model-icon">&#9889;</span>
+              <span class="dock-model-name">Model</span>
+            </button>
+          </div>
+          <button id="dock-thinking-btn" type="button" class="ctrl-btn" title="Click to cycle thinking level">
+            <img src="./assets/icons/thinking.png" alt="" class="btn-icon" />
+            <span class="dock-thinking-label">Thinking: Low</span>
+          </button>
+          <button id="dock-send" type="button">
+            <img src="./assets/icons/send.png" alt="" class="btn-icon send-icon" />
+            <span>Send</span>
+          </button>
+        </div>
+      </div>
+    </footer>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>
