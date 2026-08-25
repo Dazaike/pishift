@@ -78,7 +78,6 @@
     </div>
     <div id="key-target-row" aria-live="polite">
       <div id="key-target-indicator" hidden data-target="dock">
-        <span class="key-target-dot" aria-hidden="true"></span>
         <span class="key-target-label">Terminal</span>
       </div>
     </div>
@@ -146,6 +145,13 @@
         </div>
       </div>
     </footer>
+    <div id="dnd-overlay" hidden aria-hidden="true">
+      <div id="dnd-overlay-card">
+        <span id="dnd-overlay-icon" aria-hidden="true">&#x2913;</span>
+        <strong>Let go to drop here</strong>
+        <span id="dnd-overlay-sub">Attaches to the composer</span>
+      </div>
+    </div>
     <script type="module" src="./main.ts"></script>
   </body>
 </html>

@@ -27,6 +27,7 @@ import {
   type SpawnResult,
 } from "../shared/ipc";
 import { loadInstalledModels, loadRecentChats, loadRecentFolders, queryOmpUsage } from "./omp-data";
+import { loadSkillCommands } from "./omp-skills";
 import { PtyManager } from "./pty-manager";
 import { StateStore } from "./state-store";
 import { ControlBridgeListener } from "./control-bridge-listener";
@@ -195,6 +196,7 @@ function registerIpc(): void {
   ipcMain.handle(CH.removeRecentFolder, (_e, folder: string) => store.removeRecentFolder(folder));
   ipcMain.on(CH.clearRecentFolders, () => store.clearRecentFolders());
   ipcMain.handle(CH.getRecentChats, (_e, cwd?: string) => loadRecentChats(cwd));
+  ipcMain.handle(CH.getSkillCommands, (_e, cwd?: string) => loadSkillCommands(cwd));
   ipcMain.on(
     CH.setChromeColors,
     (_e, colors: { background: string; symbol: string }) => {
@@ -209,6 +211,16 @@ function registerIpc(): void {
       }
     },
   );
+
+  ipcMain.on(CH.setTaskbarBusy, (_e, busy: boolean) => {
+    if (!win || win.isDestroyed()) return;
+    try {
+      // progress > 1 -> indeterminate marquee; < 0 -> remove the bar entirely.
+      win.setProgressBar(busy ? 2 : -1, { mode: busy ? "indeterminate" : "none" });
+    } catch {
+      // Taskbar progress is unavailable on some hosts/desktop environments.
+    }
+  });
 
   ipcMain.handle(CH.openPath, (_e, targetPath: string) => shell.openPath(targetPath));
   ipcMain.handle(CH.showItemInFolder, (_e, targetPath: string) => shell.showItemInFolder(targetPath));

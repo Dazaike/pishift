@@ -11,6 +11,13 @@ import {
   THEME_PRESETS,
   type ThemePreset,
 } from "./theme";
+import {
+  clampScrollSteps,
+  DEFAULT_SCROLL_STEPS,
+  MAX_SCROLL_STEPS,
+  MIN_SCROLL_STEPS,
+} from "./term-view";
+import { clampVolume, DEFAULT_DONE_SOUND_VOLUME } from "./completion-sound";
 
 export class SettingsModal {
   readonly el: HTMLDivElement;
@@ -34,6 +41,13 @@ export class SettingsModal {
   private onToggleHideBottomButtonLabels: (hide: boolean) => void;
   private onToggleCollapseTopBarToMenu: (collapse: boolean) => void;
   private onPanelPositionChange: (pos: PanelPosition) => void;
+  private scrollSteps: number;
+  private doneSoundEnabled: boolean;
+  private doneSoundVolume: number;
+  private onToggleDoneSound: (enabled: boolean) => void;
+  private onDoneSoundVolumeChange: (volume: number) => void;
+  private onPreviewDoneSound: () => void;
+  private onScrollStepsChange: (steps: number) => void;
 
   constructor(opts: {
     initialThemeName: string | undefined;
@@ -55,6 +69,13 @@ export class SettingsModal {
     onToggleHideBottomButtonLabels: (hide: boolean) => void;
     onToggleCollapseTopBarToMenu: (collapse: boolean) => void;
     onPanelPositionChange: (pos: PanelPosition) => void;
+    initialScrollSteps: number | undefined;
+    onScrollStepsChange: (steps: number) => void;
+    doneSoundEnabled: boolean | undefined;
+    doneSoundVolume: number | undefined;
+    onToggleDoneSound: (enabled: boolean) => void;
+    onDoneSoundVolumeChange: (volume: number) => void;
+    onPreviewDoneSound: () => void;
   }) {
     this.currentPreset = getThemeByName(opts.initialThemeName ?? DEFAULT_THEME_NAME);
     this.showUsageInHeader = opts.showUsageInHeader ?? true;
@@ -75,6 +96,13 @@ export class SettingsModal {
     this.onToggleHideBottomButtonLabels = opts.onToggleHideBottomButtonLabels;
     this.onToggleCollapseTopBarToMenu = opts.onToggleCollapseTopBarToMenu;
     this.onPanelPositionChange = opts.onPanelPositionChange;
+    this.scrollSteps = clampScrollSteps(opts.initialScrollSteps ?? DEFAULT_SCROLL_STEPS);
+    this.onScrollStepsChange = opts.onScrollStepsChange;
+    this.doneSoundEnabled = opts.doneSoundEnabled ?? true;
+    this.doneSoundVolume = clampVolume(opts.doneSoundVolume ?? DEFAULT_DONE_SOUND_VOLUME);
+    this.onToggleDoneSound = opts.onToggleDoneSound;
+    this.onDoneSoundVolumeChange = opts.onDoneSoundVolumeChange;
+    this.onPreviewDoneSound = opts.onPreviewDoneSound;
 
     this.el = document.createElement("div");
     this.el.id = "settings-backdrop";
@@ -118,6 +146,9 @@ export class SettingsModal {
     hideBottomButtonLabels?: boolean;
     collapseTopBarToMenu?: boolean;
     panelPosition?: PanelPosition;
+    scrollSteps?: number;
+    doneSoundEnabled?: boolean;
+    doneSoundVolume?: number;
   }): void {
     if (state.themeName) {
       this.currentPreset = getThemeByName(state.themeName);
@@ -145,6 +176,15 @@ export class SettingsModal {
     }
     if (state.panelPosition) {
       this.panelPosition = state.panelPosition;
+    }
+    if (typeof state.scrollSteps === "number") {
+      this.scrollSteps = clampScrollSteps(state.scrollSteps);
+    }
+    if (typeof state.doneSoundEnabled === "boolean") {
+      this.doneSoundEnabled = state.doneSoundEnabled;
+    }
+    if (typeof state.doneSoundVolume === "number") {
+      this.doneSoundVolume = clampVolume(state.doneSoundVolume);
     }
   }
 
@@ -444,7 +484,91 @@ export class SettingsModal {
     });
     posRow.append(posLabel, posSelect);
 
-    optionsList.append(usageLabel, topLabelsLabel, bottomLabelsLabel, burgerMenuLabel, posRow);
+    // Option 6: Wheel scroll steps
+    const scrollRow = document.createElement("div");
+    scrollRow.className = "settings-slider-row";
+    const scrollLabel = document.createElement("label");
+    scrollLabel.className = "settings-pos-label";
+    scrollLabel.textContent = "Scroll Wheel Steps";
+    const scrollValue = document.createElement("span");
+    scrollValue.className = "settings-slider-value";
+    const rowWord = (n: number): string => (n === 1 ? "row" : "rows");
+    scrollValue.textContent = `${this.scrollSteps} ${rowWord(this.scrollSteps)}`;
+    const scrollInput = document.createElement("input");
+    scrollInput.type = "range";
+    scrollInput.className = "settings-slider";
+    scrollInput.min = String(MIN_SCROLL_STEPS);
+    scrollInput.max = String(MAX_SCROLL_STEPS);
+    scrollInput.step = "1";
+    scrollInput.value = String(this.scrollSteps);
+    scrollInput.addEventListener("input", () => {
+      this.scrollSteps = clampScrollSteps(Number(scrollInput.value));
+      scrollValue.textContent = `${this.scrollSteps} ${rowWord(this.scrollSteps)}`;
+      this.onScrollStepsChange(this.scrollSteps);
+    });
+    const scrollHead = document.createElement("div");
+    scrollHead.className = "settings-slider-head";
+    scrollHead.append(scrollLabel, scrollValue);
+    scrollRow.append(scrollHead, scrollInput);
+
+    // Option 7: Completion chime + its volume
+    const doneSoundLabel = document.createElement("label");
+    doneSoundLabel.className = "settings-check-label";
+    const doneSoundCheck = document.createElement("input");
+    doneSoundCheck.type = "checkbox";
+    doneSoundCheck.checked = this.doneSoundEnabled;
+    doneSoundCheck.addEventListener("change", () => {
+      this.doneSoundEnabled = doneSoundCheck.checked;
+      volumeRow.hidden = !this.doneSoundEnabled;
+      this.onToggleDoneSound(this.doneSoundEnabled);
+    });
+    const doneSoundText = document.createElement("span");
+    doneSoundText.textContent = "Play a Sound When the Agent Finishes Working";
+    doneSoundLabel.append(doneSoundCheck, doneSoundText);
+
+    const volumeRow = document.createElement("div");
+    volumeRow.className = "settings-slider-row";
+    volumeRow.hidden = !this.doneSoundEnabled;
+    const volumeLabel = document.createElement("label");
+    volumeLabel.className = "settings-pos-label";
+    volumeLabel.textContent = "Completion Sound Volume";
+    const volumeValue = document.createElement("span");
+    volumeValue.className = "settings-slider-value";
+    volumeValue.textContent = `${Math.round(this.doneSoundVolume * 100)}%`;
+    const volumeInput = document.createElement("input");
+    volumeInput.type = "range";
+    volumeInput.className = "settings-slider";
+    volumeInput.min = "0";
+    volumeInput.max = "100";
+    volumeInput.step = "5";
+    volumeInput.value = String(Math.round(this.doneSoundVolume * 100));
+    volumeInput.addEventListener("input", () => {
+      this.doneSoundVolume = clampVolume(Number(volumeInput.value) / 100);
+      volumeValue.textContent = `${Math.round(this.doneSoundVolume * 100)}%`;
+      this.onDoneSoundVolumeChange(this.doneSoundVolume);
+    });
+    // Preview on release only — every intermediate drag value would machine-gun.
+    volumeInput.addEventListener("change", () => this.onPreviewDoneSound());
+    const previewBtn = document.createElement("button");
+    previewBtn.type = "button";
+    previewBtn.className = "settings-sound-preview";
+    previewBtn.textContent = "Test";
+    previewBtn.addEventListener("click", () => this.onPreviewDoneSound());
+    const volumeHead = document.createElement("div");
+    volumeHead.className = "settings-slider-head";
+    volumeHead.append(volumeLabel, volumeValue, previewBtn);
+    volumeRow.append(volumeHead, volumeInput);
+
+    optionsList.append(
+      usageLabel,
+      topLabelsLabel,
+      bottomLabelsLabel,
+      burgerMenuLabel,
+      posRow,
+      scrollRow,
+      doneSoundLabel,
+      volumeRow,
+    );
     interfaceSection.append(interfaceHeader, optionsList);
 
     body.append(themeSection, fontSection, activitySection, interfaceSection);

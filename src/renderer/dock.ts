@@ -17,6 +17,13 @@ export type DockPayload = {
 };
 export type Attachment = { path: string; isImage: boolean };
 
+/**
+ * A chunk of terminal output the user highlighted and referenced. Snippets are
+ * not files: they are inlined into the outgoing message as a fenced block, so
+ * omp sees the exact text without a temp file round-trip.
+ */
+export type Snippet = { id: string; text: string; label: string };
+
 /** Fallback when model metadata is unknown — no xhigh (many models lack it). */
 export const DEFAULT_THINKING_LEVELS = [
   "auto",
@@ -139,6 +146,7 @@ export function clampThinkingToLevels(level: string, levels: readonly string[]):
 export type DockState = {
   text: string;
   chips: Attachment[];
+  snippets: Snippet[];
   history: string[];
   // Plan state deliberately absent: it lives on the tab's PlanReconciler so
   // there is exactly one source of truth.
@@ -209,6 +217,8 @@ export class Dock {
   private isBusy = false;
   private isExpanded = false;
   private chips: Attachment[] = [];
+  private snippets: Snippet[] = [];
+  private snippetSeq = 0;
   private history: string[] = [];
   private historyIndex = -1;
   private draft = "";
@@ -218,10 +228,11 @@ export class Dock {
   private thinkingLevel = "low";
   private thinkingLevels: string[] = [...DEFAULT_THINKING_LEVELS];
   private readonly previews = new Map<string, ImagePreview>();
+  private skillCwd = "";
   constructor(private readonly hooks: DockHooks) {
     this.slashMenu = new SlashMenu((cmd) => {
       const text = this.input.value;
-      const match = /^\/([a-zA-Z0-9_-]*)$/.exec(text);
+      const match = /^\/([a-zA-Z0-9_:.-]*)$/.exec(text);
       if (match) {
         this.input.value = `/${cmd.name}${cmd.args ? " " : ""}`;
       } else {
@@ -296,6 +307,20 @@ export class Dock {
   setCwd(cwd: string): void {
     this.cwdLabel.textContent = cwd;
     this.cwdLabel.title = cwd;
+    void this.refreshSkillCommands(cwd);
+  }
+
+  /** Skills are per-project (`<cwd>/.omp/skills`, `.claude/skills`, …), so the
+   *  palette's dynamic half is reloaded whenever the active tab's cwd changes. */
+  private async refreshSkillCommands(cwd: string): Promise<void> {
+    this.skillCwd = cwd;
+    try {
+      const commands = await window.omphif.getSkillCommands(cwd);
+      if (this.skillCwd !== cwd) return; // superseded by a newer tab switch
+      this.slashMenu.setExtraCommands(commands);
+    } catch {
+      // Discovery failed — palette keeps the built-in list only.
+    }
   }
 
   /** Orbiting glow around the composer while the active session is busy. */
@@ -393,10 +418,58 @@ export class Dock {
     this.focus();
   }
 
+  /**
+   * Reference highlighted terminal output. Identical text is not duplicated —
+   * re-referencing the same selection just flashes the existing chip.
+   */
+  addSnippet(rawText: string): void {
+    const text = rawText.replace(/\r\n/g, "\n").replace(/[ \t]+$/gm, "").trim();
+    if (!text) return;
+    const existing = this.snippets.find((snip) => snip.text === text);
+    if (existing) {
+      this.renderChips();
+      this.flashSnippet(existing.id);
+      this.focus();
+      return;
+    }
+    const lines = text.split("\n").length;
+    const head = text.split("\n", 1)[0] ?? "";
+    const label = lines > 1 ? `${lines} lines` : head.length > 28 ? `${head.slice(0, 28)}…` : head;
+    const id = `snip-${++this.snippetSeq}`;
+    this.snippets.push({ id, text, label });
+    this.renderChips();
+    this.flashSnippet(id);
+    this.focus();
+  }
+
+  /** Pulse a chip so a repeat reference is visibly acknowledged. */
+  private flashSnippet(id: string): void {
+    const el = this.tray.querySelector(`[data-snippet-id="${id}"]`);
+    if (!(el instanceof HTMLElement)) return;
+    el.classList.remove("flash");
+    void el.offsetWidth;
+    el.classList.add("flash");
+  }
+
+  /** Fenced transcript block appended after the user's prose. */
+  private snippetBlock(): string {
+    if (this.snippets.length === 0) return "";
+    return this.snippets
+      .map((snip) => `\n\nReferenced terminal output (${snip.label}):\n\`\`\`\n${snip.text}\n\`\`\``)
+      .join("");
+  }
+
+  /** Text-only drop (URL, selected text) — insert at the composer caret. */
+  insertDroppedText(text: string): void {
+    this.focus();
+    this.insertText(text);
+  }
+
   snapshot(): DockState {
     return {
       text: this.input.value,
       chips: [...this.chips],
+      snippets: [...this.snippets],
       history: [...this.history],
       modelName: this.modelName,
       thinkingLevel: this.thinkingLevel,
@@ -406,6 +479,7 @@ export class Dock {
   load(state: DockState | undefined): void {
     this.input.value = state?.text ?? "";
     this.chips = state ? [...state.chips] : [];
+    this.snippets = state?.snippets ? [...state.snippets] : [];
     this.history = state ? [...state.history] : [];
     this.modelName = state?.modelName ?? "";
     this.thinkingLevel = state?.thinkingLevel ?? "low";
@@ -446,12 +520,14 @@ export class Dock {
 
   private submit(): void {
     const text = this.input.value;
+    const block = this.snippetBlock();
     const payload: DockPayload = {
-      text,
+      text: text + block,
       imagePaths: this.chips.filter((chip) => chip.isImage).map((chip) => chip.path),
       otherPaths: this.chips.filter((chip) => !chip.isImage).map((chip) => chip.path),
     };
-    if (!text.trim() && payload.imagePaths.length + payload.otherPaths.length === 0) return;
+    const hasBody = Boolean(text.trim()) || block.length > 0;
+    if (!hasBody && payload.imagePaths.length + payload.otherPaths.length === 0) return;
 
     this.slashMenu.close();
     this.playComposerSink();
@@ -465,6 +541,7 @@ export class Dock {
     this.draft = "";
     this.input.value = "";
     this.chips = [];
+    this.snippets = [];
     this.renderChips();
     this.render();
   }
@@ -741,6 +818,34 @@ export class Dock {
 
   private renderChips(): void {
     this.tray.replaceChildren();
+    for (const snip of this.snippets) {
+      const el = document.createElement("span");
+      el.className = "chip chip-snippet";
+      el.dataset.snippetId = snip.id;
+      el.title = snip.text.length > 600 ? `${snip.text.slice(0, 600)}…` : snip.text;
+
+      const icon = document.createElement("span");
+      icon.className = "chip-snippet-icon";
+      icon.setAttribute("aria-hidden", "true");
+      icon.textContent = "\u201C";
+      el.appendChild(icon);
+
+      const name = document.createElement("span");
+      name.className = "chip-name";
+      name.textContent = snip.label;
+      el.appendChild(name);
+
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.textContent = "\u00d7";
+      remove.setAttribute("aria-label", `Remove reference ${snip.label}`);
+      remove.addEventListener("click", () => {
+        this.snippets = this.snippets.filter((s) => s !== snip);
+        this.renderChips();
+      });
+      el.appendChild(remove);
+      this.tray.appendChild(el);
+    }
     for (const chip of this.chips) {
       if (chip.isImage) {
         const card = document.createElement("div");

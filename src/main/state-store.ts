@@ -42,6 +42,17 @@ export class StateStore {
           typeof raw.fontSize === "number" && Number.isFinite(raw.fontSize)
             ? raw.fontSize
             : undefined,
+        // Whitelisted read: keys omitted here are silently dropped on restart.
+        scrollSteps:
+          typeof raw.scrollSteps === "number" && Number.isFinite(raw.scrollSteps)
+            ? raw.scrollSteps
+            : undefined,
+        doneSoundEnabled:
+          typeof raw.doneSoundEnabled === "boolean" ? raw.doneSoundEnabled : undefined,
+        doneSoundVolume:
+          typeof raw.doneSoundVolume === "number" && Number.isFinite(raw.doneSoundVolume)
+            ? raw.doneSoundVolume
+            : undefined,
         favoriteModels: Array.isArray(raw.favoriteModels) ? raw.favoriteModels : undefined,
         customModels: Array.isArray(raw.customModels) ? raw.customModels : undefined,
         showFavoritesOnly: raw.showFavoritesOnly,

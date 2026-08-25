@@ -4,7 +4,6 @@ import {
   DEFAULT_ACTIVITY_COLORS,
   GLOW_ACTIVITIES,
   GLOW_ACTIVITY_LABELS,
-  IMAGE_EXT,
   quotePath,
   type ControlBridgeActivity,
   type ControlBridgeState,
@@ -35,17 +34,22 @@ import {
   type DockPayload,
   type DockState,
 } from "./dock";
+import { clampVolume, CompletionSound, DEFAULT_DONE_SOUND_VOLUME } from "./completion-sound";
 import {
   PlanReconciler,
   isPlanExitConfirm,
   parsePlanStatus,
   type PlanTarget,
 } from "../shared/plan-mode";
-import { installWindowDnd } from "./dnd";
+import { installWindowDnd, INTERNAL_DRAG_TYPE } from "./dnd";
 import { DEFAULT_USER_MODELS, ModelModal } from "./model-modal";
 import { SettingsModal } from "./settings";
 import { TabContextMenu, TAB_COLOR_PRESETS } from "./tab-menu";
-import { TermView } from "./term-view";
+import {
+  clampScrollSteps,
+  DEFAULT_SCROLL_STEPS,
+  TermView,
+} from "./term-view";
 import { DockToolsMenu } from "./dock-tools-menu";
 import { UsageModal } from "./usage-modal";
 import { AskModal, type AskAnswer } from "./ask-modal";
@@ -110,6 +114,8 @@ type Tab = {
   sessionNumber: number;
   /** Read-only mirror of OMP's `/todo` tool state for this session. */
   todo: TodoPhase[] | null;
+  /** Set when the user cancelled or the session died — that idle is not "done". */
+  suppressDoneSound: boolean;
 };
 
 const tabs: Tab[] = [];
@@ -135,6 +141,15 @@ let hideTopButtonLabels = false;
 let hideBottomButtonLabels = false;
 let collapseTopBarToMenu = false;
 let panelPosition: PanelPosition = "top-right";
+let terminalScrollSteps = DEFAULT_SCROLL_STEPS;
+let doneSoundEnabled = true;
+let doneSoundVolume = DEFAULT_DONE_SOUND_VOLUME;
+const doneSound = new CompletionSound(doneSoundEnabled, doneSoundVolume);
+
+function applyScrollSteps(steps: number): void {
+  terminalScrollSteps = clampScrollSteps(steps);
+  for (const tab of tabs) tab.view?.setScrollSteps(terminalScrollSteps);
+}
 function applyButtonLabelVisibility(): void {
   document.body.classList.toggle("hide-top-button-labels", hideTopButtonLabels);
   document.body.classList.toggle("hide-bottom-button-labels", hideBottomButtonLabels);
@@ -430,6 +445,7 @@ function persist(): void {
     showUsageInHeader,
     fontFamily: customFontFamily,
     fontSize: terminalFontSize,
+    scrollSteps: terminalScrollSteps,
     activityColors,
     activityColorsOnTabs,
     todoPanelVisible,
@@ -438,23 +454,14 @@ function persist(): void {
     todoPanelMode,
     hideTopButtonLabels,
     hideBottomButtonLabels,
+    doneSoundEnabled,
+    doneSoundVolume,
   });
 }
 
 function sendToPty(tab: Tab, data: string): void {
   if (tab.sessionId) api.write(tab.sessionId, data);
   else tab.pending.push(data);
-}
-
-/**
- * Write filesystem paths as bracketed pastes. Images go in one paste of their own:
- * omp attaches a multi-path paste only when *every* token is an image path.
- */
-function pastePaths(tab: Tab, paths: readonly string[]): void {
-  const images = paths.filter((p) => IMAGE_EXT.test(p));
-  const others = paths.filter((p) => !IMAGE_EXT.test(p));
-  if (images.length) tab.view?.paste(images.map(quotePath).join(" "));
-  if (others.length) tab.view?.paste(others.map(quotePath).join(" "));
 }
 
 function renderTabs(): void {
@@ -517,7 +524,17 @@ function updateHeaderActivity(tab: Tab | null = active): void {
 
 function syncTabBusy(tab: Tab): void {
   const next = tab.progressBusy || tab.activity !== "idle";
+  const finished = tab.busy && !next;
   tab.busy = next;
+  if (next) {
+    // A fresh run always re-arms: a cancel that never reached a busy state
+    // must not swallow the next genuine completion.
+    tab.suppressDoneSound = false;
+  } else if (finished) {
+    // Cancels and exits also land on idle; only an unforced finish is "done".
+    if (tab.suppressDoneSound) tab.suppressDoneSound = false;
+    else doneSound.play();
+  }
   renderTabs();
   if (tab === active) {
     // Prefer bridge activity; fall back to generic working when only OSC busy is set.
@@ -525,6 +542,17 @@ function syncTabBusy(tab: Tab): void {
     dock.setAgentBusy(next, kind);
     updateHeaderActivity(tab);
   }
+  syncTaskbarBusy();
+}
+
+let taskbarBusy = false;
+
+/** Windows taskbar button animates while *any* tab is running, not just the active one. */
+function syncTaskbarBusy(): void {
+  const next = tabs.some(isTabBusy);
+  if (next === taskbarBusy) return;
+  taskbarBusy = next;
+  api.setTaskbarBusy(next);
 }
 
 /** OSC 9;4 progress — omp pulses state 3 while running, 0 when idle. */
@@ -646,6 +674,7 @@ function closeTab(tab: Tab): void {
     if (next) activate(next);
   }
   renderTabs();
+  syncTaskbarBusy();
   persist();
   if (tabs.length === 0) {
     void addTab();
@@ -801,14 +830,22 @@ function createView(tab: Tab): TermView {
       },
       onUserCancel: () => {
         // Esc / bare Ctrl+C — drop working chrome immediately; bridge will confirm.
+        tab.suppressDoneSound = true;
         setTabProgressBusy(tab, false);
         setTabActivity(tab, "idle");
+      },
+      onReferenceSelection: (text) => {
+        // Chips live on the active tab's dock state; a background tab's
+        // selection must not leak into whatever the user is composing.
+        if (tab !== active) return;
+        dock.addSnippet(text);
       },
     },
     currentPreset,
     terminalFontSize,
   );
   if (customFontFamily) view.setFontFamily(customFontFamily || FONT_FAMILY);
+  view.setScrollSteps(terminalScrollSteps);
   view.setFontSizeChangeHandler((size) => {
     terminalFontSize = size;
     // Keep sibling tabs in sync with the global zoom.
@@ -910,6 +947,7 @@ function makeTab(cwd: string, customTitle?: string, colorTag?: string): Tab {
     dismissedAskToolCallId: null,
     sessionNumber: ++sessionCounter,
     todo: null,
+    suppressDoneSound: false,
   };
   self = tab;
 
@@ -961,6 +999,7 @@ function makeTab(cwd: string, customTitle?: string, colorTag?: string): Tab {
     draggedTab = tab;
     button.classList.add("tab-dragging");
     ev.dataTransfer?.setData("text/plain", tab.cwd);
+    ev.dataTransfer?.setData(INTERNAL_DRAG_TYPE, "tab");
   });
 
   button.addEventListener("dragend", () => {
@@ -1175,6 +1214,7 @@ const dock = new Dock({
   submit: (payload) => void submitDock(payload),
   interrupt: () => {
     if (!active) return;
+    active.suppressDoneSound = true;
     sendToPty(active, "\x1b");
     setTabProgressBusy(active, false);
     setTabActivity(active, "idle");
@@ -1342,23 +1382,40 @@ function isTerminalKeyTarget(el: Element | null): boolean {
   return false;
 }
 
+/** Hide is deferred to the exit animation, matching the jump-to-latest pill. */
+function setKeyTargetVisible(visible: boolean): void {
+  if (!keyTargetIndicator) return;
+  if (visible) {
+    keyTargetIndicator.classList.remove("leaving");
+    keyTargetIndicator.hidden = false;
+    return;
+  }
+  if (keyTargetIndicator.hidden || keyTargetIndicator.classList.contains("leaving")) return;
+  keyTargetIndicator.classList.add("leaving");
+}
+
 function updateKeyTargetIndicator(): void {
   if (!keyTargetIndicator) return;
   const terminalOwnsKeys = isTerminalKeyTarget(document.activeElement);
-  keyTargetIndicator.hidden = !terminalOwnsKeys;
+  setKeyTargetVisible(terminalOwnsKeys);
   keyTargetIndicator.dataset.target = terminalOwnsKeys ? "terminal" : "dock";
   const label = keyTargetIndicator.querySelector(".key-target-label");
   if (label) label.textContent = "Terminal";
 }
+
+keyTargetIndicator?.addEventListener("animationend", (ev) => {
+  if (ev.animationName === "term-jump-out" && keyTargetIndicator.classList.contains("leaving")) {
+    keyTargetIndicator.classList.remove("leaving");
+    keyTargetIndicator.hidden = true;
+  }
+});
 
 document.addEventListener("focusin", () => updateKeyTargetIndicator());
 document.addEventListener("focusout", () => {
   // focusout fires before the next focusin; defer so activeElement is settled.
   queueMicrotask(() => updateKeyTargetIndicator());
 });
-window.addEventListener("blur", () => {
-  if (keyTargetIndicator) keyTargetIndicator.hidden = true;
-});
+window.addEventListener("blur", () => setKeyTargetVisible(false));
 window.addEventListener("focus", () => updateKeyTargetIndicator());
 updateKeyTargetIndicator();
 api.onData(({ id, data }) => {
@@ -1481,6 +1538,7 @@ api.onExit(({ id, exitCode }) => {
   tab.sessionId = null;
   tab.sessionKey = null;
   tab.ompPid = null;
+  tab.suppressDoneSound = true;
   setTabActivity(tab, "idle");
   tab.view?.dispose();
   tab.view = null;
@@ -1488,12 +1546,38 @@ api.onExit(({ id, exitCode }) => {
   renderTabs();
 });
 
-installWindowDnd((paths) => {
-  if (active?.view && !dock.isFocused && document.activeElement !== document.body) {
-    pastePaths(active, paths);
+const dndOverlay = document.getElementById("dnd-overlay") as HTMLDivElement | null;
+const dndOverlaySub = document.getElementById("dnd-overlay-sub") as HTMLSpanElement | null;
+
+/** Every external drag, regardless of what is focused, attaches to the dock. */
+function setDropOverlay(visible: boolean, count: number): void {
+  document.body.classList.toggle("dnd-hover", visible);
+  if (!dndOverlay) return;
+  if (visible) {
+    dndOverlay.classList.remove("leaving");
+    dndOverlay.hidden = false;
+    if (dndOverlaySub) {
+      dndOverlaySub.textContent =
+        count > 1 ? `${count} items → composer` : "Attaches to the composer";
+    }
     return;
   }
-  dock.addPaths(paths);
+  // Held until the exit animation ends — dropping or leaving both fade out.
+  if (dndOverlay.hidden || dndOverlay.classList.contains("leaving")) return;
+  dndOverlay.classList.add("leaving");
+}
+
+dndOverlay?.addEventListener("animationend", (ev) => {
+  if (ev.animationName === "dnd-fade-out" && dndOverlay.classList.contains("leaving")) {
+    dndOverlay.classList.remove("leaving");
+    dndOverlay.hidden = true;
+  }
+});
+
+installWindowDnd({
+  onPaths: (paths) => dock.addPaths(paths),
+  onText: (text) => dock.insertDroppedText(text),
+  onHover: setDropOverlay,
 });
 
 newTabButton.addEventListener("click", () => void addTab());
@@ -1644,6 +1728,25 @@ function openSettingsModal(): void {
         recentChatsModal?.setPanelPosition(pos);
         persist();
       },
+      initialScrollSteps: terminalScrollSteps,
+      onScrollStepsChange: (steps) => {
+        applyScrollSteps(steps);
+        persist();
+      },
+      doneSoundEnabled,
+      doneSoundVolume,
+      onToggleDoneSound: (enabled) => {
+        doneSoundEnabled = enabled;
+        doneSound.setEnabled(enabled);
+        if (enabled) doneSound.play(true);
+        persist();
+      },
+      onDoneSoundVolumeChange: (volume) => {
+        doneSoundVolume = clampVolume(volume);
+        doneSound.setVolume(doneSoundVolume);
+        persist();
+      },
+      onPreviewDoneSound: () => doneSound.play(true),
     });
     document.body.appendChild(settingsModal.el);
   }
@@ -1657,6 +1760,9 @@ function openSettingsModal(): void {
     hideBottomButtonLabels,
     collapseTopBarToMenu,
     panelPosition,
+    scrollSteps: terminalScrollSteps,
+    doneSoundEnabled,
+    doneSoundVolume,
   });
   settingsModal.open();
 }
@@ -1793,6 +1899,17 @@ async function boot(): Promise<void> {
   }
   if (typeof state.fontSize === "number" && Number.isFinite(state.fontSize)) {
     terminalFontSize = Math.min(32, Math.max(8, Math.round(state.fontSize)));
+  }
+  if (typeof state.scrollSteps === "number") {
+    terminalScrollSteps = clampScrollSteps(state.scrollSteps);
+  }
+  if (typeof state.doneSoundEnabled === "boolean") {
+    doneSoundEnabled = state.doneSoundEnabled;
+    doneSound.setEnabled(doneSoundEnabled);
+  }
+  if (typeof state.doneSoundVolume === "number") {
+    doneSoundVolume = clampVolume(state.doneSoundVolume);
+    doneSound.setVolume(doneSoundVolume);
   }
   if (state.activityColors) {
     activityColors = { ...DEFAULT_ACTIVITY_COLORS, ...state.activityColors };

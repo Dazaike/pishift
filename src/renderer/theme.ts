@@ -15,6 +15,9 @@ export function buildXtermTheme(preset: ThemePreset): ITheme {
     cursor: preset.termCursor,
     cursorAccent: preset.bg,
     selectionBackground: preset.termSelection,
+    scrollbarSliderBackground: `${preset.accent}59`,
+    scrollbarSliderHoverBackground: `${preset.accent}8c`,
+    scrollbarSliderActiveBackground: `${preset.accent}bf`,
     ...preset.ansi,
   };
 }
