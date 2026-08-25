@@ -1,26 +1,46 @@
+import appIcon from "./assets/icons/icon.png";
+import settingsIcon from "./assets/icons/settings.png";
 import {
+  DEFAULT_ACTIVITY_COLORS,
+  GLOW_ACTIVITIES,
+  GLOW_ACTIVITY_LABELS,
   IMAGE_EXT,
   quotePath,
+  type ControlBridgeActivity,
+  type ControlBridgeState,
   type CustomModelConfig,
+  type GlowActivity,
   type InstalledModel,
+  type PanelPosition,
+  type PendingAsk,
   type TabState,
+  type TodoPhase,
 } from "../shared/ipc";
+import { parseModelSlashCommand } from "../shared/model-command";
 import {
   DEFAULT_THEME_NAME,
+  FONT_FAMILY,
+  FONT_SIZE,
   getThemeByName,
   type ThemePreset,
 } from "./theme";
+import { TodoPanel, type TodoPanelMode } from "./todo-panel";
+import { ConfirmDialog } from "./confirm-dialog";
 import {
   Dock,
   buildThinkingLevelsForModel,
   clampThinkingToLevels,
   formatThinkingLevel,
-  normalizeThinkingToken,
   toThinkingCommandToken,
   type DockPayload,
   type DockState,
-  type PlanState,
 } from "./dock";
+import {
+  PlanReconciler,
+  isPlanExitConfirm,
+  parsePlanStatus,
+  type PlanTarget,
+} from "../shared/plan-mode";
 import { installWindowDnd } from "./dnd";
 import { DEFAULT_USER_MODELS, ModelModal } from "./model-modal";
 import { SettingsModal } from "./settings";
@@ -28,14 +48,30 @@ import { TabContextMenu, TAB_COLOR_PRESETS } from "./tab-menu";
 import { TermView } from "./term-view";
 import { DockToolsMenu } from "./dock-tools-menu";
 import { UsageModal } from "./usage-modal";
+import { AskModal, type AskAnswer } from "./ask-modal";
+import { RecentFoldersModal } from "./recent-folders-modal";
+import { RecentChatsModal } from "./recent-chats-modal";
+import { TopMenu } from "./top-menu";
 const api = window.omphif;
 
 const tabsEl = document.getElementById("tabs") as HTMLDivElement;
 const viewsEl = document.getElementById("views") as HTMLDivElement;
 const newTabButton = document.getElementById("new-tab") as HTMLButtonElement;
 const settingsBtn = document.getElementById("btn-settings") as HTMLButtonElement;
+const settingsImg = settingsBtn.querySelector<HTMLImageElement>("img.btn-icon");
+if (settingsImg) settingsImg.src = settingsIcon;
+const todoBtn = document.getElementById("btn-todo") as HTMLButtonElement;
+const recentFoldersBtn = document.getElementById("btn-recent-folders") as HTMLButtonElement;
+const recentChatsBtn = document.getElementById("btn-recent-chats") as HTMLButtonElement;
+const topMenuBtn = document.getElementById("btn-top-menu") as HTMLButtonElement | null;
+const relaunchBtn = document.getElementById("btn-relaunch") as HTMLButtonElement | null;
+const quitBtn = document.getElementById("btn-quit") as HTMLButtonElement | null;
 const headerUsage = document.getElementById("header-usage") as HTMLDivElement;
 const headerUsageText = document.getElementById("header-usage-text") as HTMLSpanElement;
+const headerActivity = document.getElementById("header-activity") as HTMLDivElement;
+const headerActivityDot = document.getElementById("header-activity-dot") as HTMLSpanElement;
+const headerActivityText = document.getElementById("header-activity-text") as HTMLSpanElement;
+const keyTargetIndicator = document.getElementById("key-target-indicator") as HTMLDivElement | null;
 
 type Tab = {
   cwd: string;
@@ -52,23 +88,32 @@ type Tab = {
   title: string;
   modelName: string;
   thinkingLevel: string;
-  planState: PlanState;
+  /** Sole owner of this tab's plan display state and toggle reconciliation. */
+  plan: PlanReconciler;
   /** Combined busy for the tab chrome (progress OSC and/or agent activity). */
   busy: boolean;
   /** ConEmu OSC 9;4 progress (indeterminate while agent runs). */
   progressBusy: boolean;
   /** control-bridge activity classification. */
-  activity: "idle" | "working" | "thinking";
+  activity: ControlBridgeActivity;
   /** Clears stuck progressBusy if omp never sends 9;4;0. */
   progressBusyTimer: number | null;
   button: HTMLButtonElement;
+  appIcon: HTMLImageElement;
   colorDot: HTMLSpanElement;
   label: HTMLSpanElement;
   notice: HTMLDivElement | null;
   dock: DockState | undefined;
+  pendingAsk: PendingAsk | null;
+  dismissedAskToolCallId: string | null;
+  /** Auto-incrementing fallback label ("Session N") when no folder/auto-title applies. */
+  sessionNumber: number;
+  /** Read-only mirror of OMP's `/todo` tool state for this session. */
+  todo: TodoPhase[] | null;
 };
 
 const tabs: Tab[] = [];
+let sessionCounter = 0;
 const bySession = new Map<string, Tab>();
 let active: Tab | null = null;
 let draggedTab: Tab | null = null;
@@ -78,12 +123,44 @@ let customModels: CustomModelConfig[] = [];
 let installedModels: InstalledModel[] = [];
 let showFavoritesOnly = false;
 let showUsageInHeader = true;
-
+let customFontFamily = "";
+/** Terminal zoom (xterm font px); restored across app restarts. */
+let terminalFontSize = FONT_SIZE;
+const KNOWN_ACTIVITIES: readonly ControlBridgeActivity[] = ["idle", ...GLOW_ACTIVITIES];
+let activityColors: Record<GlowActivity, string> = { ...DEFAULT_ACTIVITY_COLORS };
+let activityColorsOnTabs = false;
+let todoPanelVisible = false;
+let todoPanelMode: TodoPanelMode = "overlay";
+let hideTopButtonLabels = false;
+let hideBottomButtonLabels = false;
+let collapseTopBarToMenu = false;
+let panelPosition: PanelPosition = "top-right";
+function applyButtonLabelVisibility(): void {
+  document.body.classList.toggle("hide-top-button-labels", hideTopButtonLabels);
+  document.body.classList.toggle("hide-bottom-button-labels", hideBottomButtonLabels);
+  document.body.classList.toggle("top-bar-as-menu", collapseTopBarToMenu);
+}
 let settingsModal: SettingsModal | null = null;
 let modelModal: ModelModal | null = null;
 let usageModal: UsageModal | null = null;
+let askModal: AskModal | null = null;
 let dockToolsMenu: DockToolsMenu | null = null;
+let recentFoldersModal: RecentFoldersModal | null = null;
+let recentChatsModal: RecentChatsModal | null = null;
+let topMenu: TopMenu | null = null;
 const tabContextMenu = new TabContextMenu();
+const todoPanel = new TodoPanel(
+  (visible) => {
+    todoPanelVisible = visible;
+    persist();
+  },
+  (mode) => {
+    todoPanelMode = mode;
+    persist();
+  },
+);
+const confirmDialog = new ConfirmDialog();
+document.body.appendChild(confirmDialog.root);
 
 function applyTheme(preset: ThemePreset): void {
   currentPreset = preset;
@@ -100,6 +177,42 @@ function applyTheme(preset: ThemePreset): void {
   for (const tab of tabs) {
     tab.view?.setTheme(preset);
   }
+}
+
+function applyFont(family: string): void {
+  customFontFamily = family;
+  const stack = family || FONT_FAMILY;
+  const root = document.documentElement;
+  root.style.setProperty("--mono", stack);
+  root.style.setProperty("--ui", stack);
+  for (const tab of tabs) tab.view?.setFontFamily(stack);
+}
+
+/** Apply the resolved (default-merged) activity glow colors as CSS custom properties. */
+function applyActivityColors(): void {
+  const root = document.documentElement;
+  for (const key of GLOW_ACTIVITIES) {
+    root.style.setProperty(`--glow-${key}`, activityColors[key]);
+  }
+  root.classList.toggle("activity-colors-on-tabs", activityColorsOnTabs);
+}
+
+function setActivityColor(key: GlowActivity, color: string): void {
+  activityColors = { ...activityColors, [key]: color };
+  applyActivityColors();
+  persist();
+}
+
+function resetActivityColors(): void {
+  activityColors = { ...DEFAULT_ACTIVITY_COLORS };
+  applyActivityColors();
+  persist();
+}
+
+function setActivityColorsOnTabs(enabled: boolean): void {
+  activityColorsOnTabs = enabled;
+  applyActivityColors();
+  persist();
 }
 
 
@@ -121,20 +234,28 @@ function findInstalledModel(modelSpec: string): InstalledModel | undefined {
   });
 }
 
-function applyThinkingLevelsForModel(modelSpec: string, currentLevel?: string): void {
+function applyThinkingLevelsForModel(
+  modelSpec: string,
+  currentLevel?: string,
+  targetTab: Tab | null = active,
+): void {
   const installed = findInstalledModel(modelSpec);
   const levels = buildThinkingLevelsForModel(installed);
-  const cur = currentLevel ?? active?.thinkingLevel ?? "low";
+  const cur = currentLevel ?? targetTab?.thinkingLevel ?? "low";
   const clamped = clampThinkingToLevels(cur, levels);
-  dock.setThinkingLevels(levels, clamped);
-  if (active) active.thinkingLevel = formatThinkingLevel(clamped);
+  // Only paint the dock when this is the active session.
+  if (targetTab === active) {
+    dock.setThinkingLevels(levels, clamped);
+  }
+  if (targetTab) targetTab.thinkingLevel = formatThinkingLevel(clamped);
 }
 
-function applyModelToDock(modelSpec: string): void {
+function applyModelToDock(modelSpec: string, thinkingLevel?: string, targetTab: Tab | null = active): void {
   const allModels = customModels.length > 0 ? customModels : DEFAULT_USER_MODELS;
+  const paint = targetTab === active;
   if (!modelSpec) {
-    dock.setModel("Model");
-    applyThinkingLevelsForModel("");
+    if (paint) dock.setModel("Model");
+    applyThinkingLevelsForModel("", thinkingLevel, targetTab);
     return;
   }
   const specLow = modelSpec.toLowerCase();
@@ -145,72 +266,96 @@ function applyModelToDock(modelSpec: string): void {
       specLow.includes(m.id.toLowerCase()) ||
       specLow.includes(m.name.toLowerCase()),
   );
-  if (found) {
-    dock.setModel(found.name, found.iconUrl, found.provider);
-  } else {
-    const parts = modelSpec.split("/");
-    const provider = parts.length > 1 ? parts[0] : undefined;
-    const name = parts.length > 1 ? parts[1] : modelSpec;
-    dock.setModel(name!, undefined, provider);
+  if (paint) {
+    if (found) {
+      dock.setModel(found.name, found.iconUrl, found.provider);
+    } else {
+      const parts = modelSpec.split("/");
+      const provider = parts.length > 1 ? parts[0] : undefined;
+      const name = parts.length > 1 ? parts[1] : modelSpec;
+      dock.setModel(name!, undefined, provider);
+    }
   }
-  applyThinkingLevelsForModel(modelSpec, active?.thinkingLevel);
+  if (targetTab) targetTab.modelName = modelSpec;
+  applyThinkingLevelsForModel(modelSpec, thinkingLevel ?? targetTab?.thinkingLevel, targetTab);
 }
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
+const ASK_ARROW_UP = "\x1b[A";
+const ASK_ARROW_DOWN = "\x1b[B";
+const ASK_KEY_ENTER = "\r";
+const ASK_KEY_SPACE = " ";
+
+function sanitizeAskText(text: string): string {
+  return text.replace(/[\r\n]+/g, " ").replace(/\x1b/g, "");
+}
+
 /**
- * Drive omp's real plan mode via native `/plan` and Alt+Shift+P.
- * control-bridge `/m plan` only flips an extension-local flag — it does NOT
- * call InteractiveSession.handlePlanModeCommand / #_t.
- *
- * Native cycle: OFF → ON → PAUSED → OFF
+ * Translate structured ask-modal answers into the raw keystroke sequence the
+ * native omp `ask` TUI expects: ArrowDown to the target row, then Enter
+ * (single-select) or Space per checked row + Enter (multi-select), with a
+ * detour into the trailing "Other" row when `customText` is set.
  */
-async function applyPlanMode(next: "on" | "off"): Promise<void> {
-  const tab = active;
-  const view = tab?.view;
-  if (!tab || !view) return;
-
-  const cur: "on" | "off" | "paused" =
-    tab.planState === "on" ? "on" : tab.planState === "paused" ? "paused" : "off";
-
-  if (next === "on" && cur === "on") return;
-  if (next === "off" && cur === "off") return;
-
-  const fire = (): void => {
-    // Native slash command → InteractiveSession.handlePlanModeCommand → #_t/#Pt
-    view.runSlash("/plan");
-  };
-
-  try {
-    if (next === "on") {
-      if (cur === "paused") {
-        // PAUSED → OFF, then OFF → ON
-        fire();
-        await sleep(120);
+function buildAskSequence(answers: AskAnswer[]): string {
+  let seq = "";
+  for (const a of answers) {
+    const otherIndex = a.optionsCount;
+    if (a.multi) {
+      let cursor = 0;
+      for (const idx of [...a.selectedIndices].sort((x, y) => x - y)) {
+        seq += ASK_ARROW_DOWN.repeat(idx - cursor);
+        cursor = idx;
+        seq += ASK_KEY_SPACE;
       }
-      fire();
-      tab.planState = "on";
-      dock.setPlanState("on");
-      return;
-    }
-
-    // next === "off"
-    if (cur === "on") {
-      // ON → PAUSED, then PAUSED → OFF
-      fire();
-      await sleep(120);
-      fire();
+      if (a.customText !== undefined) {
+        seq += ASK_ARROW_DOWN.repeat(otherIndex - cursor);
+        seq += ASK_KEY_ENTER + sanitizeAskText(a.customText) + ASK_KEY_ENTER;
+        seq += ASK_ARROW_UP + ASK_KEY_ENTER;
+      } else {
+        seq += ASK_KEY_ENTER;
+      }
+    } else if (a.customText !== undefined) {
+      seq += ASK_ARROW_DOWN.repeat(otherIndex);
+      seq += ASK_KEY_ENTER + sanitizeAskText(a.customText) + ASK_KEY_ENTER;
     } else {
-      // PAUSED → OFF
-      fire();
+      seq += ASK_ARROW_DOWN.repeat(a.selectedIndices[0] ?? 0);
+      seq += ASK_KEY_ENTER;
     }
-    tab.planState = "off";
-    dock.setPlanState("off");
-  } catch {
-    // Stream / bridge will reconcile.
   }
+  if (answers.length > 1) seq += ASK_KEY_ENTER;
+  return seq;
+}
+
+function sendAskAnswers(tab: Tab, answers: AskAnswer[]): void {
+  if (!tab.view) return;
+  tab.view.writeRaw(buildAskSequence(answers));
+}
+
+function syncAskModal(tab: Tab): void {
+  const pending = tab.pendingAsk;
+  if (!pending || pending.toolCallId === tab.dismissedAskToolCallId) {
+    askModal?.close();
+    return;
+  }
+  if (!askModal) {
+    askModal = new AskModal();
+    const dockEl = document.getElementById("dock");
+    if (dockEl) dockEl.insertBefore(askModal.el, dockEl.firstChild);
+    else document.body.appendChild(askModal.el);
+  }
+  askModal.open(
+    pending,
+    (answers) => {
+      sendAskAnswers(tab, answers);
+      tab.pendingAsk = null;
+    },
+    () => {
+      tab.dismissedAskToolCallId = pending.toolCallId;
+    },
+  );
 }
 function updateHeaderUsageVisibility(): void {
   if (headerUsage) {
@@ -222,6 +367,7 @@ async function refreshHeaderUsage(): Promise<void> {
   try {
     const stats = await api.getProviderUsage();
     if (stats && stats.length > 0) {
+      usageModal?.updateReports(stats);
       const top = stats.find((s) => s.limits && s.limits.length > 0);
       if (top && top.limits[0]) {
         const l = top.limits[0];
@@ -238,7 +384,7 @@ const basename = (p: string): string => p.split(/[\\/]/).filter(Boolean).pop() |
 
 /** Titles that are noise / not useful as a tab label. */
 const GENERIC_TITLES = new Set(
-  ["", "omp", "oh my pi", "oh-my-pi", "omphif", "terminal", "bash", "pwsh", "powershell", "cmd"].map(
+  ["", "omp", "oh my pi", "oh-my-pi", "omphif", "terminal", "bash", "pwsh", "powershell", "cmd", "temp", "tmp"].map(
     (s) => s.toLowerCase(),
   ),
 );
@@ -249,18 +395,23 @@ function cleanAutoTitle(raw: string | undefined): string | undefined {
   // Common terminal title shapes: "name — path", "name - path", "user@host: path"
   t = t.split(/\s+[—–|•]\s+/)[0]?.trim() || t;
   t = t.split(/\s+-\s+/)[0]?.trim() || t;
+  // omp's own breadcrumb ("π > tmp") is redundant noise, not a real session title.
+  if (/^\W+\s*>\s*\S/.test(t)) return undefined;
   if (t.length > 48) t = `${t.slice(0, 45).trimEnd()}…`;
   if (GENERIC_TITLES.has(t.toLowerCase())) return undefined;
   return t || undefined;
 }
 
-/** Prefer manual rename, then omp auto-title, then folder name. */
+/** Prefer manual rename, then omp auto-title, then folder name. Default temp dir displays app name. */
 function tabDisplayName(tab: Tab): string {
   if (tab.customTitle?.trim()) return tab.customTitle.trim();
   const auto = cleanAutoTitle(tab.title);
   if (auto) return auto;
   const folder = basename(tab.cwd);
-  return folder || "OMP";
+  if (!folder || folder.toLowerCase() === "temp" || folder.toLowerCase() === "tmp") {
+    return "PiShift";
+  }
+  return folder || `Session ${tab.sessionNumber}`;
 }
 
 function persist(): void {
@@ -277,6 +428,16 @@ function persist(): void {
     customModels,
     showFavoritesOnly,
     showUsageInHeader,
+    fontFamily: customFontFamily,
+    fontSize: terminalFontSize,
+    activityColors,
+    activityColorsOnTabs,
+    todoPanelVisible,
+    panelPosition,
+    collapseTopBarToMenu,
+    todoPanelMode,
+    hideTopButtonLabels,
+    hideBottomButtonLabels,
   });
 }
 
@@ -301,8 +462,16 @@ function renderTabs(): void {
     const name = tabDisplayName(tab);
     tab.button.classList.toggle("active", tab === active);
     tab.button.classList.toggle("busy", tab.busy);
-    tab.button.classList.toggle("thinking", tab.activity === "thinking");
+    if (activityColorsOnTabs && tab.activity !== "idle") {
+      tab.button.style.setProperty("--tab-glow", activityColors[tab.activity]);
+    } else {
+      tab.button.style.removeProperty("--tab-glow");
+    }
     tab.label.textContent = name;
+
+    const isPiShift = name === "PiShift";
+    tab.appIcon.style.display = isPiShift ? "inline-block" : "none";
+    tab.button.classList.toggle("has-app-icon", isPiShift);
 
     // Color tag badge
     const colorPreset = tab.colorTag
@@ -323,12 +492,38 @@ function renderTabs(): void {
     tab.button.title = `${name} (${tab.cwd}) — ${source} · right-click for options · double-click to rename`;
   }
 }
+function updateHeaderActivity(tab: Tab | null = active): void {
+  if (!headerActivity || !headerActivityDot || !headerActivityText) return;
+  if (!tab || (!tab.busy && tab.activity === "idle")) {
+    headerActivity.hidden = true;
+    headerActivity.dataset.activity = "idle";
+    headerActivityText.textContent = "Idle";
+    headerActivityDot.style.background = "var(--fg-dim)";
+    return;
+  }
+
+  const kind: GlowActivity =
+    tab.activity !== "idle" ? (tab.activity as GlowActivity) : "working";
+  const color = activityColors[kind] ?? DEFAULT_ACTIVITY_COLORS[kind];
+  const label = GLOW_ACTIVITY_LABELS[kind] ?? "Working";
+
+  headerActivity.hidden = false;
+  headerActivity.dataset.activity = kind;
+  headerActivity.title = `Agent activity: ${label}`;
+  headerActivityText.textContent = label;
+  headerActivityDot.style.background = color;
+  headerActivity.style.setProperty("--header-activity-color", color);
+}
+
 function syncTabBusy(tab: Tab): void {
   const next = tab.progressBusy || tab.activity !== "idle";
-  if (tab.busy !== next) tab.busy = next;
+  tab.busy = next;
   renderTabs();
   if (tab === active) {
-    dock.setAgentBusy(next, next ? tab.activity : "idle");
+    // Prefer bridge activity; fall back to generic working when only OSC busy is set.
+    const kind = next ? (tab.activity !== "idle" ? tab.activity : "working") : "idle";
+    dock.setAgentBusy(next, kind);
+    updateHeaderActivity(tab);
   }
 }
 
@@ -340,18 +535,22 @@ function setTabProgressBusy(tab: Tab, busy: boolean): void {
   }
   tab.progressBusy = busy;
   if (busy) {
-    // omp's own interval is 30s; if we never see 9;4;0, drop the spinner.
+    // omp's progress OSC can be sparse (~30s). Keep the OSC latch alive longer
+    // than that pulse so chrome doesn't drop between progress frames.
     tab.progressBusyTimer = window.setTimeout(() => {
       tab.progressBusyTimer = null;
       if (!tab.progressBusy) return;
       tab.progressBusy = false;
+      // OSC-only busy: do not invent a sticky bridge activity.
       syncTabBusy(tab);
-    }, 8000);
+    }, 45_000);
   }
+  // Never assign tab.activity from OSC — that stuck the header on "Working"
+  // after the progress pulse cleared while bridge idle never rematched.
   syncTabBusy(tab);
 }
 
-function setTabActivity(tab: Tab, activity: "idle" | "working" | "thinking"): void {
+function setTabActivity(tab: Tab, activity: ControlBridgeActivity): void {
   tab.activity = activity;
   // Authoritative idle from the bridge also clears a stuck OSC progress flag.
   if (activity === "idle") {
@@ -367,7 +566,6 @@ function setTabActivity(tab: Tab, activity: "idle" | "working" | "thinking"): vo
 function updateUsageDisplay(tab: Tab): void {
   if (!tab || tab !== active) return;
   void refreshHeaderUsage();
-  if (usageModal?.isOpen) void usageModal.open();
 }
 
 function playViewSwitch(tab: Tab, dir: "left" | "right"): void {
@@ -396,6 +594,7 @@ function activate(tab: Tab): void {
     fromIndex >= 0 && toIndex >= 0 && toIndex < fromIndex ? "left" : "right";
 
   if (active) {
+    // Snapshot composer contents only; model/thinking/plan live on the Tab.
     active.dock = dock.snapshot();
     active.view?.deactivate();
     active.notice?.classList.remove("active");
@@ -406,10 +605,22 @@ function activate(tab: Tab): void {
   playViewSwitch(tab, dir);
   dock.load(tab.dock);
   dock.setCwd(tab.cwd);
-  if (tab.modelName) applyModelToDock(tab.modelName);
-  if (tab.thinkingLevel) dock.setThinkingLevel(tab.thinkingLevel);
-  dock.setPlanState(tab.planState);
+  // Always paint from the tab's own session state (never leftover dock chrome).
+  applyModelToDock(tab.modelName, tab.thinkingLevel, tab);
+  dock.setThinkingLevel(tab.thinkingLevel || "low");
+  dock.setPlanMode(tab.plan.mode, tab.plan.pending);
   dock.setAgentBusy(tab.busy, tab.busy ? tab.activity : "idle");
+  updateHeaderActivity(tab);
+  syncAskModal(tab);
+  todoPanel.setPhases(tab.todo);
+  modelModal?.setCurrentModel(tab.modelName || "");
+  if (recentFoldersModal?.isOpen) {
+    recentFoldersModal.setCurrentCwd(tab.cwd);
+  }
+  if (recentChatsModal?.isOpen) {
+    recentChatsModal.setCurrentCwd(tab.cwd);
+    recentChatsModal.setActiveSessionId(tab.sessionKey ?? tab.sessionId);
+  }
   dock.focus();
   document.title = `${tabDisplayName(tab)} · PiShift`;
   renderTabs();
@@ -436,23 +647,48 @@ function closeTab(tab: Tab): void {
   }
   renderTabs();
   persist();
-  if (tabs.length === 0) window.close();
+  if (tabs.length === 0) {
+    void addTab();
+  }
 }
 
-function closeOtherTabs(target: Tab): void {
-  const toClose = tabs.filter((t) => t !== target);
-  for (const t of toClose) {
-    closeTab(t);
+function isTabBusy(tab: Tab): boolean {
+  return tab.busy || tab.activity !== "idle";
+}
+
+async function requestCloseTab(tab: Tab): Promise<void> {
+  if (isTabBusy(tab)) {
+    const ok = await confirmDialog.confirm(
+      "Close active session?",
+      `"${tabDisplayName(tab)}" is actively running. Closing it will stop the agent mid-task.`,
+    );
+    if (!ok) return;
   }
+  closeTab(tab);
+}
+
+async function requestCloseTabs(toClose: readonly Tab[]): Promise<void> {
+  const busyCount = toClose.filter(isTabBusy).length;
+  if (busyCount > 0) {
+    const ok = await confirmDialog.confirm(
+      "Close active sessions?",
+      `${busyCount} of ${toClose.length} session${toClose.length === 1 ? "" : "s"} ${busyCount === 1 ? "is" : "are"} actively running. Closing them will stop the agent mid-task.`,
+    );
+    if (!ok) return;
+  }
+  for (const t of toClose) closeTab(t);
+  if (tabs.length === 0) {
+    void addTab();
+  }
+}
+function closeOtherTabs(target: Tab): void {
+  void requestCloseTabs(tabs.filter((t) => t !== target));
 }
 
 function closeTabsToRight(target: Tab): void {
   const index = tabs.indexOf(target);
   if (index < 0) return;
-  const toClose = tabs.slice(index + 1);
-  for (const t of toClose) {
-    closeTab(t);
-  }
+  void requestCloseTabs(tabs.slice(index + 1));
 }
 
 async function restartSession(tab: Tab): Promise<void> {
@@ -482,7 +718,7 @@ function startRenameTab(tab: Tab): void {
     const val = input.value.trim();
     // Empty / same as auto title clears the manual override so auto titles resume.
     const auto = cleanAutoTitle(tab.title);
-    if (!val || val === "OMP" || (auto && val === auto)) {
+    if (!val || val === "PiShift" || val === "OMP" || (auto && val === auto)) {
       tab.customTitle = undefined;
     } else {
       tab.customTitle = val;
@@ -543,7 +779,7 @@ function cycleTab(step: -1 | 1): void {
 }
 
 function createView(tab: Tab): TermView {
-  return new TermView(
+  const view = new TermView(
     {
       write: (data) => sendToPty(tab, data),
       resize: (cols, rows) => {
@@ -570,7 +806,18 @@ function createView(tab: Tab): TermView {
       },
     },
     currentPreset,
+    terminalFontSize,
   );
+  if (customFontFamily) view.setFontFamily(customFontFamily || FONT_FAMILY);
+  view.setFontSizeChangeHandler((size) => {
+    terminalFontSize = size;
+    // Keep sibling tabs in sync with the global zoom.
+    for (const t of tabs) {
+      if (t.view && t.view !== view) t.view.applyPersistedFontSize(size);
+    }
+    persist();
+  });
+  return view;
 }
 
 async function startSession(tab: Tab): Promise<void> {
@@ -607,19 +854,34 @@ function makeTab(cwd: string, customTitle?: string, colorTag?: string): Tab {
   button.role = "tab";
   button.draggable = true;
 
+  const appIconEl = document.createElement("img");
+  appIconEl.className = "tab-app-icon";
+  appIconEl.src = appIcon;
+  appIconEl.alt = "";
+
   const busy = document.createElement("span");
   busy.className = "tab-busy";
   const colorDot = document.createElement("span");
   colorDot.className = "tab-color-dot";
   const label = document.createElement("span");
   label.className = "tab-label";
-  label.textContent = customTitle || "OMP";
+  label.textContent = customTitle || "PiShift";
   const close = document.createElement("button");
   close.type = "button";
   close.className = "tab-close";
   close.textContent = "\u00d7";
   close.setAttribute("aria-label", "Close tab");
-  button.append(busy, colorDot, label, close);
+  button.append(appIconEl, busy, colorDot, label, close);
+
+  // Declared before the tab literal so the reconciler hooks can close over it.
+  let self: Tab;
+  const plan = new PlanReconciler({
+    sendToggle: () => self.view?.runSlash("/plan"),
+    answerConfirm: () => self.view?.writeRaw("\r"),
+    onDisplay: (mode, pending) => {
+      if (self === active) dock.setPlanMode(mode, pending);
+    },
+  });
 
   const tab: Tab = {
     cwd,
@@ -633,22 +895,28 @@ function makeTab(cwd: string, customTitle?: string, colorTag?: string): Tab {
     title: "",
     modelName: "",
     thinkingLevel: "low",
-    planState: "off",
+    plan,
     busy: false,
     progressBusy: false,
     activity: "idle",
     progressBusyTimer: null,
     button,
+    appIcon: appIconEl,
     colorDot,
     label,
     notice: null,
     dock: undefined,
+    pendingAsk: null,
+    dismissedAskToolCallId: null,
+    sessionNumber: ++sessionCounter,
+    todo: null,
   };
+  self = tab;
 
   button.addEventListener("mousedown", (ev) => {
     if (ev.button === 1) {
       ev.preventDefault();
-      closeTab(tab);
+      void requestCloseTab(tab);
       return;
     }
     if (ev.target === close) return;
@@ -677,7 +945,7 @@ function makeTab(cwd: string, customTitle?: string, colorTag?: string): Tab {
         persist();
       },
       onClose: (_t) => {
-        closeTab(tab);
+        void requestCloseTab(tab);
       },
       onCloseOthers: (_t) => {
         closeOtherTabs(tab);
@@ -751,7 +1019,7 @@ function makeTab(cwd: string, customTitle?: string, colorTag?: string): Tab {
 
   close.addEventListener("click", (ev) => {
     ev.stopPropagation();
-    closeTab(tab);
+    void requestCloseTab(tab);
   });
 
   tabsEl.appendChild(button);
@@ -771,12 +1039,13 @@ async function openTab(
   await startSession(tab);
   renderTabs();
   persist();
+  void api.addRecentFolder(cwd);
   return tab;
 }
 
-/** Spawn a new session in the current tab's directory without opening a folder picker. Default name is OMP. */
+/** Spawn a new session in the default temp directory (C:\temp on Windows). */
 async function addTab(): Promise<void> {
-  const targetCwd = active ? active.cwd : await api.homeDir();
+  const targetCwd = await api.defaultCwd();
   await openTab(targetCwd, true);
 }
 
@@ -813,6 +1082,22 @@ async function submitDock(payload: DockPayload): Promise<void> {
 
   if (!hasFiles && !hasText) return;
 
+  if (!hasFiles && hasText) {
+    const parsed = parseModelSlashCommand(text);
+    if (parsed.targetPlan !== undefined) {
+      const target: PlanTarget =
+        parsed.targetPlan === "toggle"
+          ? (tab.plan.mode === "off" ? "on" : "off")
+          : parsed.targetPlan;
+      tab.plan.request(target, Date.now());
+      if (!parsed.remainingSlashCommand) {
+        return;
+      }
+      view.runSlash(parsed.remainingSlashCommand);
+      return;
+    }
+  }
+
   if (hasImages) {
     view.paste(payload.imagePaths.map(quotePath).join(" "));
   }
@@ -842,11 +1127,22 @@ async function submitDock(payload: DockPayload): Promise<void> {
 
 /** Parse omp's terminal stream to extract active model, thinking level, plan state and usage metrics. */
 function parseStatusStream(tab: Tab, rawData: string): void {
-  const plain = rawData.replace(/\x1b\[[0-9;?<>]*[a-zA-Z]/g, "");
+  const plain = rawData.replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, "");
 
-  // Match Thinking level: e.g. "· ⃠ off", "· ◔ min", "· ◔ low", "· ◔ medium", "Thinking level set to min", etc.
+  // Plan lines must be handled before the statusline gate: "Plan mode paused."
+  // and "Plan mode disabled." can arrive without a statusline.
+  const planStatus = parsePlanStatus(plain);
+  if (planStatus) tab.plan.observe(planStatus, Date.now());
+  if (isPlanExitConfirm(plain)) tab.plan.confirmPrompt(Date.now());
+
+  // Only parse explicit statusline or command feedback lines to prevent chat text matching
+  const isStatusLine =
+    /^\s*π\s+/m.test(plain) || /(?:^|\n)[^\n]*?Thinking level set to/i.test(plain);
+  if (!isStatusLine) return;
+
+  // Match Thinking level: e.g. "· ⃠ off", "· ◔ min", "· ◔ low", "Thinking level set to min"
   const thinkMatch =
-    /(?:[·•│][^·•│📁\n]*?\b(off|min|minimal|low|med|medium|high|xhigh|max|auto)\b|\bthinking(?:\s+level)?(?:\s+set\s+to|:)?\s+(off|min|minimal|low|med|medium|high|xhigh|max|auto))/i.exec(
+    /(?:[·•│][^·•│📁\n]*?\b(off|min|minimal|low|med|medium|high|xhigh|max|auto)\b|\bthinking(?:\s+level)?\s+set\s+to\s+(off|min|minimal|low|med|medium|high|xhigh|max|auto))/i.exec(
       plain,
     );
   const raw = (thinkMatch?.[1] || thinkMatch?.[2])?.toLowerCase();
@@ -865,39 +1161,31 @@ function parseStatusStream(tab: Tab, rawData: string): void {
     if (model && model.length > 1 && !model.includes("TheBox") && !model.includes("omp")) {
       tab.modelName = model;
       if (tab === active) {
-        applyModelToDock(model);
+        applyModelToDock(model, tab.thinkingLevel, tab);
         modelModal?.setCurrentModel(model);
       }
     }
   }
 
-  // Match Plan mode status in output (on / paused / off)
-  if (/Plan:\s*on\b/i.test(plain) || /plan mode (?:enabled|active)/i.test(plain)) {
-    tab.planState = "on";
-    if (tab === active) dock.setPlanState("on");
-  } else if (/Plan:\s*paused?\b/i.test(plain) || /plan mode paused/i.test(plain)) {
-    tab.planState = "paused";
-    if (tab === active) dock.setPlanState("paused");
-  } else if (/Plan:\s*off\b/i.test(plain) || /plan mode (?:disabled|inactive)/i.test(plain)) {
-    tab.planState = "off";
-    if (tab === active) dock.setPlanState("off");
-  }
+  // Plan state is observed above and authoritatively published by
+  // control-bridge; no speculative statusline glyph matching here.
 }
 
 const dock = new Dock({
   submit: (payload) => void submitDock(payload),
   interrupt: () => {
     if (!active) return;
-    sendToPty(active, "\x03");
+    sendToPty(active, "\x1b");
     setTabProgressBusy(active, false);
     setTabActivity(active, "idle");
   },
   focusTerminal: () => active?.view?.focus(),
   forwardChord: (ev) => active?.view?.forwardChord(ev) ?? false,
   type: (data) => active?.view?.type(data),
-  togglePlan: (next) => {
-    void applyPlanMode(next);
-  },
+  writeTerminalRaw: (data) => active?.view?.writeRaw(data),
+  wantsTerminalArrows: () => active?.view?.wantsArrowKeys() ?? false,
+  writeTerminalArrow: (ev) => active?.view?.writeArrow(ev) ?? false,
+  setPlanTarget: (target: PlanTarget) => active?.plan.request(target, Date.now()),
   openModel: () => {
     if (!modelModal) {
       modelModal = new ModelModal(
@@ -909,7 +1197,7 @@ const dock = new Dock({
               provider && provider !== "generic" ? `${provider}/${modelId}` : modelId;
             active.view.runSlash(`/m ${cmdArg}`);
             active.modelName = modelId;
-            applyModelToDock(modelId);
+            applyModelToDock(modelId, active.thinkingLevel, active);
             persist();
           }
         },
@@ -934,9 +1222,16 @@ const dock = new Dock({
       usageModal = new UsageModal(() => {
         if (active?.view) active.view.runSlash("/stats");
       });
-      document.body.appendChild(usageModal.el);
+      const usageWrap = document.getElementById("dock-usage-wrap");
+      if (usageWrap) {
+        usageWrap.appendChild(usageModal.el);
+      } else {
+        const dockControls = document.getElementById("dock-controls");
+        if (dockControls) dockControls.appendChild(usageModal.el);
+        else document.body.appendChild(usageModal.el);
+      }
     }
-    void usageModal.open();
+    usageModal.toggle();
   },
   openTools: () => {
     if (!dockToolsMenu) {
@@ -987,18 +1282,13 @@ const dock = new Dock({
     }
     dockToolsMenu.toggle();
   },
-  cycleThinking: () => {
+  selectThinking: (level: string) => {
     if (!active?.view) return;
     const levels = dock.getThinkingLevels();
-    if (levels.length <= 1) return;
-    const cur = normalizeThinkingToken(active.thinkingLevel || "low");
-    let idx = levels.indexOf(cur);
-    if (idx < 0) idx = levels.indexOf(clampThinkingToLevels(cur, levels));
-    if (idx < 0) idx = 0;
-    const next = levels[(idx + 1) % levels.length] ?? levels[0]!;
-    active.thinkingLevel = formatThinkingLevel(next);
-    dock.setThinkingLevel(next);
-    active.view.runSlash(`/m ${toThinkingCommandToken(next)}`);
+    const clamped = clampThinkingToLevels(level, levels);
+    active.thinkingLevel = formatThinkingLevel(clamped);
+    dock.setThinkingLevel(clamped);
+    active.view.runSlash(`/m ${toThinkingCommandToken(clamped)}`);
   },
   changeCwd: async () => {
     if (!active) return;
@@ -1011,9 +1301,66 @@ const dock = new Dock({
     if (active.view) {
       active.view.runSlash(`/move ${quotePath(chosen)}`);
     }
+    void api.addRecentFolder(chosen);
+    if (recentFoldersModal?.isOpen) {
+      recentFoldersModal.setCurrentCwd(chosen);
+    }
+    if (recentChatsModal?.isOpen) {
+      recentChatsModal.setCurrentCwd(chosen);
+    }
   },
 });
 
+// Floating dock: keep terminal bottom padding in sync with dock height, but
+// only when clearance changes enough that xterm may gain/lose a row.
+{
+  const dockEl = document.getElementById("dock");
+  if (dockEl) {
+    let lastClearance = -1;
+    const syncDockClearance = (): void => {
+      const rect = dockEl.getBoundingClientRect();
+      const clearance = Math.ceil(rect.height + 26);
+      if (Math.abs(clearance - lastClearance) < 2) return;
+      lastClearance = clearance;
+      document.documentElement.style.setProperty("--dock-clearance", `${clearance}px`);
+      for (const tab of tabs) {
+        tab.view?.refit();
+      }
+    };
+    syncDockClearance();
+    new ResizeObserver(() => syncDockClearance()).observe(dockEl);
+  }
+}
+
+function isTerminalKeyTarget(el: Element | null): boolean {
+  if (!el || !active?.view) return false;
+  if (active.view.el.contains(el)) return true;
+  // xterm keeps a hidden textarea; it may not always sit inside .view in edge cases.
+  if (el instanceof HTMLTextAreaElement && el.classList.contains("xterm-helper-textarea")) {
+    return true;
+  }
+  return false;
+}
+
+function updateKeyTargetIndicator(): void {
+  if (!keyTargetIndicator) return;
+  const terminalOwnsKeys = isTerminalKeyTarget(document.activeElement);
+  keyTargetIndicator.hidden = !terminalOwnsKeys;
+  keyTargetIndicator.dataset.target = terminalOwnsKeys ? "terminal" : "dock";
+  const label = keyTargetIndicator.querySelector(".key-target-label");
+  if (label) label.textContent = "Terminal";
+}
+
+document.addEventListener("focusin", () => updateKeyTargetIndicator());
+document.addEventListener("focusout", () => {
+  // focusout fires before the next focusin; defer so activeElement is settled.
+  queueMicrotask(() => updateKeyTargetIndicator());
+});
+window.addEventListener("blur", () => {
+  if (keyTargetIndicator) keyTargetIndicator.hidden = true;
+});
+window.addEventListener("focus", () => updateKeyTargetIndicator());
+updateKeyTargetIndicator();
 api.onData(({ id, data }) => {
   const tab = bySession.get(id);
   if (!tab?.view) return;
@@ -1021,7 +1368,7 @@ api.onData(({ id, data }) => {
   parseStatusStream(tab, data);
 });
 
-/** Route control-bridge telemetry to the owning tab — never guess by active/cwd alone. */
+/** Route control-bridge telemetry to the owning tab only. */
 function findTabForBridgeStatus(status: {
   sessionId?: string | null;
   pid?: number;
@@ -1031,7 +1378,8 @@ function findTabForBridgeStatus(status: {
   if (rawKey) {
     const key = rawKey.includes(":") ? rawKey.slice(rawKey.lastIndexOf(":") + 1) : rawKey;
     const byKey = tabs.find((t) => t.sessionKey === key || t.sessionId === key);
-    if (byKey) return byKey;
+    // Session id is authoritative. Unknown ids must not fall through to another tab.
+    return byKey;
   }
 
   if (typeof status.pid === "number" && status.pid > 0) {
@@ -1039,7 +1387,7 @@ function findTabForBridgeStatus(status: {
     if (byPid) return byPid;
   }
 
-  // Single-tab apps can use cwd; multi-tab same-cwd must not steal busy state.
+  // No session id (older hosts): only unambiguous ownership.
   if (tabs.length === 1) return tabs[0];
 
   const statusCwd = (status.cwd || "").replace(/[\\/]+$/, "").toLowerCase();
@@ -1053,37 +1401,78 @@ function findTabForBridgeStatus(status: {
   return undefined;
 }
 
-api.onControlBridgeStatus((status) => {
+function applyControlBridgeStatus(status: ControlBridgeState | null | undefined): void {
   if (!status) return;
 
   const tab = findTabForBridgeStatus(status);
   if (!tab) return;
 
-  const activity =
-    status.activity === "thinking" || status.activity === "working"
-      ? status.activity
-      : "idle";
+  // Bind/refresh the stable session key when the bridge reports one.
+  const rawKey = status.sessionId?.trim();
+  if (rawKey) {
+    const key = rawKey.includes(":") ? rawKey.slice(rawKey.lastIndexOf(":") + 1) : rawKey;
+    tab.sessionKey = key;
+  }
+  if (typeof status.pid === "number" && status.pid > 0) {
+    tab.ompPid = status.pid;
+  }
+
+  const activity: ControlBridgeActivity = KNOWN_ACTIVITIES.includes(status.activity)
+    ? status.activity
+    : "idle";
   setTabActivity(tab, activity);
 
-  // Dock chrome only follows the active tab.
+  // Always keep per-tab session state up to date, even when backgrounded.
+  if (status.model) {
+    tab.modelName = status.model;
+  }
+  if (status.thinkingLevel) {
+    tab.thinkingLevel = formatThinkingLevel(status.thinkingLevel);
+  }
+  if (status.planMode) {
+    tab.plan.observe(status.planMode, Date.now());
+  }
+  if ("ask" in status) {
+    tab.pendingAsk = status.ask ?? null;
+    if (tab.pendingAsk && tab.pendingAsk.toolCallId !== tab.dismissedAskToolCallId) {
+      tab.dismissedAskToolCallId = null;
+    }
+  }
+  if ("todo" in status) {
+    tab.todo = status.todo ?? null;
+  }
+
+  // Dock / shared chrome only follows the active session.
   if (tab !== active) return;
 
   if (status.model) {
-    tab.modelName = status.model;
-    applyModelToDock(status.model);
+    applyModelToDock(status.model, tab.thinkingLevel, tab);
     modelModal?.setCurrentModel(status.model);
-  }
-
-  if (status.thinkingLevel) {
-    tab.thinkingLevel = formatThinkingLevel(status.thinkingLevel);
+  } else if (status.thinkingLevel) {
     dock.setThinkingLevel(tab.thinkingLevel);
   }
+  syncAskModal(tab);
+  todoPanel.setPhases(tab.todo);
+}
 
-  if (typeof status.plan === "boolean") {
-    tab.planState = status.plan ? "on" : "off";
-    dock.setPlanState(tab.planState);
-  }
+api.onControlBridgeStatus((status) => {
+  applyControlBridgeStatus(status);
 });
+
+// Periodically verify terminal model, thinking level, and plan state stay 100% synced with UI
+setInterval(async () => {
+  try {
+    const status = await api.readControlBridgeStatus();
+    if (status) applyControlBridgeStatus(status);
+  } catch {}
+}, 2000);
+
+// Retry a plan cycle step that a modal swallowed; bounded by PLAN_MAX_ATTEMPTS.
+setInterval(() => {
+  const now = Date.now();
+  for (const tab of tabs) tab.plan.tick(now);
+}, 500);
+
 
 api.onExit(({ id, exitCode }) => {
   const tab = bySession.get(id);
@@ -1118,37 +1507,220 @@ function dockHooksUsage(): void {
     usageModal = new UsageModal(() => {
       if (active?.view) active.view.runSlash("/stats");
     });
-    document.body.appendChild(usageModal.el);
+    const usageWrap = document.getElementById("dock-usage-wrap");
+    if (usageWrap) {
+      usageWrap.appendChild(usageModal.el);
+    } else {
+      const dockControls = document.getElementById("dock-controls");
+      if (dockControls) dockControls.appendChild(usageModal.el);
+      else document.body.appendChild(usageModal.el);
+    }
   }
-  void usageModal.open();
+  usageModal.toggle();
+}
+function openRecentFoldersModal(): void {
+  if (!recentFoldersModal) {
+    recentFoldersModal = new RecentFoldersModal(recentFoldersBtn, {
+      onSelectFolder: (folder, newTab) => {
+        if (newTab) {
+          void openTab(folder, true);
+        } else if (active) {
+          if (active.cwd.replace(/[\\/]+$/, "").toLowerCase() === folder.replace(/[\\/]+$/, "").toLowerCase()) {
+            active.view?.focus();
+            return;
+          }
+          active.cwd = folder;
+          dock.setCwd(folder);
+          renderTabs();
+          persist();
+          void api.addRecentFolder(folder);
+          if (active.view) {
+            active.view.runSlash(`/move ${quotePath(folder)}`);
+            active.view.focus();
+          }
+          if (recentChatsModal?.isOpen) {
+            recentChatsModal.setCurrentCwd(folder);
+          }
+        }
+      },
+      onOpenNewFolder: async () => {
+        const chosen = await api.pickDirectory();
+        if (!chosen) return;
+        void api.addRecentFolder(chosen);
+        if (active) {
+          active.cwd = chosen;
+          dock.setCwd(chosen);
+          renderTabs();
+          persist();
+          if (active.view) {
+            active.view.runSlash(`/move ${quotePath(chosen)}`);
+            active.view.focus();
+          }
+        }
+      },
+      onShowInExplorer: (folder) => {
+        void api.openPath(folder);
+      },
+    });
+  }
+  recentFoldersModal.setPanelPosition(panelPosition);
+  recentFoldersModal.toggle(active?.cwd);
 }
 
-settingsBtn.addEventListener("click", () => {
+function openRecentChatsModal(): void {
+  if (!recentChatsModal) {
+    recentChatsModal = new RecentChatsModal(recentChatsBtn, {
+      onResumeChat: (sessionId) => {
+        if (active?.view) {
+          active.view.runSlash(`/resume ${sessionId}`);
+          active.view.focus();
+        }
+      },
+      onTriggerResumePicker: () => {
+        if (active?.view) {
+          active.view.runSlash(`/resume`);
+          active.view.focus();
+        }
+      },
+      onNewChat: () => {
+        if (active?.view) {
+          active.view.runSlash(`/new`);
+          active.view.focus();
+        }
+      },
+    });
+  }
+  const currentCwd = active?.cwd ?? "";
+  recentChatsModal.setPanelPosition(panelPosition);
+  recentChatsModal.toggle(currentCwd, active?.sessionKey ?? active?.sessionId);
+}
+
+function openSettingsModal(): void {
   if (!settingsModal) {
-    settingsModal = new SettingsModal(
-      currentPreset.name,
+    settingsModal = new SettingsModal({
+      initialThemeName: currentPreset.name,
       showUsageInHeader,
-      (preset) => {
+      initialFontFamily: customFontFamily,
+      initialActivityColors: activityColors,
+      initialActivityColorsOnTabs: activityColorsOnTabs,
+      hideTopButtonLabels,
+      hideBottomButtonLabels,
+      collapseTopBarToMenu,
+      panelPosition,
+      onSelect: (preset) => {
         applyTheme(preset);
         persist();
       },
-      (show) => {
+      onToggleUsageHeader: (show) => {
         showUsageInHeader = show;
         updateHeaderUsageVisibility();
         persist();
       },
-    );
+      onFontChange: (family) => {
+        applyFont(family);
+        persist();
+      },
+      onActivityColorChange: (key, color) => setActivityColor(key, color),
+      onResetActivityColors: () => resetActivityColors(),
+      onToggleActivityColorsOnTabs: (enabled) => setActivityColorsOnTabs(enabled),
+      onToggleHideTopButtonLabels: (hide) => {
+        hideTopButtonLabels = hide;
+        applyButtonLabelVisibility();
+        persist();
+      },
+      onToggleHideBottomButtonLabels: (hide) => {
+        hideBottomButtonLabels = hide;
+        applyButtonLabelVisibility();
+        persist();
+      },
+      onToggleCollapseTopBarToMenu: (collapse) => {
+        collapseTopBarToMenu = collapse;
+        applyButtonLabelVisibility();
+        persist();
+      },
+      onPanelPositionChange: (pos) => {
+        panelPosition = pos;
+        recentFoldersModal?.setPanelPosition(pos);
+        recentChatsModal?.setPanelPosition(pos);
+        persist();
+      },
+    });
     document.body.appendChild(settingsModal.el);
   }
+  settingsModal.syncState({
+    themeName: currentPreset.name,
+    showUsageInHeader,
+    fontFamily: customFontFamily,
+    activityColors,
+    activityColorsOnTabs,
+    hideTopButtonLabels,
+    hideBottomButtonLabels,
+    collapseTopBarToMenu,
+    panelPosition,
+  });
   settingsModal.open();
+}
+
+todoBtn.addEventListener("click", () => todoPanel.toggle());
+recentFoldersBtn.addEventListener("click", () => openRecentFoldersModal());
+recentChatsBtn.addEventListener("click", () => openRecentChatsModal());
+settingsBtn.addEventListener("click", () => openSettingsModal());
+
+topMenuBtn?.addEventListener("click", () => {
+  if (!topMenu && topMenuBtn) {
+    topMenu = new TopMenu(topMenuBtn, {
+      onOpenTodo: () => todoPanel.toggle(),
+      onOpenSettings: () => openSettingsModal(),
+      onRelaunch: () => {
+        persist();
+        api.relaunchApp();
+      },
+      onQuit: () => {
+        persist();
+        api.quitApp();
+      },
+    });
+  }
+  topMenu?.toggle();
+});
+
+relaunchBtn?.addEventListener("click", () => {
+  persist();
+  api.relaunchApp();
+});
+
+quitBtn?.addEventListener("click", () => {
+  persist();
+  api.quitApp();
 });
 
 window.addEventListener(
   "keydown",
   (ev) => {
+    if (ev.altKey && !ev.ctrlKey && !ev.metaKey && active?.view) {
+      if (ev.key === "Enter" || ev.code === "Enter" || ev.code === "NumpadEnter") {
+        ev.preventDefault();
+        ev.stopPropagation();
+        active.view.writeRaw("\r");
+        return;
+      }
+      if (ev.key === "ArrowUp" || ev.key === "ArrowDown" || ev.key === "ArrowLeft" || ev.key === "ArrowRight") {
+        ev.preventDefault();
+        ev.stopPropagation();
+        active.view.writeArrow({
+          key: ev.key,
+          code: ev.code,
+          altKey: false,
+          shiftKey: ev.shiftKey,
+          ctrlKey: false,
+          metaKey: false,
+        });
+        return;
+      }
+    }
+
     if (!ev.ctrlKey || ev.altKey || !active) return;
     const key = ev.key.toLowerCase();
-
     const claim = (): void => {
       ev.preventDefault();
       ev.stopPropagation();
@@ -1167,7 +1739,7 @@ window.addEventListener(
           return;
         case "w":
           claim();
-          closeTab(active);
+          void requestCloseTab(active);
           return;
         case "f":
           claim();
@@ -1205,6 +1777,7 @@ window.addEventListener(
 );
 
 window.addEventListener("beforeunload", () => {
+  persist();
   for (const tab of tabs) {
     if (tab.sessionId) api.kill(tab.sessionId);
   }
@@ -1215,6 +1788,26 @@ async function boot(): Promise<void> {
   if (state.themeName) {
     applyTheme(getThemeByName(state.themeName));
   }
+  if (typeof state.fontFamily === "string" && state.fontFamily) {
+    applyFont(state.fontFamily);
+  }
+  if (typeof state.fontSize === "number" && Number.isFinite(state.fontSize)) {
+    terminalFontSize = Math.min(32, Math.max(8, Math.round(state.fontSize)));
+  }
+  if (state.activityColors) {
+    activityColors = { ...DEFAULT_ACTIVITY_COLORS, ...state.activityColors };
+  }
+  if (typeof state.activityColorsOnTabs === "boolean") {
+    activityColorsOnTabs = state.activityColorsOnTabs;
+  }
+  applyActivityColors();
+  if (typeof state.todoPanelVisible === "boolean") {
+    todoPanelVisible = state.todoPanelVisible;
+  }
+  if (state.todoPanelMode === "overlay" || state.todoPanelMode === "docked") {
+    todoPanelMode = state.todoPanelMode;
+  }
+  todoPanel.init(todoPanelVisible, todoPanelMode);
   if (state.favoriteModels) {
     favoriteModels = state.favoriteModels;
   }
@@ -1226,6 +1819,19 @@ async function boot(): Promise<void> {
   }
   if (typeof state.showUsageInHeader === "boolean") {
     showUsageInHeader = state.showUsageInHeader;
+  }
+  if (typeof state.hideTopButtonLabels === "boolean") {
+    hideTopButtonLabels = state.hideTopButtonLabels;
+  }
+  if (typeof state.hideBottomButtonLabels === "boolean") {
+    hideBottomButtonLabels = state.hideBottomButtonLabels;
+  }
+  if (typeof state.collapseTopBarToMenu === "boolean") {
+    collapseTopBarToMenu = state.collapseTopBarToMenu;
+  }
+  applyButtonLabelVisibility();
+  if (state.panelPosition) {
+    panelPosition = state.panelPosition;
   }
   updateHeaderUsageVisibility();
   void refreshHeaderUsage();
@@ -1252,18 +1858,8 @@ async function boot(): Promise<void> {
 
   try {
     const initStatus = await api.readControlBridgeStatus();
-    if (initStatus && active) {
-      if (initStatus.model) {
-        active.modelName = initStatus.model;
-        applyModelToDock(initStatus.model);
-      }
-      if (initStatus.thinkingLevel) {
-        applyThinkingLevelsForModel(active.modelName, initStatus.thinkingLevel);
-      }
-      if (typeof initStatus.plan === "boolean") {
-        active.planState = initStatus.plan ? "on" : "off";
-        dock.setPlanState(active.planState);
-      }
+    if (initStatus) {
+      applyControlBridgeStatus(initStatus);
     } else if (active?.modelName) {
       applyThinkingLevelsForModel(active.modelName, active.thinkingLevel);
     }

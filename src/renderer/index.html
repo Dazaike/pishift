@@ -18,12 +18,70 @@
         <span id="header-usage-text">Usage &middot; $0.00</span>
       </div>
       <div id="drag-region"></div>
-      <button id="btn-settings" title="Theme and Color Settings">
+      <div id="header-activity" hidden title="Current agent activity">
+        <span id="header-activity-dot" aria-hidden="true"></span>
+        <span id="header-activity-text">Idle</span>
+      </div>
+      <button id="btn-todo" title="Toggle To-Do panel">
+        <span class="btn-todo-icon">&#9776;</span>
+        <span>To-Do</span>
+      </button>
+      <button id="btn-recent-chats" title="Recent Chats for Current Folder">
+        <svg class="btn-chat-svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+        </svg>
+        <span>Recent Chats</span>
+      </button>
+      <button id="btn-recent-folders" title="Recent Folders (Past Projects)">
+        <img src="./assets/icons/folder.png" alt="" class="btn-icon" />
+        <span>Recent Folders</span>
+      </button>
+      <button id="btn-settings" title="Themes and Settings">
         <img src="./assets/icons/settings.png" alt="" class="btn-icon" />
-        <span>Themes</span>
+        <span>Settings</span>
+      </button>
+      <button id="btn-relaunch" type="button" title="Relaunch PiShift">
+        <span class="btn-chrome-glyph" aria-hidden="true">&#x21BB;</span>
+        <span>Relaunch</span>
+      </button>
+      <button id="btn-quit" type="button" title="Quit PiShift">
+        <span class="btn-chrome-glyph btn-quit-glyph" aria-hidden="true">&#x2715;</span>
+        <span>Quit</span>
+      </button>
+      <button id="btn-top-menu" title="Menu" hidden>
+        <span class="btn-top-menu-glyph" aria-hidden="true">&#9776;</span>
+        <span class="btn-top-menu-text">Menu</span>
       </button>
     </header>
-    <main id="views"></main>
+    <div id="workspace">
+      <main id="views"></main>
+      <aside id="todo-panel" hidden>
+        <header id="todo-panel-header">
+          <span id="todo-panel-title">Session Overview</span>
+          <div id="todo-panel-actions">
+            <button id="todo-panel-refresh" type="button" title="Refresh tasks and provider quotas">&#x21BB;</button>
+            <button id="todo-panel-mode" type="button" title="Pin to side (dock and resize terminal)">&#x1F4CC;</button>
+            <button id="todo-panel-close" type="button" title="Hide panel">&times;</button>
+          </div>
+        </header>
+        <div id="side-panel-content">
+          <section id="todo-section">
+            <div class="side-section-title">Tasks</div>
+            <div id="todo-panel-body"></div>
+          </section>
+          <section id="usage-section">
+            <div class="side-section-title">Provider Quotas</div>
+            <div id="usage-panel-body"></div>
+          </section>
+        </div>
+      </aside>
+    </div>
+    <div id="key-target-row" aria-live="polite">
+      <div id="key-target-indicator" hidden data-target="dock">
+        <span class="key-target-dot" aria-hidden="true"></span>
+        <span class="key-target-label">Terminal</span>
+      </div>
+    </div>
     <footer id="dock">
       <div id="dock-chips"></div>
       <div id="dock-editor">
@@ -52,11 +110,13 @@
               <span>Tools</span>
             </button>
           </div>
-          <button id="dock-usage-btn" type="button" class="ctrl-btn" title="View provider token usage & cost metrics">
-            <img src="./assets/icons/usage.png" alt="" class="btn-icon" />
-            <span>Usage</span>
-          </button>
-          <button id="dock-plan" type="button" class="ctrl-btn plan-off" title="Toggle Plan Mode (OFF <-> ON)">
+          <div id="dock-usage-wrap">
+            <button id="dock-usage-btn" type="button" class="ctrl-btn" title="View provider token usage & cost metrics">
+              <img src="./assets/icons/usage.png" alt="" class="btn-icon" />
+              <span>Usage</span>
+            </button>
+          </div>
+          <button id="dock-plan" type="button" class="ctrl-btn plan-off" title="Plan mode OFF — click to enter">
             <img src="./assets/icons/plan.png" alt="" class="btn-icon" />
             <span class="dock-plan-label">Plan: OFF</span>
           </button>
@@ -66,14 +126,23 @@
               <span class="dock-model-name">Model</span>
             </button>
           </div>
-          <button id="dock-thinking-btn" type="button" class="ctrl-btn" title="Click to cycle thinking level">
-            <img src="./assets/icons/thinking.png" alt="" class="btn-icon" />
-            <span class="dock-thinking-label">Thinking: Low</span>
-          </button>
-          <button id="dock-send" type="button">
-            <img src="./assets/icons/send.png" alt="" class="btn-icon send-icon" />
-            <span>Send</span>
-          </button>
+          <div id="dock-thinking-wrap">
+            <button id="dock-thinking-btn" type="button" class="ctrl-btn" title="Click to pick thinking level">
+              <img src="./assets/icons/thinking.png" alt="" class="btn-icon" />
+              <span class="dock-thinking-label">Thinking: Low</span>
+            </button>
+          </div>
+          <div id="dock-action-group">
+            <button id="dock-stop" type="button" class="stop-btn" hidden title="Stop active agent (Esc)">
+              <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor" class="stop-icon" aria-hidden="true">
+                <rect x="2.5" y="2.5" width="11" height="11" rx="2" fill="#f7768e" />
+              </svg>
+            </button>
+            <button id="dock-send" type="button" title="Send message (Enter)">
+              <img src="./assets/icons/send.png" alt="" class="btn-icon send-icon" />
+              <span class="dock-send-label">Send</span>
+            </button>
+          </div>
         </div>
       </div>
     </footer>

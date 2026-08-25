@@ -412,11 +412,20 @@ export class ModelModal {
         iconWrap.innerHTML = getProviderIcon(item.provider);
       }
 
+      const textCol = document.createElement("span");
+      textCol.className = "model-row-text";
+
       const nameSpan = document.createElement("span");
       nameSpan.className = "model-row-name";
       nameSpan.textContent = item.name;
 
-      card.append(iconWrap, nameSpan);
+      const metaSpan = document.createElement("span");
+      metaSpan.className = "model-row-meta";
+      const providerLabel = (item.provider || "model").replace(/-oauth$/i, "");
+      metaSpan.textContent = providerLabel;
+
+      textCol.append(nameSpan, metaSpan);
+      card.append(iconWrap, textCol);
 
       // In edit mode (and not currently reordering): show delete button on every model card
       if (this.isEditMode && !this.isReordering) {

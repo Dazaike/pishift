@@ -1,12 +1,13 @@
 import { animate, type JSAnimation } from "animejs";
+import type { GlowActivity } from "../shared/ipc";
 
 /** Trailing dots that fade out behind the head, forming a soft comet tail. */
 const SEGMENTS = 16;
 /** Visible length of each segment as a fraction of the perimeter. */
 const SEG_LEN = 0.011;
-const HEAD_OPACITY = 0.5;
-const HEAD_WIDTH = 1.7;
-const TAIL_WIDTH = 0.8;
+const HEAD_OPACITY = 1.0;
+const HEAD_WIDTH = 2.0;
+const TAIL_WIDTH = 0.9;
 /** Travel direction: 1 = counter-clockwise, -1 = clockwise. */
 const DIRECTION = 1;
 /** true = faint leading edge brightening toward the trailing end. */
@@ -29,7 +30,7 @@ export class DockGlow {
   private readonly anims: JSAnimation[] = [];
   private ro: ResizeObserver | null = null;
   private running = false;
-  private kind: "working" | "thinking" = "working";
+  private kind: GlowActivity = "working";
 
   constructor(private readonly host: HTMLElement) {
     this.svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -39,7 +40,7 @@ export class DockGlow {
     const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
     defs.innerHTML = `
       <filter id="dock-glow-soft" x="-80%" y="-80%" width="260%" height="260%">
-        <feGaussianBlur stdDeviation="2.2" result="b"/>
+        <feGaussianBlur stdDeviation="1.8" result="b"/>
         <feMerge>
           <feMergeNode in="b"/>
           <feMergeNode in="SourceGraphic"/>
@@ -58,7 +59,7 @@ export class DockGlow {
       seg.setAttribute("filter", "url(#dock-glow-soft)");
       // Cubic falloff along the comet; reversed puts the bright end last.
       const t = i / (SEGMENTS - 1);
-      const fade = FADE_REVERSED ? t ** 3 : (1 - t) ** 3;
+      const fade = FADE_REVERSED ? t ** 2.2 : (1 - t) ** 2.2;
       seg.style.opacity = String(Math.max(0.015, HEAD_OPACITY * fade));
       seg.style.strokeWidth = String(TAIL_WIDTH + (HEAD_WIDTH - TAIL_WIDTH) * fade);
       this.segments[i] = seg;
@@ -80,18 +81,20 @@ export class DockGlow {
     this.ro.observe(this.host);
   }
 
-  start(kind: "working" | "thinking" = "working"): void {
+  start(kind: GlowActivity = "working"): void {
     this.kind = kind;
-    this.svg.classList.toggle("thinking", kind === "thinking");
     this.svg.classList.add("active");
-    this.layout();
-    this.play(kind);
-    this.running = true;
+    this.svg.style.color = `var(--glow-${kind})`;
+    if (!this.running || this.anims.length === 0) {
+      this.layout();
+      this.play(kind);
+      this.running = true;
+    }
   }
 
   stop(): void {
     this.running = false;
-    this.svg.classList.remove("active", "thinking");
+    this.svg.classList.remove("active");
     this.stopAnimOnly();
     for (const seg of this.segments) seg.style.strokeDashoffset = "0";
   }
@@ -103,9 +106,11 @@ export class DockGlow {
     this.svg.remove();
   }
 
-  private play(kind: "working" | "thinking"): void {
+  private play(kind: GlowActivity): void {
     this.stopAnimOnly();
-    const duration = kind === "thinking" ? 5200 : 3800;
+    // Slower orbit while the agent is only waiting on the model, so a stalled
+    // request reads as calm rather than as busy work.
+    const duration = kind === "thinking" ? 5200 : kind === "waiting" ? 6400 : 3800;
 
     for (const [i, seg] of this.segments.entries()) {
       // Segments trail behind the head along the direction of travel.

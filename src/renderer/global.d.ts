@@ -1,3 +1,5 @@
+/// <reference types="vite/client" />
+
 import type { OmphifApi } from "../preload/index";
 
 declare global {

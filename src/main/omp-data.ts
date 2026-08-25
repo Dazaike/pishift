@@ -1,13 +1,14 @@
 import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
+import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import type { DatabaseSync as DatabaseSyncType } from "node:sqlite";
 import type {
   InstalledModelGroup,
   ProviderLimit,
   ProviderUsageReport,
   ProviderUsageStat,
+  RecentChatInfo,
 } from "../shared/ipc";
 import { resolveOmpPath } from "./omp-locate";
 
@@ -264,4 +265,211 @@ export function loadDatabaseStats(): ProviderUsageStat[] {
     console.error("Failed to load stats.db:", err);
     return [];
   }
+}
+
+function normalizeDirPath(dir: string): string {
+  try {
+    return resolve(dir).replace(/[\\/]+$/, "");
+  } catch {
+    return dir.replace(/[\\/]+$/, "");
+  }
+}
+
+/** Gather all past project directories opened in PiShift or discovered from OMP records. */
+export function loadRecentFolders(persistedFolders?: string[]): string[] {
+  const seen = new Set<string>();
+  const results: string[] = [];
+
+  const add = (dir: string | null | undefined): void => {
+    if (!dir || typeof dir !== "string") return;
+    const norm = normalizeDirPath(dir);
+    const key = norm.toLowerCase();
+    if (seen.has(key)) return;
+    try {
+      if (existsSync(norm) && statSync(norm).isDirectory()) {
+        seen.add(key);
+        results.push(norm);
+      }
+    } catch {
+      // Skip inaccessible paths
+    }
+  };
+
+  // 1. Persisted folders first (most recent first)
+  if (Array.isArray(persistedFolders)) {
+    for (const f of persistedFolders) add(f);
+  }
+
+  // 2. ~/.omp/agent/projects.json
+  try {
+    const projFile = join(OMP_DIR, "agent", "projects.json");
+    if (existsSync(projFile)) {
+      const data = JSON.parse(readFileSync(projFile, "utf8")) as { projects?: { path?: string }[] };
+      if (Array.isArray(data.projects)) {
+        for (const p of data.projects) add(p.path);
+      }
+    }
+  } catch {
+    // Ignore parse errors
+  }
+
+  // 3. ~/.omp/agent/history.db
+  const DatabaseSync = getDatabaseSyncConstructor();
+  if (DatabaseSync) {
+    try {
+      const historyDbPath = join(OMP_DIR, "agent", "history.db");
+      if (existsSync(historyDbPath)) {
+        const db = new DatabaseSync(historyDbPath, { readOnly: true });
+        const rows = db.prepare("SELECT DISTINCT cwd FROM history WHERE cwd IS NOT NULL").all() as { cwd: string }[];
+        for (const row of rows) add(row.cwd);
+      }
+    } catch {
+      // Ignore SQLite errors
+    }
+  }
+
+  // 4. Session directories from ~/.omp/agent/sessions
+  try {
+    const sessionsDir = join(OMP_DIR, "agent", "sessions");
+    if (existsSync(sessionsDir)) {
+      const subdirs = readdirSync(sessionsDir);
+      for (const sub of subdirs) {
+        const subPath = join(sessionsDir, sub);
+        if (!statSync(subPath).isDirectory()) continue;
+        const files = readdirSync(subPath).filter((f) => f.endsWith(".jsonl"));
+        for (const file of files.slice(0, 3)) {
+          const filePath = join(subPath, file);
+          try {
+            const fd = openSync(filePath, "r");
+            const buf = Buffer.alloc(8192);
+            const bytesRead = readSync(fd, buf, 0, 8192, 0);
+            closeSync(fd);
+            const text = buf.toString("utf8", 0, bytesRead);
+            const lines = text.split("\n");
+            for (const line of lines.slice(0, 5)) {
+              if (!line.trim()) continue;
+              try {
+                const obj = JSON.parse(line) as { type?: string; cwd?: string };
+                if (obj.type === "session" && obj.cwd) {
+                  add(obj.cwd);
+                  break;
+                }
+              } catch {}
+            }
+          } catch {}
+        }
+      }
+    }
+  } catch {}
+
+  return results.slice(0, 50);
+}
+
+/** Load recent chats/sessions for a specific folder or all folders. */
+export function loadRecentChats(targetCwd?: string): RecentChatInfo[] {
+  const normTarget = targetCwd ? normalizeDirPath(targetCwd).toLowerCase() : null;
+  const sessionsDir = join(OMP_DIR, "agent", "sessions");
+  if (!existsSync(sessionsDir)) return [];
+
+  // Query session titles map if history.db is available
+  const titlesMap = new Map<string, string>();
+  const DatabaseSync = getDatabaseSyncConstructor();
+  if (DatabaseSync) {
+    try {
+      const historyDbPath = join(OMP_DIR, "agent", "history.db");
+      if (existsSync(historyDbPath)) {
+        const db = new DatabaseSync(historyDbPath, { readOnly: true });
+        const rows = db.prepare("SELECT session_id, title FROM session_titles WHERE title IS NOT NULL").all() as {
+          session_id: string;
+          title: string;
+        }[];
+        for (const row of rows) {
+          if (row.session_id && row.title) {
+            titlesMap.set(row.session_id, row.title);
+          }
+        }
+      }
+    } catch {}
+  }
+
+  const results: RecentChatInfo[] = [];
+  try {
+    const subdirs = readdirSync(sessionsDir);
+    for (const sub of subdirs) {
+      const subPath = join(sessionsDir, sub);
+      try {
+        if (!statSync(subPath).isDirectory()) continue;
+        const files = readdirSync(subPath).filter((f) => f.endsWith(".jsonl"));
+        for (const file of files) {
+          const filePath = join(subPath, file);
+          try {
+            const stat = statSync(filePath);
+            const fd = openSync(filePath, "r");
+            const buf = Buffer.alloc(65536);
+            const bytesRead = readSync(fd, buf, 0, 65536, 0);
+            closeSync(fd);
+            const text = buf.toString("utf8", 0, bytesRead);
+            const lines = text.split("\n");
+
+            let sessionInfo: { id?: string; cwd?: string; timestamp?: string; title?: string } | null = null;
+            let titleInfo: { title?: string; updatedAt?: string } | null = null;
+            let firstUserPrompt: string | null = null;
+
+            for (const rawLine of lines) {
+              const line = rawLine.trim();
+              if (!line) continue;
+              try {
+                const obj = JSON.parse(line) as {
+                  type?: string;
+                  id?: string;
+                  cwd?: string;
+                  timestamp?: string;
+                  title?: string;
+                  updatedAt?: string;
+                  role?: string;
+                  content?: string | { text?: string }[];
+                };
+                if (obj.type === "session") sessionInfo = obj;
+                if (obj.type === "title" && obj.title) titleInfo = obj;
+                if (
+                  !firstUserPrompt &&
+                  obj.type === "message" &&
+                  obj.role === "user" &&
+                  obj.content
+                ) {
+                  firstUserPrompt =
+                    typeof obj.content === "string"
+                      ? obj.content
+                      : obj.content[0]?.text ?? null;
+                }
+              } catch {}
+              if (sessionInfo && titleInfo) break;
+            }
+
+            if (sessionInfo?.id && sessionInfo.cwd) {
+              const normCwd = normalizeDirPath(sessionInfo.cwd).toLowerCase();
+              if (!normTarget || normCwd === normTarget) {
+                const title =
+                  titlesMap.get(sessionInfo.id) ||
+                  titleInfo?.title ||
+                  sessionInfo.title ||
+                  firstUserPrompt ||
+                  "Untitled Session";
+
+                results.push({
+                  id: sessionInfo.id,
+                  title: title.trim(),
+                  cwd: sessionInfo.cwd,
+                  updatedAt: titleInfo?.updatedAt || sessionInfo.timestamp || stat.mtime.toISOString(),
+                  mtime: stat.mtimeMs,
+                });
+              }
+            }
+          } catch {}
+        }
+      } catch {}
+    }
+  } catch {}
+
+  return results.sort((a, b) => b.mtime - a.mtime).slice(0, 100);
 }

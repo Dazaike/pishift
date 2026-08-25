@@ -7,7 +7,7 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal } from "@xterm/xterm";
 
 import { bracketPaste } from "../shared/ipc";
-import { encodeKey, type KeyMode } from "../shared/kitty-keys";
+import { encodeArrow, encodeKey, type KeyLike, type KeyMode } from "../shared/kitty-keys";
 import { buildXtermTheme, FONT_FAMILY, FONT_SIZE, type ThemePreset } from "./theme";
 export interface TermViewHooks {
   /** Bytes to the PTY. */
@@ -19,8 +19,9 @@ export interface TermViewHooks {
   /** User hit Esc / bare Ctrl+C — host should drop working chrome optimistically. */
   onUserCancel?(): void;
 }
-
-const RESIZE_DEBOUNCE_MS = 50;
+const PTY_RESIZE_DEBOUNCE_MS = 80;
+const MIN_FONT = 8;
+const MAX_FONT = 32;
 
 /** One xterm.js terminal, one PTY session, one tab body. */
 export class TermView {
@@ -39,9 +40,14 @@ export class TermView {
   });
   private webgl: WebglAddon | null = null;
   private observer: ResizeObserver | null = null;
-  private resizeTimer: number | undefined;
+  private rafHandle: number | undefined;
+  private ptyResizeTimer: number | undefined;
   private opened = false;
   private disposed = false;
+  private lastCols = 0;
+  private lastRows = 0;
+  /** DECCKM — when true, interactive TUI menus want arrow keys as SS3. */
+  private appCursorKeys = false;
 
   /** Depth of omp's `CSI > <flags> u` kitty-keyboard pushes. */
   private kittyDepth = 0;
@@ -50,19 +56,27 @@ export class TermView {
   private keyMode: KeyMode = "legacy";
   private currentFontSize = FONT_SIZE;
   private searchBar: HTMLDivElement | null = null;
+  private onFontSizeChange: ((size: number) => void) | null = null;
 
   constructor(
     private readonly hooks: TermViewHooks,
     themePreset?: ThemePreset,
+    initialFontSize?: number,
   ) {
     this.el = document.createElement("div");
     this.el.className = "view";
+
+    const fontSize =
+      typeof initialFontSize === "number" && Number.isFinite(initialFontSize)
+        ? Math.min(MAX_FONT, Math.max(MIN_FONT, Math.round(initialFontSize)))
+        : FONT_SIZE;
+    this.currentFontSize = fontSize;
 
     this.term = new Terminal({
       allowProposedApi: true,
       cursorBlink: true,
       fontFamily: FONT_FAMILY,
-      fontSize: FONT_SIZE,
+      fontSize,
       fontWeight: "normal",
       fontWeightBold: "bold",
       scrollback: 20_000,
@@ -139,6 +153,11 @@ export class TermView {
     if (safe) this.hooks.write(safe);
   }
 
+  /** Submit the current omp prompt line. */
+  submit(): void {
+    this.hooks.write("\r");
+  }
+
   /**
    * Clear the current omp prompt line, type a slash command, and submit.
    * Sent as one write so kitty/ConPTY cannot interleave other input.
@@ -162,6 +181,18 @@ export class TermView {
    * Used for native omp keybindings such as Alt+Shift+P (plan toggle).
    */
   sendChord(key: string, mods: { alt?: boolean; shift?: boolean; ctrl?: boolean; meta?: boolean }): void {
+    const mask = 1 + (mods.shift ? 1 : 0) + (mods.alt ? 2 : 0) + (mods.ctrl ? 4 : 0) + (mods.meta ? 8 : 0);
+    const code = key.length === 1 ? key.toLowerCase().charCodeAt(0) : (key === "Enter" ? 13 : key === "Escape" ? 27 : 0);
+
+    if (this.keyMode === "kitty" && code > 0 && mask > 1) {
+      this.hooks.write(`\x1b[${code};${mask}u`);
+      return;
+    }
+    if (this.keyMode === "modifyOtherKeys" && code > 0 && mask > 1) {
+      this.hooks.write(`\x1b[27;${mask};${code}~`);
+      return;
+    }
+
     const ev = {
       key,
       altKey: !!mods.alt,
@@ -181,13 +212,13 @@ export class TermView {
       return;
     }
     if (mods.ctrl && key.length === 1) {
-      const code = key.toUpperCase().charCodeAt(0) - 64;
-      if (code >= 1 && code <= 26) {
-        this.hooks.write(String.fromCharCode(code));
+      const charCode = key.toUpperCase().charCodeAt(0) - 64;
+      if (charCode >= 1 && charCode <= 26) {
+        this.hooks.write(String.fromCharCode(charCode));
         return;
       }
     }
-    // Last resort: type the key and hope.
+    // Last resort: type the key.
     this.type(key);
   }
 
@@ -207,11 +238,21 @@ export class TermView {
     return true;
   }
 
-  submit(): void {
-    this.hooks.write("\r");
-  }
   focus(): void {
     this.term.focus();
+  }
+
+  /** True when the PTY enabled application cursor keys (interactive arrow UIs). */
+  wantsArrowKeys(): boolean {
+    return this.appCursorKeys;
+  }
+
+  /** Encode and write an arrow key using the current cursor-key mode. */
+  writeArrow(ev: KeyLike): boolean {
+    const seq = encodeArrow(ev, this.appCursorKeys);
+    if (!seq) return false;
+    this.hooks.write(seq);
+    return true;
   }
 
   setTheme(preset: ThemePreset): void {
@@ -219,16 +260,25 @@ export class TermView {
   }
 
   zoomIn(): void {
-    if (this.currentFontSize >= 32) return;
+    if (this.currentFontSize >= MAX_FONT) return;
     this.setFontSize(this.currentFontSize + 1);
   }
 
   zoomOut(): void {
-    if (this.currentFontSize <= 8) return;
+    if (this.currentFontSize <= MIN_FONT) return;
     this.setFontSize(this.currentFontSize - 1);
   }
+
   resetZoom(): void {
     this.setFontSize(FONT_SIZE);
+  }
+
+  getFontSize(): number {
+    return this.currentFontSize;
+  }
+
+  setFontSizeChangeHandler(handler: ((size: number) => void) | null): void {
+    this.onFontSizeChange = handler;
   }
 
   getSelection(): string {
@@ -242,9 +292,26 @@ export class TermView {
   openSearch(): void {
     if (!this.searchBar) this.toggleSearch();
   }
+
   private setFontSize(size: number): void {
-    this.currentFontSize = size;
-    this.term.options.fontSize = size;
+    const next = Math.min(MAX_FONT, Math.max(MIN_FONT, Math.round(size)));
+    if (next === this.currentFontSize && this.term.options.fontSize === next) return;
+    this.currentFontSize = next;
+    this.term.options.fontSize = next;
+    this.applyFit();
+    this.onFontSizeChange?.(next);
+  }
+
+  /** Apply a restored zoom without firing the change handler (boot path). */
+  applyPersistedFontSize(size: number): void {
+    const next = Math.min(MAX_FONT, Math.max(MIN_FONT, Math.round(size)));
+    this.currentFontSize = next;
+    this.term.options.fontSize = next;
+    this.applyFit();
+  }
+
+  setFontFamily(family: string): void {
+    this.term.options.fontFamily = family;
     this.applyFit();
   }
 
@@ -259,7 +326,8 @@ export class TermView {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
-    clearTimeout(this.resizeTimer);
+    if (this.rafHandle) cancelAnimationFrame(this.rafHandle);
+    clearTimeout(this.ptyResizeTimer);
     this.observer?.disconnect();
     this.observer = null;
     this.webgl?.dispose();
@@ -284,15 +352,60 @@ export class TermView {
   }
 
   private scheduleFit(): void {
-    clearTimeout(this.resizeTimer);
-    this.resizeTimer = window.setTimeout(() => this.applyFit(), RESIZE_DEBOUNCE_MS);
+    if (this.rafHandle) cancelAnimationFrame(this.rafHandle);
+    this.rafHandle = requestAnimationFrame(() => {
+      this.rafHandle = undefined;
+      this.applyFit(false);
+    });
   }
 
-  private applyFit(): void {
+  refit(): void {
+    if (this.rafHandle) {
+      cancelAnimationFrame(this.rafHandle);
+      this.rafHandle = undefined;
+    }
+    this.applyFit(true);
+  }
+
+  private applyFit(immediatePty = true): void {
     if (this.disposed || !this.opened || !this.el.classList.contains("active")) return;
     if (this.el.clientWidth < 8 || this.el.clientHeight < 8) return;
+
+    const buffer = this.term.buffer.active;
+    const wasAtBottom = buffer.viewportY >= buffer.baseY;
+    // Reflow renumbers absolute lines; a marker tracks the viewport's top line
+    // through that renumbering so a mid-scrollback resize doesn't jump the view.
+    const marker = wasAtBottom
+      ? null
+      : this.term.registerMarker(buffer.viewportY - buffer.baseY - buffer.cursorY);
+
     this.fit.fit();
-    this.hooks.resize(this.term.cols, this.term.rows);
+
+    const cols = this.term.cols;
+    const rows = this.term.rows;
+    // Skip PTY resize when the cell grid is unchanged — stops omp redraw flicker
+    // when the composer grows a few pixels without changing rows.
+    if (cols !== this.lastCols || rows !== this.lastRows) {
+      this.lastCols = cols;
+      this.lastRows = rows;
+      clearTimeout(this.ptyResizeTimer);
+      if (immediatePty) {
+        this.hooks.resize(cols, rows);
+      } else {
+        this.ptyResizeTimer = window.setTimeout(() => {
+          if (!this.disposed) {
+            this.hooks.resize(cols, rows);
+          }
+        }, PTY_RESIZE_DEBOUNCE_MS);
+      }
+    }
+
+    if (wasAtBottom) {
+      this.term.scrollToBottom();
+    } else if (marker && marker.line >= 0) {
+      this.term.scrollToLine(marker.line);
+    }
+    marker?.dispose();
   }
 
   private registerSequenceHandlers(): void {
@@ -345,6 +458,21 @@ export class TermView {
       }
       return true;
     });
+
+    // DECCKM — application cursor keys. Interactive TUIs (pickers, menus) set this
+    // so we can route arrows from the composer without stealing normal typing.
+    this.term.parser.registerCsiHandler({ prefix: "?", final: "h" }, (params) => {
+      for (const p of params) {
+        if (p === 1 || (Array.isArray(p) && p[0] === 1)) this.appCursorKeys = true;
+      }
+      return false; // let xterm apply the mode too
+    });
+    this.term.parser.registerCsiHandler({ prefix: "?", final: "l" }, (params) => {
+      for (const p of params) {
+        if (p === 1 || (Array.isArray(p) && p[0] === 1)) this.appCursorKeys = false;
+      }
+      return false;
+    });
   }
 
   /** `false` stops xterm.js from processing the event. */
@@ -365,6 +493,16 @@ export class TermView {
 
     if (ev.key === "Escape" && !ev.ctrlKey && !ev.altKey && !ev.shiftKey) {
       this.hooks.onUserCancel?.();
+    }
+    if (
+      (ev.key === "Enter" || ev.code === "Enter" || ev.code === "NumpadEnter") &&
+      ev.altKey &&
+      !ev.ctrlKey &&
+      !ev.metaKey
+    ) {
+      ev.preventDefault();
+      this.hooks.write("\r");
+      return false;
     }
 
     // One byte reproduces omp's native paste: clipboard image -> attachment,

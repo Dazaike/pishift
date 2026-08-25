@@ -1,13 +1,36 @@
+import { DEFAULT_SLASH_ICON, SLASH_COMMAND_ICONS } from "./slash-command-icons";
 import { SLASH_COMMANDS, type SlashCommand } from "../shared/slash-commands";
+
+const USAGE_STORAGE_KEY = "pishift.slashCommandUsage";
+
+function loadUsage(): Record<string, number> {
+  try {
+    const raw = localStorage.getItem(USAGE_STORAGE_KEY);
+    const parsed: unknown = raw ? JSON.parse(raw) : null;
+    if (parsed && typeof parsed === "object") return parsed as Record<string, number>;
+  } catch {
+    // Corrupt/blocked storage — start fresh.
+  }
+  return {};
+}
+
+function saveUsage(usage: Record<string, number>): void {
+  try {
+    localStorage.setItem(USAGE_STORAGE_KEY, JSON.stringify(usage));
+  } catch {
+    // Storage unavailable — ranking just won't persist across restarts.
+  }
+}
 
 export class SlashMenu {
   readonly el: HTMLDivElement;
   private items: SlashCommand[] = [];
   private selectedIndex = 0;
   private onSelectCallback: (cmd: SlashCommand) => void;
-
+  private usage: Record<string, number>;
   constructor(onSelect: (cmd: SlashCommand) => void) {
     this.onSelectCallback = onSelect;
+    this.usage = loadUsage();
     this.el = document.createElement("div");
     this.el.id = "slash-menu";
     this.el.hidden = true;
@@ -21,9 +44,18 @@ export class SlashMenu {
 
   open(query: string): boolean {
     const q = query.toLowerCase().trim();
-    this.items = SLASH_COMMANDS.filter(
-      (c) => c.name.toLowerCase().includes(q) || c.description.toLowerCase().includes(q),
-    );
+    const rank = (c: SlashCommand): number => {
+      const name = c.name.toLowerCase();
+      if (name === q) return 0;
+      if (name.startsWith(q)) return 1;
+      if (name.includes(q)) return 2;
+      if (c.description.toLowerCase().includes(q)) return 3;
+      return 4;
+    };
+    this.items = SLASH_COMMANDS.map((c) => ({ c, r: rank(c), u: this.usage[c.name] ?? 0 }))
+      .filter(({ r }) => r < 4)
+      .sort((a, b) => a.r - b.r || b.u - a.u || a.c.name.localeCompare(b.c.name))
+      .map(({ c }) => c);
 
     if (this.items.length === 0) {
       this.close();
@@ -54,7 +86,13 @@ export class SlashMenu {
     if (!this.isOpen || this.items.length === 0) return null;
     const cmd = this.items[this.selectedIndex];
     this.close();
+    if (cmd) this.recordUsage(cmd);
     return cmd ?? null;
+  }
+
+  private recordUsage(cmd: SlashCommand): void {
+    this.usage[cmd.name] = (this.usage[cmd.name] ?? 0) + 1;
+    saveUsage(this.usage);
   }
 
   private render(): void {
@@ -65,6 +103,10 @@ export class SlashMenu {
       row.className = i === this.selectedIndex ? "slash-item active" : "slash-item";
       row.role = "option";
       row.setAttribute("aria-selected", i === this.selectedIndex ? "true" : "false");
+
+      const iconSpan = document.createElement("span");
+      iconSpan.className = "slash-icon";
+      iconSpan.textContent = SLASH_COMMAND_ICONS[cmd.name] ?? DEFAULT_SLASH_ICON;
 
       const nameSpan = document.createElement("span");
       nameSpan.className = "slash-name";
@@ -81,11 +123,13 @@ export class SlashMenu {
       descSpan.className = "slash-desc";
       descSpan.textContent = cmd.description;
 
+      row.appendChild(iconSpan);
       row.appendChild(nameSpan);
       row.appendChild(descSpan);
 
       row.addEventListener("mousedown", (ev) => {
         ev.preventDefault();
+        this.recordUsage(cmd);
         this.onSelectCallback(cmd);
         this.close();
       });
