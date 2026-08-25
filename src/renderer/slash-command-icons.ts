@@ -11,6 +11,9 @@
 /** Fallback glyph for any command without a specific mapping (matches omp's `nav.cursor`/`cmd.action`). */
 export const DEFAULT_SLASH_ICON = "\u276F";
 
+/** Glyph for runtime `/skill:<name>` commands (omp's `icon.extensionSkill` slot). */
+export const SKILL_SLASH_ICON = "\u{1F4DA}";
+
 export const SLASH_COMMAND_ICONS: Record<string, string> = {
   "add-dir": "\u{1F4C1}",
   agents: "\u{1F465}",

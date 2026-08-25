@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
+import { release } from "node:os";
 
 import {
   CH,
@@ -13,6 +14,7 @@ import {
   type SpawnRequest,
   type SpawnResult,
 } from "../shared/ipc";
+import type { SlashCommand } from "../shared/slash-commands";
 
 const api = {
   spawn: (req: SpawnRequest): Promise<SpawnResult> => ipcRenderer.invoke(CH.ptySpawn, req),
@@ -21,6 +23,16 @@ const api = {
     ipcRenderer.send(CH.ptyResize, id, cols, rows),
   ack: (id: string): void => ipcRenderer.send(CH.ptyAck, id),
   kill: (id: string): void => ipcRenderer.send(CH.ptyKill, id),
+
+  // xterm needs ConPTY compat flags: without them a row increase replaces rows
+  // instead of pulling scrollback back into the viewport, losing output.
+  windowsPty:
+    process.platform === "win32"
+      ? {
+          backend: "conpty" as const,
+          buildNumber: Number.parseInt(release().split(".")[2] ?? "", 10) || 0,
+        }
+      : undefined,
 
   onData: (fn: (payload: PtyData) => void): void => {
     ipcRenderer.on(CH.ptyData, (_e, payload: PtyData) => fn(payload));
@@ -53,8 +65,11 @@ const api = {
   removeRecentFolder: (folder: string): Promise<string[]> => ipcRenderer.invoke(CH.removeRecentFolder, folder),
   clearRecentFolders: (): void => ipcRenderer.send(CH.clearRecentFolders),
   getRecentChats: (cwd?: string): Promise<RecentChatInfo[]> => ipcRenderer.invoke(CH.getRecentChats, cwd),
+  getSkillCommands: (cwd?: string): Promise<SlashCommand[]> =>
+    ipcRenderer.invoke(CH.getSkillCommands, cwd),
   setChromeColors: (background: string, symbol: string): void =>
     ipcRenderer.send(CH.setChromeColors, { background, symbol }),
+  setTaskbarBusy: (busy: boolean): void => ipcRenderer.send(CH.setTaskbarBusy, busy),
   openPath: (targetPath: string): Promise<string> => ipcRenderer.invoke(CH.openPath, targetPath),
   showItemInFolder: (targetPath: string): Promise<void> =>
     ipcRenderer.invoke(CH.showItemInFolder, targetPath),

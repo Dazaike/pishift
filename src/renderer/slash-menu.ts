@@ -1,5 +1,6 @@
-import { DEFAULT_SLASH_ICON, SLASH_COMMAND_ICONS } from "./slash-command-icons";
+import { DEFAULT_SLASH_ICON, SKILL_SLASH_ICON, SLASH_COMMAND_ICONS } from "./slash-command-icons";
 import { SLASH_COMMANDS, type SlashCommand } from "../shared/slash-commands";
+import { rankSlashCommands } from "../shared/slash-rank";
 
 const USAGE_STORAGE_KEY = "pishift.slashCommandUsage";
 
@@ -28,6 +29,8 @@ export class SlashMenu {
   private selectedIndex = 0;
   private onSelectCallback: (cmd: SlashCommand) => void;
   private usage: Record<string, number>;
+  private extra: SlashCommand[] = [];
+
   constructor(onSelect: (cmd: SlashCommand) => void) {
     this.onSelectCallback = onSelect;
     this.usage = loadUsage();
@@ -42,20 +45,13 @@ export class SlashMenu {
     return !this.el.hidden && this.items.length > 0;
   }
 
+  /** Runtime-discovered commands (skills) appended to the generated built-in list. */
+  setExtraCommands(commands: readonly SlashCommand[]): void {
+    this.extra = [...commands];
+  }
+
   open(query: string): boolean {
-    const q = query.toLowerCase().trim();
-    const rank = (c: SlashCommand): number => {
-      const name = c.name.toLowerCase();
-      if (name === q) return 0;
-      if (name.startsWith(q)) return 1;
-      if (name.includes(q)) return 2;
-      if (c.description.toLowerCase().includes(q)) return 3;
-      return 4;
-    };
-    this.items = SLASH_COMMANDS.map((c) => ({ c, r: rank(c), u: this.usage[c.name] ?? 0 }))
-      .filter(({ r }) => r < 4)
-      .sort((a, b) => a.r - b.r || b.u - a.u || a.c.name.localeCompare(b.c.name))
-      .map(({ c }) => c);
+    this.items = rankSlashCommands([...SLASH_COMMANDS, ...this.extra], query, this.usage);
 
     if (this.items.length === 0) {
       this.close();
@@ -106,7 +102,9 @@ export class SlashMenu {
 
       const iconSpan = document.createElement("span");
       iconSpan.className = "slash-icon";
-      iconSpan.textContent = SLASH_COMMAND_ICONS[cmd.name] ?? DEFAULT_SLASH_ICON;
+      iconSpan.textContent =
+        SLASH_COMMAND_ICONS[cmd.name] ??
+        (cmd.name.startsWith("skill:") ? SKILL_SLASH_ICON : DEFAULT_SLASH_ICON);
 
       const nameSpan = document.createElement("span");
       nameSpan.className = "slash-name";

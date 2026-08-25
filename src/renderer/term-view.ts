@@ -4,11 +4,54 @@ import { SearchAddon } from "@xterm/addon-search";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
-import { Terminal } from "@xterm/xterm";
+import { Terminal, type IDisposable, type IMarker } from "@xterm/xterm";
 
 import { bracketPaste } from "../shared/ipc";
 import { encodeArrow, encodeKey, type KeyLike, type KeyMode } from "../shared/kitty-keys";
 import { buildXtermTheme, FONT_FAMILY, FONT_SIZE, type ThemePreset } from "./theme";
+
+/**
+ * xterm 6 syncs only the scrollable element's *dimensions* on resize; the scroll
+ * position is left clamped against a stale scrollHeight once `_latestYDisp` is
+ * populated, which snaps the viewport toward the top of the scrollback. The
+ * public scroll API is a no-op here (xterm's own `ydisp` never moved), so re-pin
+ * through `Viewport.scrollToLine(line, force)` — the only primitive that both
+ * writes the DOM offset instantly and refreshes xterm's cached position.
+ */
+type XtermInternals = {
+  _core?: { _viewport?: { scrollToLine(line: number, force: boolean): void } };
+};
+
+/**
+ * A resize anchor holds until the viewport has stayed put for this long. The
+ * disturbance is not a fixed number of frames: ResizeObserver ticks, the 80ms
+ * PTY resize debounce and omp's full-screen redraw all arrive separately, and a
+ * restore lands later than a maximize.
+ */
+const REPIN_SETTLE_MS = 260;
+/** Hard stop for the anchor, so a pathological case cannot pin forever. */
+const REPIN_CEILING_MS = 3000;
+/** Anchor re-check cadence for disturbances that arrive without a repaint. */
+const REPIN_POLL_MS = 100;
+/** Pointer travel before middle-button autoscroll engages. */
+const AUTOSCROLL_DEADZONE_PX = 12;
+const AUTOSCROLL_ROWS_PER_PX = 0.35;
+/** Shared chrome row that hosts the keystroke-target chip and the jump pill. */
+const JUMP_SLOT_ID = "key-target-row";
+/** Keystroke-target chip that sits left of the pill and slides to make room. */
+const CHIP_ID = "key-target-indicator";
+/** Must match the `gap` on #key-target-row in styles.css. */
+const CHIP_GAP_PX = 8;
+
+export const MIN_SCROLL_STEPS = 1;
+export const MAX_SCROLL_STEPS = 12;
+export const DEFAULT_SCROLL_STEPS = 3;
+
+export function clampScrollSteps(steps: number): number {
+  if (!Number.isFinite(steps)) return DEFAULT_SCROLL_STEPS;
+  return Math.min(MAX_SCROLL_STEPS, Math.max(MIN_SCROLL_STEPS, Math.round(steps)));
+}
+
 export interface TermViewHooks {
   /** Bytes to the PTY. */
   write(data: string): void;
@@ -18,6 +61,8 @@ export interface TermViewHooks {
   notify(body: string): void;
   /** User hit Esc / bare Ctrl+C — host should drop working chrome optimistically. */
   onUserCancel?(): void;
+  /** User referenced a highlighted region — host attaches it to the composer. */
+  onReferenceSelection?(text: string): void;
 }
 const PTY_RESIZE_DEBOUNCE_MS = 80;
 const MIN_FONT = 8;
@@ -42,6 +87,14 @@ export class TermView {
   private observer: ResizeObserver | null = null;
   private rafHandle: number | undefined;
   private ptyResizeTimer: number | undefined;
+  private repinRender: IDisposable | null = null;
+  private repinTimer: number | undefined;
+  private repinMarker: IMarker | null = null;
+  private repinAtBottom = true;
+  private repinOffset = 0;
+  private repinCeiling = 0;
+  private repinDeadline = 0;
+  private readonly autoScroll = new AbortController();
   private opened = false;
   private disposed = false;
   private lastCols = 0;
@@ -57,6 +110,11 @@ export class TermView {
   private currentFontSize = FONT_SIZE;
   private searchBar: HTMLDivElement | null = null;
   private onFontSizeChange: ((size: number) => void) | null = null;
+  private jumpBtn: HTMLButtonElement | null = null;
+  private atBottom = true;
+  /** Floating "Reference" affordance shown over a finished mouse selection. */
+  private selectionBubble: HTMLButtonElement | null = null;
+  private selectionDragging = false;
 
   constructor(
     private readonly hooks: TermViewHooks,
@@ -80,7 +138,14 @@ export class TermView {
       fontWeight: "normal",
       fontWeightBold: "bold",
       scrollback: 20_000,
+      // Smoothing plus a multiplied notch: several rows per detent, glided over
+      // ~200ms, so a page of scrollback takes a few flicks instead of dozens.
+      // The multiplier is user-tunable via setScrollSteps.
+      smoothScrollDuration: 200,
+      scrollSensitivity: DEFAULT_SCROLL_STEPS,
+      fastScrollSensitivity: 10,
       macOptionIsMeta: false,
+      windowsPty: window.omphif.windowsPty,
       theme: themePreset ? buildXtermTheme(themePreset) : undefined,
     });
     this.term.loadAddon(this.fit);
@@ -105,7 +170,10 @@ export class TermView {
           ev.preventDefault();
           if (ev.deltaY < 0) this.zoomIn();
           else this.zoomOut();
+          return;
         }
+        // Manual scrolling always wins over a resize anchor still in flight.
+        this.endRepin();
       },
       { passive: false },
     );
@@ -124,13 +192,24 @@ export class TermView {
       this.loadWebgl();
       this.observer = new ResizeObserver(() => this.scheduleFit());
       this.observer.observe(this.el);
+      this.installJumpToBottom();
+      this.installSelectionAction();
+      this.installAutoScroll();
     }
     this.applyFit();
+    this.syncJumpButton();
     this.term.focus();
   }
 
   deactivate(): void {
     this.el.classList.remove("active");
+    // The pill lives in shared chrome, so a background view must not leave one
+    // showing next to another tab's focus chip.
+    if (this.jumpBtn) {
+      this.jumpBtn.classList.remove("leaving");
+      this.jumpBtn.hidden = true;
+    }
+    this.atBottom = true;
   }
 
   /** PTY data in, with the flow-control ack fired once the parser has consumed it. */
@@ -315,6 +394,11 @@ export class TermView {
     this.applyFit();
   }
 
+  /** Rows advanced per wheel detent (settings slider). */
+  setScrollSteps(steps: number): void {
+    this.term.options.scrollSensitivity = clampScrollSteps(steps);
+  }
+
   get cols(): number {
     return this.term.cols;
   }
@@ -332,6 +416,11 @@ export class TermView {
     this.observer = null;
     this.webgl?.dispose();
     this.webgl = null;
+    this.endRepin();
+    this.autoScroll.abort();
+    // Reparented into shared chrome, so el.remove() would not take it along.
+    this.jumpBtn?.remove();
+    this.jumpBtn = null;
     this.term.dispose();
     this.el.remove();
   }
@@ -400,12 +489,329 @@ export class TermView {
       }
     }
 
-    if (wasAtBottom) {
-      this.term.scrollToBottom();
-    } else if (marker && marker.line >= 0) {
-      this.term.scrollToLine(marker.line);
+    // Keep re-asserting: a maximize fires several ResizeObserver ticks and xterm
+    // re-clamps the offset on each of its own render passes, so a fixed number of
+    // frames is not enough — hold the anchor until the resize storm settles.
+    this.beginRepin(wasAtBottom, marker, buffer.baseY - buffer.viewportY);
+  }
+
+  /**
+   * Anchor the viewport across a resize. `atBottom` sticks to live output;
+   * otherwise the marker's absolute line wins, with distance-from-bottom as the
+   * fallback for when reflow has already disposed the marker.
+   */
+  private beginRepin(atBottom: boolean, marker: IMarker | null, bottomOffset: number): void {
+    if (this.repinMarker !== marker) this.repinMarker?.dispose();
+    this.repinMarker = marker;
+    this.repinAtBottom = atBottom;
+    this.repinOffset = Math.max(0, bottomOffset);
+    const now = Date.now();
+    this.repinCeiling = now + REPIN_CEILING_MS;
+    this.repinDeadline = now + REPIN_SETTLE_MS;
+    // onRender catches the clamp the moment it becomes visible; the interval
+    // covers late disturbances (omp's post-resize redraw) that arrive after the
+    // render storm has already died down.
+    this.repinRender ??= this.term.onRender(() => this.applyRepin());
+    this.repinTimer ??= window.setInterval(() => this.applyRepin(), REPIN_POLL_MS);
+    this.applyRepin();
+  }
+
+  private applyRepin(): void {
+    if (this.disposed || !this.repinRender) return;
+    const buffer = this.term.buffer.active;
+    const marker = this.repinMarker;
+    const target = this.repinAtBottom
+      ? buffer.baseY
+      : marker && marker.line >= 0
+        ? marker.line
+        : buffer.baseY - this.repinOffset;
+    const now = Date.now();
+    if (buffer.viewportY !== target) {
+      // Re-pinning to the line already displayed emits no scroll event, so this
+      // cannot recurse through onRender.
+      this.pinViewport(target);
+      // Something is still moving the viewport: keep watching a bit longer,
+      // bounded by the ceiling so a pathological case cannot pin forever.
+      this.repinDeadline = Math.min(now + REPIN_SETTLE_MS, this.repinCeiling);
     }
-    marker?.dispose();
+    if (now >= this.repinDeadline || now >= this.repinCeiling) this.endRepin();
+  }
+
+  /** Drop the anchor: the resize settled, the view died, or the user took over. */
+  private endRepin(): void {
+    if (this.repinTimer !== undefined) clearInterval(this.repinTimer);
+    this.repinTimer = undefined;
+    this.repinRender?.dispose();
+    this.repinRender = null;
+    this.repinMarker?.dispose();
+    this.repinMarker = null;
+  }
+
+  /**
+   * Middle-button autoscroll: hold to scroll continuously, speed proportional to
+   * how far the pointer sits from the press point. Captured on the wrapper so
+   * xterm never sees the button and cannot report it to a mouse-tracking app.
+   */
+  private installAutoScroll(): void {
+    let originY = 0;
+    let pointerY = 0;
+    let lastTick = 0;
+    let carry = 0;
+    let frame: number | undefined;
+
+    const stop = (): void => {
+      if (frame !== undefined) cancelAnimationFrame(frame);
+      frame = undefined;
+      carry = 0;
+      this.el.classList.remove("term-autoscrolling");
+    };
+
+    const tick = (now: number): void => {
+      if (frame === undefined || this.disposed) return;
+      const dt = Math.min(64, now - lastTick) / 1000;
+      lastTick = now;
+      const distance = pointerY - originY;
+      const past = Math.abs(distance) - AUTOSCROLL_DEADZONE_PX;
+      if (past > 0) {
+        carry += Math.sign(distance) * past * AUTOSCROLL_ROWS_PER_PX * dt;
+        const rows = Math.trunc(carry);
+        if (rows !== 0) {
+          carry -= rows;
+          this.term.scrollLines(rows);
+        }
+      }
+      frame = requestAnimationFrame(tick);
+    };
+
+    const signal = this.autoScroll.signal;
+    this.el.addEventListener(
+      "mousedown",
+      (ev) => {
+        if (ev.button !== 1) return;
+        ev.preventDefault();
+        ev.stopPropagation();
+        // A resize anchor still holding would fight the user's scrolling.
+        this.endRepin();
+        originY = ev.clientY;
+        pointerY = ev.clientY;
+        lastTick = performance.now();
+        if (frame === undefined) frame = requestAnimationFrame(tick);
+        this.el.classList.add("term-autoscrolling");
+      },
+      { capture: true, signal },
+    );
+
+    this.el.addEventListener(
+      "mousemove",
+      (ev) => {
+        if (frame !== undefined) pointerY = ev.clientY;
+      },
+      { signal },
+    );
+
+    // mouseup can land outside the element (or outside the window) — listen wide.
+    window.addEventListener(
+      "mouseup",
+      (ev) => {
+        if (ev.button === 1 && frame !== undefined) {
+          ev.preventDefault();
+          stop();
+        }
+      },
+      { signal },
+    );
+    window.addEventListener("blur", stop, { signal });
+    signal.addEventListener("abort", stop);
+  }
+
+  private pinViewport(line: number): void {
+    const target = Math.max(0, line);
+    const viewport = (this.term as unknown as XtermInternals)._core?._viewport;
+    if (viewport) {
+      viewport.scrollToLine(target, true);
+      return;
+    }
+    // Future xterm rename: degrade to the public API instead of throwing.
+    if (target >= this.term.buffer.active.baseY) this.term.scrollToBottom();
+    else this.term.scrollToLine(target);
+  }
+
+  /**
+   * Highlight-to-reference: after a mouse selection settles, float a pill over
+   * the selection's first row. Clicking it hands the exact text to the host,
+   * which turns it into a composer reference chip.
+   *
+   * The bubble is only shown for pointer selections that have ended — showing
+   * it while the drag is live would fight the pointer under the cursor.
+   */
+  private installSelectionAction(): void {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "term-selection-action";
+    btn.hidden = true;
+    btn.title = "Add this selection to the composer as a reference";
+    btn.innerHTML =
+      '<span class="term-selection-icon" aria-hidden="true">&#8220;</span><span>Reference</span>';
+    // Keep focus where it is: mousedown default would pull it off the terminal
+    // and xterm clears the selection the moment it loses the pointer target.
+    btn.addEventListener("mousedown", (ev) => ev.preventDefault());
+    btn.addEventListener("click", () => {
+      const text = this.term.getSelection();
+      this.hideSelectionAction();
+      if (!text.trim()) return;
+      this.term.clearSelection();
+      this.hooks.onReferenceSelection?.(text);
+    });
+    this.el.appendChild(btn);
+    this.selectionBubble = btn;
+
+    this.el.addEventListener("mousedown", () => {
+      this.selectionDragging = true;
+      this.hideSelectionAction();
+    });
+    // Window-level: a drag that ends outside the terminal still finishes here.
+    window.addEventListener("mouseup", this.onSelectionMouseUp, {
+      signal: this.autoScroll.signal,
+    });
+    this.term.onSelectionChange(() => {
+      if (this.selectionDragging) return;
+      if (this.term.hasSelection()) this.showSelectionAction();
+      else this.hideSelectionAction();
+    });
+    // Keyboard input and scrolling both invalidate the anchor position.
+    this.term.onScroll(() => this.hideSelectionAction());
+    this.term.onData(() => this.hideSelectionAction());
+  }
+
+  private readonly onSelectionMouseUp = (): void => {
+    if (!this.selectionDragging) return;
+    this.selectionDragging = false;
+    if (this.term.hasSelection()) this.showSelectionAction();
+  };
+
+  private showSelectionAction(): void {
+    const btn = this.selectionBubble;
+    if (!btn) return;
+    const range = this.term.getSelectionPosition();
+    const screen = this.el.querySelector(".xterm-screen") as HTMLElement | null;
+    if (!range || !screen || !this.term.getSelection().trim()) {
+      this.hideSelectionAction();
+      return;
+    }
+
+    // Rect math, not offsetLeft: xterm's screen sits inside .xterm, so offsets
+    // are relative to that wrapper rather than the .view the bubble lives in.
+    const screenRect = screen.getBoundingClientRect();
+    const hostRect = this.el.getBoundingClientRect();
+    const originX = screenRect.left - hostRect.left;
+    const originY = screenRect.top - hostRect.top;
+    const cellW = screenRect.width / this.term.cols;
+    const cellH = screenRect.height / this.term.rows;
+    const viewportY = this.term.buffer.active.viewportY;
+    const startRow = range.start.y - viewportY;
+    const endRow = range.end.y - viewportY;
+
+    // Selection scrolled fully out of view — nothing to anchor to.
+    if (endRow < 0 || startRow >= this.term.rows) {
+      this.hideSelectionAction();
+      return;
+    }
+
+    // Unhide first: layout is needed to measure the pill for clamping.
+    btn.hidden = false;
+    const maxLeft = Math.max(0, this.el.clientWidth - btn.offsetWidth - 8);
+    const left = Math.min(Math.max(0, originX + range.start.x * cellW), maxLeft);
+    // Prefer sitting above the first selected row; drop below when clipped.
+    const above = originY + startRow * cellH - btn.offsetHeight - 6;
+    const below = originY + (endRow + 1) * cellH + 6;
+    const maxTop = Math.max(0, this.el.clientHeight - btn.offsetHeight - 4);
+    const top = Math.min(above >= 0 ? above : below, maxTop);
+    btn.style.left = `${Math.round(left)}px`;
+    btn.style.top = `${Math.round(top)}px`;
+  }
+
+  private hideSelectionAction(): void {
+    const btn = this.selectionBubble;
+    if (!btn || btn.hidden) return;
+    btn.hidden = true;
+  }
+
+  /** Scroll-off-bottom affordance; one click returns to live output. */
+  private installJumpToBottom(): void {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "term-jump-latest";
+    btn.hidden = true;
+    btn.title = "Jump to latest output";
+    btn.innerHTML =
+      '<span class="term-jump-arrow" aria-hidden="true">&#x2193;</span><span>Latest</span>';
+    // Never steal the caret: mousedown default is what moves focus to a button,
+    // so suppressing it leaves the composer (or the terminal) exactly as it was.
+    btn.addEventListener("mousedown", (ev) => ev.preventDefault());
+    btn.addEventListener("click", () => {
+      // A resize anchor still in flight would drag the view straight back.
+      this.endRepin();
+      // Public scrollToBottom() goes through scrollLines(), which animates with
+      // smoothScrollDuration — exactly the wanted feel here.
+      this.term.scrollToBottom();
+    });
+    // Sit in the keystroke-target row, to the right of the focus chip: same
+    // baseline, no dock/scrollbar collision. Fall back to the view if absent.
+    const slot = document.getElementById(JUMP_SLOT_ID) ?? this.el;
+    slot.appendChild(btn);
+    this.jumpBtn = btn;
+    // Hide only once the exit animation has played out, and let the focus chip
+    // glide into the freed space instead of teleporting.
+    btn.addEventListener("animationend", (ev) => {
+      if (ev.animationName === "term-jump-out" && btn.classList.contains("leaving")) {
+        const width = btn.offsetWidth + CHIP_GAP_PX;
+        btn.classList.remove("leaving");
+        btn.hidden = true;
+        this.slideChip(-width);
+      }
+    });
+    this.term.onScroll(() => this.syncJumpButton());
+    this.term.onRender(() => this.syncJumpButton());
+    this.syncJumpButton();
+  }
+
+  /**
+   * FLIP the focus chip: flex reflow is not animatable, so start it at its old
+   * offset and let a transform transition carry it to the new one. Only runs
+   * while the chip is actually showing — i.e. the terminal holds the keys.
+   */
+  private slideChip(shift: number): void {
+    const chip = document.getElementById(CHIP_ID);
+    if (!chip || chip.hidden || shift === 0) return;
+    // Mid-entrance the chip's own keyframes own `transform`; sliding would be
+    // overridden and then snap when the animation released it.
+    if (chip.getAnimations().some((anim) => anim.playState === "running")) return;
+    // No transition on the jump back to the old offset — only on the return.
+    chip.style.transition = "none";
+    chip.style.transform = `translateX(${shift}px)`;
+    requestAnimationFrame(() => {
+      chip.style.transition = "transform 220ms cubic-bezier(0.2, 0.9, 0.3, 1)";
+      chip.style.transform = "translateX(0)";
+    });
+  }
+
+  private syncJumpButton(): void {
+    const btn = this.jumpBtn;
+    if (!btn) return;
+    const buffer = this.term.buffer.active;
+    // One row of slack: a single-row offset still reads as "at the bottom".
+    const atBottom = buffer.viewportY >= buffer.baseY - 1;
+    if (atBottom === this.atBottom) return;
+    this.atBottom = atBottom;
+    if (atBottom) {
+      // Already hidden (first sync of a fresh view): skip the exit animation.
+      if (!btn.hidden) btn.classList.add("leaving");
+    } else {
+      btn.classList.remove("leaving");
+      btn.hidden = false;
+      // Now measurable: the chip has just been pushed left by this much.
+      this.slideChip(btn.offsetWidth + CHIP_GAP_PX);
+    }
   }
 
   private registerSequenceHandlers(): void {

@@ -53,33 +53,31 @@
   background: transparent;
 }
 
-/* Explicitly style xterm's scrollbar to guarantee pill-rounded shape */
-.xterm .xterm-viewport::-webkit-scrollbar,
-.view .xterm-viewport::-webkit-scrollbar,
-.xterm-viewport::-webkit-scrollbar {
-  width: 7px !important;
-  height: 7px !important;
+/* xterm 6 draws its own scrollbar (VS Code's scrollable element). The slider's
+   width/left/top are inline styles, so shape overrides need !important. The 14px
+   gutter must stay: @xterm/addon-fit reserves exactly that when measuring cols. */
+.xterm .xterm-scrollable-element > .scrollbar.vertical {
+  width: 14px !important;
 }
 
-.xterm .xterm-viewport::-webkit-scrollbar-track,
-.view .xterm-viewport::-webkit-scrollbar-track,
-.xterm-viewport::-webkit-scrollbar-track {
-  background: transparent !important;
+.xterm .xterm-scrollable-element > .scrollbar.vertical > .slider {
+  width: 8px !important;
+  left: 3px !important;
+  border-radius: 999px;
+  transition:
+    width 120ms ease,
+    left 120ms ease;
 }
 
-.xterm .xterm-viewport::-webkit-scrollbar-thumb,
-.view .xterm-viewport::-webkit-scrollbar-thumb,
-.xterm-viewport::-webkit-scrollbar-thumb {
-  background: color-mix(in srgb, var(--fg-dim) 40%, transparent) !important;
-  border-radius: 999px !important;
-  min-height: 28px !important;
+.xterm .xterm-scrollable-element > .scrollbar.vertical:hover > .slider {
+  width: 10px !important;
+  left: 2px !important;
 }
 
-.xterm .xterm-viewport::-webkit-scrollbar-thumb:hover,
-.view .xterm-viewport::-webkit-scrollbar-thumb:hover,
-.xterm-viewport::-webkit-scrollbar-thumb:hover {
-  background: color-mix(in srgb, var(--fg) 65%, transparent) !important;
-  border-radius: 999px !important;
+.xterm .xterm-scrollable-element > .scrollbar.horizontal > .slider {
+  height: 8px !important;
+  top: 3px !important;
+  border-radius: 999px;
 }
 
 html,
@@ -800,6 +798,7 @@ body.top-bar-as-menu #btn-top-menu {
   right: 22px;
   bottom: calc(var(--dock-clearance, 132px) - 18px);
   display: flex;
+  gap: 8px;
   justify-content: flex-end;
   align-items: center;
   padding: 0;
@@ -809,58 +808,33 @@ body.top-bar-as-menu #btn-top-menu {
   z-index: 25;
 }
 
+/* Identical to .term-jump-latest: same box, same entrance, no pulsing dot. */
 #key-target-indicator {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
   padding: 4px 10px;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--accent) 14%, var(--bg-raised));
-  border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border));
+  background: color-mix(in srgb, var(--accent) 18%, var(--bg-raised));
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
   color: var(--fg);
-  font-size: 11px;
-  font-weight: 560;
+  font: 560 11px/1 var(--ui);
   letter-spacing: 0.01em;
   box-shadow: 0 6px 16px rgba(0, 0, 0, 0.28);
-  animation: key-target-in 140ms cubic-bezier(0.2, 0.9, 0.3, 1) both;
+  animation: term-jump-pop 200ms cubic-bezier(0.16, 1.06, 0.3, 1.3);
 }
 
 #key-target-indicator[hidden] {
   display: none;
 }
 
-#key-target-indicator .key-target-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 999px;
-  background: var(--accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
-  animation: key-target-pulse 1.6s ease-in-out infinite;
+/* Same held exit as the jump pill, so neither chip ever vanishes abruptly. */
+#key-target-indicator.leaving {
+  animation: term-jump-out 160ms cubic-bezier(0.4, 0, 0.7, 0.2) forwards;
 }
 
 #key-target-indicator .key-target-label {
   color: var(--fg);
-}
-
-@keyframes key-target-in {
-  from {
-    opacity: 0;
-    transform: translateY(4px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@keyframes key-target-pulse {
-  0%,
-  100% {
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
-  }
-  50% {
-    box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 28%, transparent);
-  }
 }
 
 /* Composer dock — floats over the terminal; height changes no longer refit the PTY. */
@@ -993,6 +967,36 @@ body.top-bar-as-menu #btn-top-menu {
 
 .chip button:hover {
   color: var(--fg);
+}
+
+/* Terminal-selection reference chips — accent-tinted so they read as quoted
+   output rather than a file on disk. */
+.chip-snippet {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-tab));
+}
+
+.chip-snippet-icon {
+  color: var(--accent);
+  font: 700 14px/1 var(--ui);
+  transform: translateY(2px);
+}
+
+/* Re-referencing an identical selection reuses the chip; pulse so the repeat
+   click is not silently swallowed. */
+.chip-snippet.flash {
+  animation: chip-flash 420ms ease;
+}
+
+@keyframes chip-flash {
+  0% {
+    background: color-mix(in srgb, var(--accent) 55%, var(--bg-tab));
+    transform: scale(1.06);
+  }
+  100% {
+    background: color-mix(in srgb, var(--accent) 14%, var(--bg-tab));
+    transform: scale(1);
+  }
 }
 #dock-editor {
   position: relative;
@@ -2637,6 +2641,76 @@ body.hide-bottom-button-labels #dock-change-dir .btn-icon {
   border-color: var(--accent);
   box-shadow: 0 0 0 1px var(--accent-glow);
 }
+
+/* Wheel-step slider — accent track/thumb, value read-out on the right. */
+.settings-slider-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 4px;
+}
+
+.settings-slider-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Label takes the slack so the value pill (and Test button) stay right-aligned. */
+.settings-slider-head > .settings-pos-label {
+  flex: 1;
+}
+
+.settings-sound-preview {
+  padding: 2px 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border));
+  border-radius: 999px;
+  background: transparent;
+  color: var(--fg);
+  font: 560 11px/1.6 var(--ui);
+  cursor: default;
+  transition: background 120ms ease;
+}
+
+.settings-sound-preview:hover {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.settings-slider-value {
+  padding: 2px 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 16%, var(--bg-raised));
+  color: var(--fg);
+  font-size: 11px;
+  font-weight: 560;
+}
+
+.settings-slider {
+  width: 100%;
+  height: 4px;
+  margin: 6px 0 2px;
+  appearance: none;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 28%, var(--border));
+  outline: none;
+  cursor: pointer;
+}
+
+.settings-slider::-webkit-slider-thumb {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--bg-raised);
+  border-radius: 999px;
+  background: var(--accent);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+  transition: transform 90ms ease;
+}
+
+.settings-slider:active::-webkit-slider-thumb {
+  transform: scale(1.15);
+}
   align-items: center;
   justify-content: space-between;
   gap: 12px;
@@ -3274,6 +3348,122 @@ body.hide-bottom-button-labels #dock-change-dir .btn-icon {
   color: var(--fg);
   font: inherit;
   user-select: text;
+}
+
+/* Jump-to-latest — lives in #key-target-row, immediately right of the keystroke
+   focus chip, so both share one baseline clear of the dock and the scrollbar.
+   The row is pointer-events:none, so the pill has to opt back in. */
+.term-jump-latest {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 18%, var(--bg-raised));
+  color: var(--fg);
+  font: 560 11px/1 var(--ui);
+  letter-spacing: 0.01em;
+  cursor: default;
+  pointer-events: auto;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.28);
+  /* Replays on every show: unhiding from display:none restarts the animation.
+     No fill mode, so :active can still own transform once it has finished. */
+  animation: term-jump-pop 200ms cubic-bezier(0.16, 1.06, 0.3, 1.3);
+  transition:
+    background 120ms ease,
+    transform 90ms ease;
+}
+
+@keyframes term-jump-pop {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.82);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Held until animationend so the exit is visible, including on click. */
+.term-jump-latest.leaving {
+  animation: term-jump-out 160ms cubic-bezier(0.4, 0, 0.7, 0.2) forwards;
+  pointer-events: none;
+}
+
+@keyframes term-jump-out {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(4px) scale(0.86);
+  }
+}
+
+.term-jump-latest[hidden] {
+  display: none;
+}
+
+.term-jump-latest:hover {
+  background: color-mix(in srgb, var(--accent) 32%, var(--bg-raised));
+}
+
+.term-jump-latest:active {
+  transform: scale(0.94);
+}
+
+.term-jump-arrow {
+  font-size: 13px;
+  line-height: 1;
+}
+
+/* Highlight-to-reference pill, absolutely placed over the selection's first
+   row inside .view (which is position:relative and overflow:hidden). */
+.term-selection-action {
+  position: absolute;
+  z-index: 12;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 50%, var(--border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 22%, var(--bg-raised));
+  color: var(--fg);
+  font: 560 11px/1 var(--ui);
+  cursor: default;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.32);
+  animation: term-jump-pop 160ms cubic-bezier(0.16, 1.06, 0.3, 1.3);
+  transition:
+    background 120ms ease,
+    transform 90ms ease;
+}
+
+.term-selection-action[hidden] {
+  display: none;
+}
+
+.term-selection-action:hover {
+  background: color-mix(in srgb, var(--accent) 36%, var(--bg-raised));
+}
+
+.term-selection-action:active {
+  transform: scale(0.94);
+}
+
+.term-selection-icon {
+  color: var(--accent);
+  font: 700 14px/1 var(--ui);
+  transform: translateY(2px);
+}
+
+/* Middle-button autoscroll in progress — the pointer drives scroll velocity. */
+.view.term-autoscrolling,
+.view.term-autoscrolling .xterm-screen {
+  cursor: ns-resize;
 }
 
 /* Custom Context Menu */
@@ -4260,4 +4450,121 @@ body.hide-bottom-button-labels #dock-change-dir .btn-icon {
   to {
     transform: rotate(360deg);
   }
+}
+
+/* Drag-and-drop capture overlay — every external drag lands in the composer. */
+#dnd-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1400;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* Must never eat the drop: the window-level handler owns it. */
+  pointer-events: none;
+  background: color-mix(in srgb, var(--accent) 10%, rgba(8, 9, 13, 0.62));
+  backdrop-filter: blur(3px);
+  animation: dnd-fade 160ms ease both;
+}
+
+#dnd-overlay[hidden] {
+  display: none;
+}
+
+@keyframes dnd-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+#dnd-overlay-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 26px 40px;
+  border: 2px dashed var(--accent);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--bg-raised) 88%, transparent);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.6);
+  color: var(--fg);
+  font: 700 15px/1.3 var(--ui);
+  text-align: center;
+  animation: dnd-card-in 260ms cubic-bezier(0.16, 1.06, 0.3, 1.28) both;
+}
+
+@keyframes dnd-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Exit: the backdrop drives the teardown, the card falls away with it. */
+#dnd-overlay.leaving {
+  animation: dnd-fade-out 180ms ease forwards;
+}
+
+#dnd-overlay.leaving #dnd-overlay-card {
+  animation: dnd-card-out 180ms cubic-bezier(0.4, 0, 0.7, 0.2) forwards;
+}
+
+#dnd-overlay.leaving #dnd-overlay-icon {
+  animation: none;
+}
+
+@keyframes dnd-fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes dnd-card-out {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(10px) scale(0.94);
+  }
+}
+
+@keyframes dnd-icon-bob {
+  from {
+    transform: translateY(-5px);
+  }
+  to {
+    transform: translateY(3px);
+  }
+}
+
+#dnd-overlay-icon {
+  font-size: 30px;
+  color: var(--accent);
+  /* Keeps pulsing while the drag hovers, so the target never looks frozen. */
+  animation: dnd-icon-bob 900ms ease-in-out 260ms infinite alternate;
+}
+
+#dnd-overlay-sub {
+  color: var(--fg-dim);
+  font: 600 12px/1.3 var(--ui);
+}
+
+/* Accent the dock while a drag is in flight so the destination is unambiguous. */
+body.dnd-hover #dock {
+  border-color: var(--accent);
+  box-shadow:
+    0 10px 28px rgba(0, 0, 0, 0.35),
+    0 0 0 2px var(--accent-glow);
 }

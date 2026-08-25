@@ -1,4 +1,5 @@
 import type { CustomModelConfig } from "../shared/ipc";
+import { INTERNAL_DRAG_TYPE } from "./dnd";
 import { getProviderIcon } from "./provider-icons";
 
 export const DEFAULT_USER_MODELS: CustomModelConfig[] = [
@@ -320,6 +321,7 @@ export class ModelModal {
           if (ev.dataTransfer) {
             ev.dataTransfer.effectAllowed = "move";
             ev.dataTransfer.setData("text/plain", String(i));
+            ev.dataTransfer.setData(INTERNAL_DRAG_TYPE, "model");
           }
         });
 

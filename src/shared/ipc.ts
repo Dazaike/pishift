@@ -24,6 +24,7 @@ export const CH = {
   controlBridgeStatus: "control-bridge:status",
   readControlBridgeStatus: "control-bridge:read-status",
   setChromeColors: "app:set-chrome-colors",
+  setTaskbarBusy: "app:set-taskbar-busy",
   openPath: "app:open-path",
   showItemInFolder: "app:show-item-in-folder",
   copyText: "app:copy-text",
@@ -35,6 +36,7 @@ export const CH = {
   removeRecentFolder: "app:remove-recent-folder",
   clearRecentFolders: "app:clear-recent-folders",
   getRecentChats: "app:get-recent-chats",
+  getSkillCommands: "app:get-skill-commands",
 } as const;
 
 export type ControlBridgeActivity = AgentActivity;
@@ -212,6 +214,8 @@ export type PersistedState = {
   fontFamily?: string;
   /** Terminal zoom (xterm font size in px). */
   fontSize?: number;
+  /** Rows the terminal advances per wheel detent. */
+  scrollSteps?: number;
   favoriteModels?: string[];
   customModels?: CustomModelConfig[];
   showFavoritesOnly?: boolean;
@@ -227,6 +231,10 @@ export type PersistedState = {
   hideBottomButtonLabels?: boolean;
   collapseTopBarToMenu?: boolean;
   panelPosition?: PanelPosition;
+  /** Chime when a session goes from working back to waiting for input. */
+  doneSoundEnabled?: boolean;
+  /** 0–1 playback volume for the completion chime. */
+  doneSoundVolume?: number;
   tabs: TabState[];
   activeIndex: number;
 };
