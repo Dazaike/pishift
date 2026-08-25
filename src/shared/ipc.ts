@@ -1,5 +1,8 @@
 /** IPC channel names and payload types shared by main, preload and renderer. */
 
+import type { AgentActivity } from "./activity";
+import type { PlanMode } from "./plan-mode";
+
 export const CH = {
   ptySpawn: "pty:spawn",
   ptyWrite: "pty:write",
@@ -24,16 +27,93 @@ export const CH = {
   openPath: "app:open-path",
   showItemInFolder: "app:show-item-in-folder",
   copyText: "app:copy-text",
+  quitApp: "app:quit",
+  relaunchApp: "app:relaunch",
+  defaultCwd: "app:default-cwd",
+  getRecentFolders: "app:get-recent-folders",
+  addRecentFolder: "app:add-recent-folder",
+  removeRecentFolder: "app:remove-recent-folder",
+  clearRecentFolders: "app:clear-recent-folders",
+  getRecentChats: "app:get-recent-chats",
 } as const;
 
-export type ControlBridgeActivity = "idle" | "working" | "thinking";
+export type ControlBridgeActivity = AgentActivity;
+
+/** Activities the composer glow (and optionally tab indicators) can be colored by. */
+export type GlowActivity = Exclude<ControlBridgeActivity, "idle">;
+
+export const GLOW_ACTIVITIES: readonly GlowActivity[] = [
+  "waiting",
+  "thinking",
+  "responding",
+  "reading",
+  "editing",
+  "running",
+  "working",
+];
+
+export const GLOW_ACTIVITY_LABELS: Record<GlowActivity, string> = {
+  waiting: "Waiting",
+  thinking: "Thinking",
+  responding: "Responding",
+  reading: "Reading",
+  editing: "Editing",
+  running: "Running command",
+  working: "Working",
+};
+
+export const DEFAULT_ACTIVITY_COLORS: Record<GlowActivity, string> = {
+  waiting: "#94a3b8",
+  thinking: "#c084fc",
+  responding: "#7aa2f7",
+  reading: "#38bdf8",
+  editing: "#fb923c",
+  running: "#4ade80",
+  working: "#7aa2f7",
+};
+
+export interface PendingAskOption {
+  label: string;
+  description?: string;
+}
+
+export interface PendingAskQuestion {
+  id?: string;
+  question: string;
+  options: PendingAskOption[];
+  multi?: boolean;
+  recommended?: number;
+  header?: string;
+}
+
+export interface PendingAsk {
+  toolCallId: string;
+  questions: PendingAskQuestion[];
+}
+
+export interface TodoTask {
+  content: string;
+  status: string;
+}
+
+export interface TodoPhase {
+  name: string;
+  tasks: TodoTask[];
+}
 
 export interface ControlBridgeState {
   running: boolean;
   activity: ControlBridgeActivity;
   model: string | null;
   thinkingLevel: string;
-  plan: boolean;
+  /**
+   * Native plan tri-state published by the control-bridge extension.
+   * Absent when the running bridge predates the tri-state contract; treat a
+   * missing value as "no information" rather than "off".
+   */
+  planMode?: PlanMode;
+  ask: PendingAsk | null;
+  todo: TodoPhase[] | null;
   pid: number;
   cwd: string | null;
   /** Host session key (`OMPHIF_SESSION_ID` / ITERM_SESSION_ID suffix). */
@@ -114,15 +194,39 @@ export type CustomModelConfig = {
   iconUrl?: string;
 };
 
+export interface RecentChatInfo {
+  id: string;
+  title: string;
+  cwd: string;
+  updatedAt: string;
+  mtime: number;
+}
+
+export type PanelPosition = "top-right" | "center" | "top-center" | "bottom-center";
+
 export type PersistedState = {
   bounds?: WindowBounds;
   ompPath?: string;
   themeName?: string;
   theme?: Partial<ThemeSettings>;
+  fontFamily?: string;
+  /** Terminal zoom (xterm font size in px). */
+  fontSize?: number;
   favoriteModels?: string[];
   customModels?: CustomModelConfig[];
   showFavoritesOnly?: boolean;
   showUsageInHeader?: boolean;
+  /** User overrides for the composer glow color per activity; unset keys fall back to defaults. */
+  activityColors?: Partial<Record<GlowActivity, string>>;
+  /** Also color tab busy indicators by activity, not just the composer glow. */
+  activityColorsOnTabs?: boolean;
+  todoPanelVisible?: boolean;
+  todoPanelMode?: "overlay" | "docked";
+  recentFolders?: string[];
+  hideTopButtonLabels?: boolean;
+  hideBottomButtonLabels?: boolean;
+  collapseTopBarToMenu?: boolean;
+  panelPosition?: PanelPosition;
   tabs: TabState[];
   activeIndex: number;
 };

@@ -39,6 +39,13 @@ const LEGACY_MODIFIED: Record<string, true> = {
   Delete: true,
 };
 
+const ARROW_FINAL: Record<string, string> = {
+  ArrowUp: "A",
+  ArrowDown: "B",
+  ArrowRight: "C",
+  ArrowLeft: "D",
+};
+
 /** Keys that carry no character of their own. */
 const MODIFIER_KEYS: Record<string, true> = {
   Shift: true,
@@ -107,6 +114,21 @@ export function modifierMask(ev: KeyLike): number {
     (ev.ctrlKey ? CTRL : 0) |
     (ev.metaKey ? META : 0)
   );
+}
+
+/**
+ * Encode arrow keys (optionally modified) as CSI / SS3 sequences.
+ * Used when the dock has focus so xterm never sees the event.
+ * `application`: DECCKM on → SS3 (`ESC O A`); off → CSI (`ESC [ A`).
+ */
+export function encodeArrow(ev: KeyLike, application = false): string | null {
+  const final = ARROW_FINAL[ev.key];
+  if (!final) return null;
+  const mask = modifierMask(ev);
+  // Modified arrows always use CSI 1;<1+mask><final> (alt=3, shift+alt=4, …).
+  if (mask !== 0) return `\x1b[1;${1 + mask}${final}`;
+  // Unmodified: application cursor keys vs normal.
+  return application ? `\x1bO${final}` : `\x1b[${final}`;
 }
 
 /**

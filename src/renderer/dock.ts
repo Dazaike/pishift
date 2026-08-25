@@ -1,17 +1,20 @@
-import { IMAGE_EXT, type ImagePreview } from "../shared/ipc";
+import { IMAGE_EXT, type ControlBridgeActivity, type ImagePreview } from "../shared/ipc";
+import type { KeyLike } from "../shared/kitty-keys";
 import { DockGlow } from "./dock-glow";
 import { filePaths } from "./dnd";
 import { highlightMessage } from "./highlight";
 import { ImageLightbox } from "./image-lightbox";
 import { getProviderIcon } from "./provider-icons";
 import { SlashMenu } from "./slash-menu";
-
+import { ThinkingMenu } from "./thinking-menu";
+import { getThinkingIconSvg } from "./thinking-icons";
+import planIcon from "./assets/icons/plan.png";
+import type { PlanMode, PlanTarget } from "../shared/plan-mode";
 export type DockPayload = {
   text: string;
   imagePaths: string[];
   otherPaths: string[];
 };
-export type PlanState = "off" | "on" | "paused";
 export type Attachment = { path: string; isImage: boolean };
 
 /** Fallback when model metadata is unknown — no xhigh (many models lack it). */
@@ -137,7 +140,8 @@ export type DockState = {
   text: string;
   chips: Attachment[];
   history: string[];
-  planState: PlanState;
+  // Plan state deliberately absent: it lives on the tab's PlanReconciler so
+  // there is exactly one source of truth.
   modelName: string;
   thinkingLevel: string;
 };
@@ -148,11 +152,16 @@ export interface DockHooks {
   focusTerminal(): void;
   forwardChord(ev: KeyboardEvent): boolean;
   type(data: string): void;
-  togglePlan(next: "on" | "off"): void;
+  writeTerminalRaw(data: string): void;
+  /** True when the active PTY wants arrow keys (application cursor mode). */
+  wantsTerminalArrows(): boolean;
+  /** Send an arrow chord to the active PTY using the correct cursor-key mode. */
+  writeTerminalArrow(ev: KeyLike): boolean;
+  setPlanTarget(target: PlanTarget): void;
   openModel(): void;
   openUsage(): void;
   openTools?(): void;
-  cycleThinking(): void;
+  selectThinking(level: string): void;
   changeCwd(): void;
 }
 
@@ -190,16 +199,21 @@ export class Dock {
   private readonly modelBtn = document.getElementById("dock-model") as HTMLButtonElement;
   private readonly planBtn = document.getElementById("dock-plan") as HTMLButtonElement;
   private readonly thinkingBtn = document.getElementById("dock-thinking-btn") as HTMLButtonElement;
+  private readonly stopButton = document.getElementById("dock-stop") as HTMLButtonElement;
   private readonly sendButton = document.getElementById("dock-send") as HTMLButtonElement;
+  private readonly sendLabel = this.sendButton.querySelector(".dock-send-label") as HTMLSpanElement | null;
   private readonly slashMenu: SlashMenu;
+  private readonly thinkingMenu: ThinkingMenu;
+  private readonly lightbox: ImageLightbox;
   private readonly glow: DockGlow;
-  private readonly lightbox = new ImageLightbox();
+  private isBusy = false;
   private isExpanded = false;
   private chips: Attachment[] = [];
   private history: string[] = [];
   private historyIndex = -1;
   private draft = "";
-  private planState: PlanState = "off";
+  private planMode: PlanMode = "off";
+  private planPending = false;
   private modelName = "";
   private thinkingLevel = "low";
   private thinkingLevels: string[] = [...DEFAULT_THINKING_LEVELS];
@@ -219,25 +233,31 @@ export class Dock {
 
     const editorEl = document.getElementById("dock-editor") as HTMLElement;
     this.glow = new DockGlow(editorEl);
-    editorEl.appendChild(this.slashMenu.el);
-
-    this.sendButton.addEventListener("click", () => this.submit());
+    this.lightbox = new ImageLightbox();
+    this.root.appendChild(this.slashMenu.el);
+    this.stopButton.addEventListener("click", () => {
+      this.hooks.interrupt();
+    });
+    this.sendButton.addEventListener("click", () => {
+      this.submit();
+    });
     this.changeDirBtn.addEventListener("click", () => this.hooks.changeCwd());
     this.usageBtn.addEventListener("click", () => this.hooks.openUsage());
     this.modelBtn.addEventListener("click", () => this.hooks.openModel());
     this.toolsBtn?.addEventListener("click", () => this.hooks.openTools?.());
     this.expandBtn?.addEventListener("click", () => this.toggleExpand());
     this.planBtn.addEventListener("click", () => {
-      // Binary only. Native omp may pass through PAUSED; treat it as ON.
-      const isOn = this.planState === "on" || this.planState === "paused";
-      const next: "on" | "off" = isOn ? "off" : "on";
-      this.planState = next;
-      this.updatePlanButton();
-      this.hooks.togglePlan(next);
+      // Display-only: never mutate planMode here. The reconciler repaints once
+      // omp actually reports the new state.
+      const target: PlanTarget = this.planMode === "off" ? "on" : "off";
+      this.hooks.setPlanTarget(target);
     });
 
+    this.thinkingMenu = new ThinkingMenu(this.thinkingBtn, (level) => {
+      this.hooks.selectThinking(level);
+    });
     this.thinkingBtn.addEventListener("click", () => {
-      this.hooks.cycleThinking();
+      this.thinkingMenu.toggle(this.thinkingLevels, normalizeThinkingToken(this.thinkingLevel));
     });
 
     this.input.addEventListener("input", () => {
@@ -250,7 +270,7 @@ export class Dock {
       this.mirror.scrollLeft = this.input.scrollLeft;
     });
 
-    this.input.addEventListener("keydown", (ev) => this.onKeyDown(ev));
+    this.input.addEventListener("keydown", (ev) => this.onKeyDown(ev), true);
     this.input.addEventListener("paste", (ev) => void this.onPaste(ev));
     this.input.addEventListener("focus", () => this.root.classList.add("focused"));
     this.input.addEventListener("blur", () => {
@@ -279,14 +299,31 @@ export class Dock {
   }
 
   /** Orbiting glow around the composer while the active session is busy. */
-  setAgentBusy(busy: boolean, kind: "idle" | "working" | "thinking" = "idle"): void {
+  setAgentBusy(busy: boolean, kind: ControlBridgeActivity = "idle"): void {
+    this.isBusy = busy;
     this.root.classList.toggle("agent-busy", busy);
-    this.root.classList.toggle("agent-working", busy && kind === "working");
-    this.root.classList.toggle("agent-thinking", busy && kind === "thinking");
-    if (busy && (kind === "working" || kind === "thinking")) {
+    this.updateSendButton();
+    if (busy && kind !== "idle") {
+      this.root.style.setProperty("--dock-active-color", `var(--glow-${kind})`);
+      // Always (re)start so kind switches mid-turn recolor the comet immediately.
       this.glow.start(kind);
     } else {
+      this.root.style.removeProperty("--dock-active-color");
       this.glow.stop();
+    }
+  }
+
+  private updateSendButton(): void {
+    if (this.isBusy) {
+      this.stopButton.hidden = false;
+      this.sendButton.classList.add("icon-only");
+      this.sendButton.title = "Queue message (Enter)";
+      if (this.sendLabel) this.sendLabel.style.display = "none";
+    } else {
+      this.stopButton.hidden = true;
+      this.sendButton.classList.remove("icon-only");
+      this.sendButton.title = "Send message (Enter)";
+      if (this.sendLabel) this.sendLabel.style.display = "";
     }
   }
 
@@ -311,8 +348,9 @@ export class Dock {
     this.setModel(name);
   }
 
-  setPlanState(state: PlanState): void {
-    this.planState = state;
+  setPlanMode(mode: PlanMode, pending = this.planPending): void {
+    this.planMode = mode;
+    this.planPending = pending;
     this.updatePlanButton();
   }
 
@@ -336,7 +374,8 @@ export class Dock {
     if (!level && level !== "off") return;
     const token = clampThinkingToLevels(level, this.thinkingLevels);
     this.thinkingLevel = formatThinkingLevel(token);
-    this.thinkingBtn.innerHTML = `<img src="./assets/icons/thinking.png" alt="" class="btn-icon" /><span class="dock-thinking-label">Thinking: ${this.thinkingLevel}</span>`;
+    const iconSvg = getThinkingIconSvg(token);
+    this.thinkingBtn.innerHTML = `${iconSvg}<span class="dock-thinking-label">Thinking: ${this.thinkingLevel}</span>`;
   }
 
   toggleExpanded(): void {
@@ -359,7 +398,6 @@ export class Dock {
       text: this.input.value,
       chips: [...this.chips],
       history: [...this.history],
-      planState: this.planState,
       modelName: this.modelName,
       thinkingLevel: this.thinkingLevel,
     };
@@ -369,7 +407,6 @@ export class Dock {
     this.input.value = state?.text ?? "";
     this.chips = state ? [...state.chips] : [];
     this.history = state ? [...state.history] : [];
-    this.planState = state?.planState ?? "off";
     this.modelName = state?.modelName ?? "";
     this.thinkingLevel = state?.thinkingLevel ?? "low";
     this.historyIndex = -1;
@@ -384,20 +421,18 @@ export class Dock {
 
   private updatePlanButton(): void {
     this.planBtn.classList.remove("plan-off", "plan-on", "plan-paused");
-    const icon = `<img src="./assets/icons/plan.png" alt="" class="btn-icon" />`;
-    if (this.planState === "on") {
-      this.planBtn.innerHTML = `${icon}<span class="dock-plan-label">Plan: ON</span>`;
-      this.planBtn.classList.add("plan-on");
-      this.planBtn.title = "Plan mode ON — click to turn OFF";
-    } else if (this.planState === "paused") {
-      this.planBtn.innerHTML = `${icon}<span class="dock-plan-label">Plan: ON</span>`;
-      this.planBtn.classList.add("plan-on");
-      this.planBtn.title = "Plan mode ON — click to turn OFF";
-    } else {
-      this.planBtn.innerHTML = `${icon}<span class="dock-plan-label">Plan: OFF</span>`;
-      this.planBtn.classList.add("plan-off");
-      this.planBtn.title = "Plan mode OFF — click to turn ON";
-    }
+    this.planBtn.classList.toggle("plan-pending", this.planPending);
+    const icon = `<img src="${planIcon}" alt="" class="btn-icon" />`;
+    const label =
+      this.planMode === "on" ? "Plan: ON" : this.planMode === "paused" ? "Plan: PAUSED" : "Plan: OFF";
+    this.planBtn.innerHTML = `${icon}<span class="dock-plan-label">${label}</span>`;
+    this.planBtn.classList.add(`plan-${this.planMode}`);
+    this.planBtn.title =
+      this.planMode === "on"
+        ? "Plan mode ON — click to exit"
+        : this.planMode === "paused"
+          ? "Plan mode PAUSED by omp — click to exit"
+          : "Plan mode OFF — click to enter";
   }
 
   private checkSlashMenu(): void {
@@ -419,7 +454,7 @@ export class Dock {
     if (!text.trim() && payload.imagePaths.length + payload.otherPaths.length === 0) return;
 
     this.slashMenu.close();
-    this.playSendAnimation(payload.imagePaths.length + payload.otherPaths.length > 0);
+    this.playComposerSink();
     this.hooks.submit(payload);
 
     if (text.trim() && this.history[this.history.length - 1] !== text) {
@@ -434,22 +469,85 @@ export class Dock {
     this.render();
   }
 
-  /** Brief launch feedback when Enter / Send fires. */
-  private playSendAnimation(hadAttachments: boolean): void {
-    this.root.classList.remove("sending", "sending-attach");
-    this.sendButton.classList.remove("sending");
-    // Restart CSS animations if the user hammers Enter.
-    void this.root.offsetWidth;
-    this.root.classList.add("sending");
-    if (hadAttachments) this.root.classList.add("sending-attach");
-    this.sendButton.classList.add("sending");
+  /** Brief press-in on Enter/Send, then spring back to focused or idle scale. */
+  private playComposerSink(): void {
+    const editor = document.getElementById("dock-editor");
+    if (!editor) return;
+    editor.classList.remove("sinking");
+    // Force reflow so re-adding the class restarts the transition.
+    void editor.offsetWidth;
+    editor.classList.add("sinking");
     window.setTimeout(() => {
-      this.root.classList.remove("sending", "sending-attach");
-      this.sendButton.classList.remove("sending");
-    }, 480);
+      editor.classList.remove("sinking");
+    }, 170);
   }
 
   private onKeyDown(ev: KeyboardEvent): void {
+    const arrowKey = this.arrowKeyOf(ev);
+    const isArrow = arrowKey !== null;
+
+    // Composer-focused: Alt(+Shift)+arrows are a host shortcut that injects
+    // normal (or app-cursor) arrow sequences into the PTY. Alt is NOT part of
+    // the terminal chord — omp menus expect plain arrows.
+    if (isArrow && ev.altKey && !ev.ctrlKey && !ev.metaKey) {
+      const ok = this.hooks.writeTerminalArrow({
+        key: arrowKey!,
+        code: ev.code,
+        altKey: false,
+        shiftKey: ev.shiftKey,
+        ctrlKey: false,
+        metaKey: false,
+      });
+      if (ok) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        return;
+      }
+    }
+
+    // Composer-focused: Alt+Enter (or Alt+NumpadEnter) injects Enter (\r) into
+    // the PTY so user can confirm options in omp interactive menus without
+    // submitting the composer or leaving the dock.
+    if (
+      (ev.key === "Enter" || ev.code === "Enter" || ev.code === "NumpadEnter") &&
+      ev.altKey &&
+      !ev.ctrlKey &&
+      !ev.metaKey
+    ) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      this.hooks.writeTerminalRaw("\r");
+      return;
+    }
+
+    // When omp enables application cursor keys (menus/pickers), plain arrows
+    // go to the terminal if the slash menu is closed and the composer is empty
+    // (so we don't steal caret motion while typing).
+    if (
+      isArrow &&
+      !ev.altKey &&
+      !ev.ctrlKey &&
+      !ev.metaKey &&
+      !ev.shiftKey &&
+      !this.slashMenu.isOpen &&
+      this.input.value.length === 0 &&
+      this.hooks.wantsTerminalArrows()
+    ) {
+      const ok = this.hooks.writeTerminalArrow({
+        key: arrowKey!,
+        code: ev.code,
+        altKey: false,
+        shiftKey: false,
+        ctrlKey: false,
+        metaKey: false,
+      });
+      if (ok) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        return;
+      }
+    }
+
     if (this.slashMenu.isOpen) {
       if (ev.key === "ArrowUp") {
         ev.preventDefault();
@@ -464,7 +562,14 @@ export class Dock {
       if (ev.key === "Enter" || ev.key === "Tab") {
         ev.preventDefault();
         const cmd = this.slashMenu.selectCurrent();
-        if (cmd) {
+        if (!cmd) return;
+        if (ev.key === "Enter") {
+          // One keystroke: complete the command and send it.
+          this.input.value = `/${cmd.name}`;
+          this.render();
+          this.submit();
+        } else {
+          // Tab only completes (keeps a trailing space when the command takes args).
           this.input.value = `/${cmd.name}${cmd.args ? " " : ""}`;
           this.render();
         }
@@ -523,6 +628,36 @@ export class Dock {
         ev.preventDefault();
         this.recall(1);
       }
+    }
+  }
+
+  /** Resolve ArrowUp/Down/Left/Right from key or physical code (Windows Alt quirks). */
+  private arrowKeyOf(ev: KeyboardEvent): "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight" | null {
+    const fromKey = ev.key;
+    if (
+      fromKey === "ArrowUp" ||
+      fromKey === "ArrowDown" ||
+      fromKey === "ArrowLeft" ||
+      fromKey === "ArrowRight"
+    ) {
+      return fromKey;
+    }
+    // Some hosts report only `code` when Alt is held.
+    switch (ev.code) {
+      case "ArrowUp":
+      case "Up":
+        return "ArrowUp";
+      case "ArrowDown":
+      case "Down":
+        return "ArrowDown";
+      case "ArrowLeft":
+      case "Left":
+        return "ArrowLeft";
+      case "ArrowRight":
+      case "Right":
+        return "ArrowRight";
+      default:
+        return null;
     }
   }
 

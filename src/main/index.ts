@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
@@ -14,6 +14,9 @@ import {
   shell,
 } from "electron";
 
+// Disable Windows 11 Fluent/Overlay scrollbars so WebKit custom rounded scrollbars apply.
+app.commandLine.appendSwitch("disable-features", "FluentScrollbar,OverlayScrollbar");
+
 import {
   CH,
   type ImagePreview,
@@ -23,7 +26,7 @@ import {
   type SpawnRequest,
   type SpawnResult,
 } from "../shared/ipc";
-import { loadInstalledModels, queryOmpUsage } from "./omp-data";
+import { loadInstalledModels, loadRecentChats, loadRecentFolders, queryOmpUsage } from "./omp-data";
 import { PtyManager } from "./pty-manager";
 import { StateStore } from "./state-store";
 import { ControlBridgeListener } from "./control-bridge-listener";
@@ -32,6 +35,20 @@ const DEFAULT_CHROME_BG = "#191b24";
 const DEFAULT_CHROME_FG = "#c8cbd9";
 const TEMP_SUBDIR = "pishift";
 
+export function getDefaultCwd(): string {
+  if (process.platform === "win32") {
+    const tempDir = "C:\\temp";
+    try {
+      if (!existsSync(tempDir)) {
+        mkdirSync(tempDir, { recursive: true });
+      }
+      return tempDir;
+    } catch {
+      return app.getPath("temp");
+    }
+  }
+  return app.getPath("temp");
+}
 let win: BrowserWindow | null = null;
 let store: StateStore;
 let ptys: PtyManager;
@@ -76,6 +93,10 @@ function createWindow(): BrowserWindow {
   };
   window.on("resized", persistBounds);
   window.on("moved", persistBounds);
+  window.on("close", () => {
+    persistBounds();
+    store.flush();
+  });
 
   window.webContents.setWindowOpenHandler(({ url }) => {
     void shell.openExternal(url);
@@ -165,9 +186,15 @@ function registerIpc(): void {
   ipcMain.handle(CH.loadState, (): PersistedState => store.get());
   ipcMain.on(CH.saveState, (_e, next: Partial<PersistedState>) => store.patch(next));
   ipcMain.handle(CH.homeDir, () => app.getPath("home"));
+  ipcMain.handle(CH.defaultCwd, () => getDefaultCwd());
   ipcMain.handle(CH.getModels, () => loadInstalledModels());
   ipcMain.handle(CH.getProviderUsage, () => queryOmpUsage());
   ipcMain.handle(CH.readControlBridgeStatus, () => bridgeListener?.currentState ?? null);
+  ipcMain.handle(CH.getRecentFolders, () => loadRecentFolders(store.recentFolders));
+  ipcMain.handle(CH.addRecentFolder, (_e, folder: string) => store.addRecentFolder(folder));
+  ipcMain.handle(CH.removeRecentFolder, (_e, folder: string) => store.removeRecentFolder(folder));
+  ipcMain.on(CH.clearRecentFolders, () => store.clearRecentFolders());
+  ipcMain.handle(CH.getRecentChats, (_e, cwd?: string) => loadRecentChats(cwd));
   ipcMain.on(
     CH.setChromeColors,
     (_e, colors: { background: string; symbol: string }) => {
@@ -186,6 +213,21 @@ function registerIpc(): void {
   ipcMain.handle(CH.openPath, (_e, targetPath: string) => shell.openPath(targetPath));
   ipcMain.handle(CH.showItemInFolder, (_e, targetPath: string) => shell.showItemInFolder(targetPath));
   ipcMain.on(CH.copyText, (_e, text: string) => clipboard.writeText(text));
+  ipcMain.on(CH.quitApp, () => {
+    store.flush();
+    app.quit();
+  });
+  ipcMain.on(CH.relaunchApp, () => {
+    store.flush();
+    ptys.killAll();
+    bridgeListener?.close();
+    if (!app.isPackaged) {
+      app.relaunch({ args: process.argv.slice(1) });
+    } else {
+      app.relaunch();
+    }
+    app.exit(0);
+  });
 }
 
 async function ensureControlBridgeInstalled(): Promise<void> {
@@ -217,19 +259,24 @@ async function ensureControlBridgeInstalled(): Promise<void> {
   }
 }
 
-if (!app.requestSingleInstanceLock()) {
+const isDev = process.env.NODE_ENV === "development" || !app.isPackaged;
+const hasLock = isDev ? true : app.requestSingleInstanceLock();
+
+if (!hasLock) {
   app.quit();
 } else {
-  app.on("second-instance", () => {
-    if (!win) return;
-    if (win.isMinimized()) win.restore();
-    win.focus();
-  });
+  if (!isDev) {
+    app.on("second-instance", () => {
+      if (!win) return;
+      if (win.isMinimized()) win.restore();
+      win.focus();
+    });
+  }
 
   void app.whenReady().then(async () => {
     await ensureControlBridgeInstalled();
     nativeTheme.themeSource = "dark";
-    store = new StateStore(app.getPath("userData"), app.getPath("home"));
+    store = new StateStore(app.getPath("userData"), getDefaultCwd());
     ptys = new PtyManager(send, () => store.ompPath);
     bridgeListener = new ControlBridgeListener((channel, payload) => {
       if (win && !win.isDestroyed()) win.webContents.send(channel, payload);

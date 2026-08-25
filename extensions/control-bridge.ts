@@ -9,14 +9,327 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
-type Activity = "idle" | "working" | "thinking";
+// ---8<--- activity-core (source of truth: src/shared/activity.ts) ---8<---
+/**
+ * Agent activity classification.
+ *
+ * Everything between the sentinel comments is duplicated verbatim into
+ * `extensions/control-bridge.ts`, which is copied standalone into
+ * `~/.omp/agent/extensions/` and therefore cannot import from `src/`. The copy
+ * drops the `export` keywords and nothing else; `test/activity-sync.test.ts`
+ * fails if the two drift. Keep this block dependency-free.
+ *
+ * Event shapes are omp 18's: `message_update` is forwarded to extensions as
+ * `{ type, message, assistantMessageEvent }`, `toolcall_start` / `toolcall_delta`
+ * carry the tool name only at `partial.content[contentIndex].name`,
+ * `toolcall_end` carries `toolCall.name`, and `tool_execution_*` carry a
+ * top-level `toolName` plus `toolCallId`.
+ */
+type AgentActivity =
+  | "idle"
+  | "waiting"
+  | "thinking"
+  | "responding"
+  | "reading"
+  | "editing"
+  | "running"
+  | "working";
+
+/** omp 18 `BUILTIN_TOOL_NAMES` plus its `search`/`find` aliases. */
+const TOOL_ACTIVITY: Record<string, AgentActivity> = {
+  read: "reading",
+  grep: "reading",
+  glob: "reading",
+  search: "reading",
+  find: "reading",
+  ast_grep: "reading",
+  lsp: "reading",
+  web_search: "reading",
+  inspect_image: "reading",
+  security_scan: "reading",
+  github: "reading",
+  recall: "reading",
+  reflect: "reading",
+  edit: "editing",
+  write: "editing",
+  ast_edit: "editing",
+  memory_edit: "editing",
+  retain: "editing",
+  learn: "editing",
+  manage_skill: "editing",
+  bash: "running",
+  eval: "running",
+  debug: "running",
+  browser: "running",
+  computer: "running",
+  ask: "working",
+  task: "working",
+  hub: "working",
+  todo: "working",
+  checkpoint: "working",
+  rewind: "working",
+};
+
+/** Highest wins when several tool calls are in flight at once. */
+const TOOL_PRIORITY: Record<AgentActivity, number> = {
+  running: 4,
+  editing: 3,
+  reading: 2,
+  working: 1,
+  thinking: 0,
+  responding: 0,
+  waiting: 0,
+  idle: 0,
+};
+
+/** `mcp__server__tool` -> `tool`; `Read`/`fs/read` -> `read`. */
+function normalizeToolKey(raw: string): string {
+  let name = raw.toLowerCase();
+  if (name.startsWith("mcp__")) {
+    const sep = name.indexOf("__", 5);
+    name = sep === -1 ? name.slice(5) : name.slice(sep + 2);
+  }
+  const tail = name.split(/[:/.]/).pop() ?? name;
+  return tail.replace(/[^a-z0-9_]/g, "");
+}
+
+function classifyToolActivity(rawToolName: string): AgentActivity {
+  const key = normalizeToolKey(rawToolName);
+  const known = TOOL_ACTIVITY[key];
+  if (known !== undefined) return known;
+
+  // Unknown or MCP tool: guess from word parts, never from bare substrings
+  // ("threading" must not read as "reading").
+  if (/(?:^|_)(?:edit|write|patch|apply|create|update|delete|remove|save)(?:_|$)/.test(key)) {
+    return "editing";
+  }
+  if (/(?:^|_)(?:read|grep|glob|search|find|list|view|get|fetch|inspect|query)(?:_|$)/.test(key)) {
+    return "reading";
+  }
+  if (/(?:^|_)(?:bash|sh|shell|cmd|exec|run|repl|eval|python|node|js|terminal)(?:_|$)/.test(key)) {
+    return "running";
+  }
+  return "working";
+}
+
+/** `assistantMessageEvent.type` for a forwarded `message_update`, else `event.type`. */
+function extractStreamEventType(event: unknown): string | undefined {
+  if (!event || typeof event !== "object") return undefined;
+  if ("assistantMessageEvent" in event) {
+    const inner = event.assistantMessageEvent;
+    if (inner && typeof inner === "object" && "type" in inner && typeof inner.type === "string") {
+      return inner.type;
+    }
+  }
+  if ("type" in event && typeof event.type === "string") return event.type;
+  return undefined;
+}
+
+function extractToolName(event: unknown): string | undefined {
+  if (!event || typeof event !== "object") return undefined;
+
+  // tool_execution_start / _update / _end.
+  if ("toolName" in event && typeof event.toolName === "string") return event.toolName;
+
+  // toolcall_end.
+  if ("toolCall" in event && event.toolCall && typeof event.toolCall === "object") {
+    const call = event.toolCall;
+    if ("name" in call && typeof call.name === "string") return call.name;
+  }
+
+  // toolcall_start / toolcall_delta: name only exists in the partial message.
+  if (
+    "partial" in event &&
+    event.partial &&
+    typeof event.partial === "object" &&
+    "contentIndex" in event &&
+    typeof event.contentIndex === "number"
+  ) {
+    const partial = event.partial;
+    if ("content" in partial && Array.isArray(partial.content)) {
+      const block = partial.content[event.contentIndex];
+      if (block && typeof block === "object" && "name" in block && typeof block.name === "string") {
+        return block.name;
+      }
+    }
+  }
+
+  if ("assistantMessageEvent" in event) return extractToolName(event.assistantMessageEvent);
+
+  return undefined;
+}
+
+/**
+ * Resolves omp's event stream to one activity.
+ *
+ * Precedence: in-flight tool executions (most specific wins) > a tool call whose
+ * arguments are still streaming > the assistant's streaming phase > `waiting`.
+ * `waiting` is the honest default inside a live turn: the request is out and
+ * nothing is streaming yet, which is most of the latency before the first token
+ * and the gap after each tool result is submitted. `working` is reserved for
+ * events that really are work of an unclassifiable kind (orchestration tools,
+ * unknown/MCP tools, a tool call whose name never arrived).
+ * Nothing is invented: every field is set from an observed event.
+ */
+class ActivityTracker {
+  private live = false;
+  private phase: "thinking" | "responding" | null = null;
+  private streamingTool: AgentActivity | null = null;
+  private readonly inFlight = new Map<string, AgentActivity>();
+
+  get activity(): AgentActivity {
+    if (!this.live) return "idle";
+    let best: AgentActivity | null = null;
+    for (const value of this.inFlight.values()) {
+      if (best === null || TOOL_PRIORITY[value] > TOOL_PRIORITY[best]) best = value;
+    }
+    if (best !== null) return best;
+    if (this.streamingTool !== null) return this.streamingTool;
+    if (this.phase !== null) return this.phase;
+    return "waiting";
+  }
+
+  /** Session start / switch / shutdown. */
+  reset(): void {
+    this.live = false;
+    this.phase = null;
+    this.streamingTool = null;
+    this.inFlight.clear();
+  }
+
+  agentStart(): void {
+    this.reset();
+    this.live = true;
+  }
+
+  /** `willContinue` means omp is looping into another agent run, not finishing. */
+  agentEnd(willContinue = false): void {
+    this.reset();
+    this.live = willContinue;
+  }
+
+  /** One `message_update`; `type` is `assistantMessageEvent.type`. */
+  stream(type: string | undefined, toolName: string | undefined): void {
+    this.live = true;
+    switch (type) {
+      case "thinking_delta":
+        this.phase = "thinking";
+        this.streamingTool = null;
+        break;
+      case "thinking_end":
+        if (this.phase === "thinking") this.phase = null;
+        break;
+      case "text_delta":
+        this.phase = "responding";
+        this.streamingTool = null;
+        break;
+      case "text_end":
+        if (this.phase === "responding") this.phase = null;
+        break;
+      case "toolcall_start":
+      case "toolcall_delta":
+      case "toolcall_end":
+        this.phase = null;
+        // A tool call is streaming, so this is never `waiting`; an unnamed delta
+        // keeps whatever the call was already classified as, else plain work.
+        this.streamingTool =
+          toolName !== undefined ? classifyToolActivity(toolName) : (this.streamingTool ?? "working");
+        break;
+    }
+  }
+
+  toolStart(toolCallId: string, toolName: string | undefined): void {
+    this.live = true;
+    this.inFlight.set(
+      toolCallId,
+      toolName !== undefined ? classifyToolActivity(toolName) : "working",
+    );
+  }
+
+  /** `tool_execution_update` — also recovers a start we never saw. */
+  toolUpdate(toolCallId: string, toolName: string | undefined): void {
+    if (this.inFlight.has(toolCallId)) {
+      this.live = true;
+      return;
+    }
+    this.toolStart(toolCallId, toolName);
+  }
+
+  toolEnd(toolCallId: string): void {
+    this.inFlight.delete(toolCallId);
+    // The call that was streaming arguments has finished executing.
+    if (this.inFlight.size === 0) this.streamingTool = null;
+  }
+}
+// ---8<--- end activity-core ---8<---
+
+interface PendingAskOption {
+  label: string;
+  description?: string;
+}
+
+interface PendingAskQuestion {
+  id?: string;
+  question: string;
+  options: PendingAskOption[];
+  multi?: boolean;
+  recommended?: number;
+  header?: string;
+}
+
+interface PendingAsk {
+  toolCallId: string;
+  questions: PendingAskQuestion[];
+}
+
+interface TodoTask {
+  content: string;
+  status: string;
+}
+
+interface TodoPhase {
+  name: string;
+  tasks: TodoTask[];
+}
+
+function normalizeTodoPhases(raw: unknown): TodoPhase[] | null {
+  if (!Array.isArray(raw)) return null;
+  const phases: TodoPhase[] = [];
+  for (const p of raw) {
+    if (!p || typeof p !== "object" || !("name" in p) || typeof p.name !== "string") continue;
+    if (!("tasks" in p) || !Array.isArray(p.tasks)) continue;
+    const tasks: TodoTask[] = [];
+    for (const t of p.tasks) {
+      if (!t || typeof t !== "object" || !("content" in t) || typeof t.content !== "string") continue;
+      const status = "status" in t && typeof t.status === "string" ? t.status : "pending";
+      tasks.push({ content: t.content, status });
+    }
+    phases.push({ name: p.name, tasks });
+  }
+  return phases;
+}
+
+/**
+ * Native plan tri-state. Kept identical to `src/shared/plan-mode.ts`; this
+ * file cannot import from `src/` because it is copied standalone into
+ * `~/.omp/agent/extensions/`.
+ */
+type PlanMode = "off" | "on" | "paused";
+
+/** Subset of omp's session manager used to derive plan mode. */
+interface SessionManagerLike {
+  getLeafId?: () => string | undefined;
+  getBranch?: () => unknown[] | undefined;
+}
 
 interface BridgeState {
   running: boolean;
-  activity: Activity;
+  activity: AgentActivity;
   model: string | null;
   thinkingLevel: string;
-  plan: boolean;
+  planMode: PlanMode;
+  ask: PendingAsk | null;
+  todo: TodoPhase[] | null;
   pid: number;
   cwd: string | null;
   /** Matches host `OMPHIF_SESSION_ID` so multi-tab chrome can route activity. */
@@ -55,24 +368,53 @@ const THINKING_LEVELS: Record<string, ThinkingLevel> = {
   max: (ThinkingLevel?.Max ?? "max") as ThinkingLevel,
 };
 
-function getEventType(event: unknown): string | undefined {
-  if (!event || typeof event !== "object") return undefined;
-  if ("assistantMessageEvent" in event) {
-    const ame = event.assistantMessageEvent;
-    if (ame && typeof ame === "object" && "type" in ame && typeof ame.type === "string") {
-      return ame.type;
+function normalizeAskOptions(raw: unknown): PendingAskOption[] {
+  if (!Array.isArray(raw)) return [];
+  const out: PendingAskOption[] = [];
+  for (const o of raw) {
+    if (typeof o === "string") {
+      out.push({ label: o });
+      continue;
+    }
+    if (o && typeof o === "object" && "label" in o && typeof o.label === "string") {
+      const option: PendingAskOption = { label: o.label };
+      if ("description" in o && typeof o.description === "string") {
+        option.description = o.description;
+      }
+      out.push(option);
     }
   }
-  if ("type" in event && typeof event.type === "string") {
-    return event.type;
+  return out;
+}
+
+function normalizeAskQuestions(raw: unknown): PendingAskQuestion[] {
+  if (!Array.isArray(raw)) return [];
+  const out: PendingAskQuestion[] = [];
+  for (const q of raw) {
+    if (!q || typeof q !== "object" || !("question" in q) || typeof q.question !== "string") continue;
+    const options = "options" in q ? normalizeAskOptions(q.options) : [];
+    if (options.length === 0) continue;
+    const question: PendingAskQuestion = { question: q.question, options };
+    if ("id" in q && typeof q.id === "string") question.id = q.id;
+    if ("multi" in q) question.multi = q.multi === true;
+    if ("recommended" in q && typeof q.recommended === "number") question.recommended = q.recommended;
+    if ("header" in q && typeof q.header === "string") question.header = q.header;
+    out.push(question);
   }
-  return undefined;
+  return out;
 }
 
 export default function controlBridge(pi: ExtensionAPI) {
-  let activity: Activity = "idle";
+  let activity: AgentActivity = "idle";
+  const tracker = new ActivityTracker();
+  let lastActivityPublish = 0;
+  let activityPublishPending = false;
   let running = false;
-  let planModeState = false;
+  let planMode: PlanMode = "off";
+  let planLeafId: string | null = null;
+  let publishedPlanMode: PlanMode | null = null;
+  let pendingAsk: PendingAsk | null = null;
+  let todoState: TodoPhase[] | null = null;
 
   let udp: dgram.Socket | undefined;
   let heartbeatStarted = false;
@@ -86,86 +428,42 @@ export default function controlBridge(pi: ExtensionAPI) {
     return udp;
   }
 
-  function readPlanMode(ctx: ExtensionContext): boolean {
-    if ("getPlanMode" in pi && typeof pi.getPlanMode === "function") {
-      const fn = pi.getPlanMode as () => boolean;
-      return fn();
+  /**
+   * Derive plan mode the way omp itself does: walk the current branch back to
+   * the newest `mode_change` entry. No extension API exposes plan state, and
+   * `/plan` emits no extension event, so this scan (leaf-id gated) is the only
+   * truthful source. Returns the last known value if `sessionManager` is
+   * missing rather than fabricating "off".
+   */
+  function readPlanMode(ctx: ExtensionContext): PlanMode {
+    // omp's public ExtensionContext type omits sessionManager's shape, but the
+    // TUI always supplies these two methods; nothing else is touched.
+    const withSession = ctx as ExtensionContext & { sessionManager?: SessionManagerLike };
+    const sm = withSession.sessionManager;
+    if (!sm || typeof sm.getBranch !== "function") return planMode;
+
+    const leaf = typeof sm.getLeafId === "function" ? (sm.getLeafId() ?? null) : null;
+    if (leaf !== null && leaf === planLeafId) return planMode;
+
+    let next: PlanMode = "off";
+    const branch = sm.getBranch() ?? [];
+    for (let i = branch.length - 1; i >= 0; i--) {
+      const entry = branch[i];
+      if (!entry || typeof entry !== "object") continue;
+      if (!("type" in entry) || entry.type !== "mode_change") continue;
+      const mode = "mode" in entry ? entry.mode : undefined;
+      next = mode === "plan" ? "on" : mode === "plan_paused" ? "paused" : "off";
+      break;
     }
-
-    if ("planModeEnabled" in ctx && typeof ctx.planModeEnabled === "boolean") {
-      return ctx.planModeEnabled;
-    }
-
-    if ("session" in ctx && ctx.session && typeof ctx.session === "object") {
-      const session = ctx.session;
-      if ("getPlanModeState" in session && typeof session.getPlanModeState === "function") {
-        const getter = session.getPlanModeState as () => { enabled?: boolean } | undefined;
-        const res = getter();
-        if (res && typeof res === "object" && typeof res.enabled === "boolean") {
-          return res.enabled;
-        }
-      }
-    }
-
-    return planModeState;
-  }
-
-  async function applyPlanMode(
-    enable: boolean,
-    ctx: ExtensionContext,
-  ): Promise<boolean> {
-    planModeState = enable;
-
-    // Official hook when present.
-    if ("setPlanMode" in pi && typeof pi.setPlanMode === "function") {
-      const res = await (
-        pi.setPlanMode as (v: boolean) => Promise<boolean> | boolean
-      )(enable);
-      return typeof res === "boolean" ? res : true;
-    }
-
-    // Best-effort session state. Full TUI enable still requires native `/plan`
-    // or Alt+Shift+P (handlePlanModeCommand); the desktop host sends that.
-    if ("session" in ctx && ctx.session && typeof ctx.session === "object") {
-      const session = ctx.session;
-      if (
-        "setPlanModeState" in session &&
-        typeof session.setPlanModeState === "function"
-      ) {
-        const setter = session.setPlanModeState as (state: unknown) => void;
-        if (enable) {
-          let planFilePath = "local://PLAN.md";
-          if (
-            "getPlanReferencePath" in session &&
-            typeof session.getPlanReferencePath === "function"
-          ) {
-            const path = (session.getPlanReferencePath as () => string | undefined)();
-            if (path) planFilePath = path;
-          }
-          setter({
-            enabled: true,
-            planFilePath,
-            workflow: "parallel",
-          });
-        } else {
-          setter(undefined);
-        }
-      }
-    }
-
-    // Queue native command text so a host that only sets the editor can submit.
-    if (ctx.hasUI && ctx.ui && "setEditorText" in ctx.ui) {
-      const setText = (ctx.ui as { setEditorText?: (t: string) => void }).setEditorText;
-      if (typeof setText === "function") setText("/plan");
-    }
-
-    return true;
+    planLeafId = leaf;
+    planMode = next;
+    return next;
   }
 
   function makeState(ctx: ExtensionContext): BridgeState {
     const model = ctx.models.current();
     const thinking = pi.getThinkingLevel();
-    const plan = readPlanMode(ctx);
+    const currentPlanMode = readPlanMode(ctx);
     const sessionId =
       process.env.OMPHIF_SESSION_ID ||
       process.env.ITERM_SESSION_ID?.split(":").pop() ||
@@ -180,7 +478,9 @@ export default function controlBridge(pi: ExtensionAPI) {
       thinkingLevel: thinking
         ? String(thinking)
         : "off",
-      plan,
+      planMode: currentPlanMode,
+      ask: pendingAsk,
+      todo: todoState,
       pid: process.pid,
       cwd: ctx.cwd ?? null,
       sessionId,
@@ -192,10 +492,8 @@ export default function controlBridge(pi: ExtensionAPI) {
     ctx: ExtensionContext,
     sendUdp = true,
   ) {
-    // Ignore subagents/headless copies of the extension.
-    if (!ctx.hasUI) return;
-
     const state = makeState(ctx);
+    publishedPlanMode = state.planMode;
     const json = JSON.stringify(state);
 
     mkdirSync(dirname(STATUS_FILE), {
@@ -225,17 +523,38 @@ export default function controlBridge(pi: ExtensionAPI) {
     }
   }
 
-  function setActivity(
-    ctx: ExtensionContext,
-    next: Activity,
-  ) {
-    if (!ctx.hasUI) return;
+  /** Coalesced activity publish: never faster than 120 ms, never drops the last state. */
+  const ACTIVITY_MIN_INTERVAL_MS = 120;
 
-    // Don't hammer the filesystem for every streamed token.
-    if (activity === next) return;
-
+  function syncActivity(ctx: ExtensionContext) {
+    const next = tracker.activity;
+    if (next === activity) return;
     activity = next;
-    publish(ctx);
+
+    const now = Date.now();
+    // Idle ends the turn; publish it immediately so the glow stops on time.
+    if (next === "idle" || now - lastActivityPublish >= ACTIVITY_MIN_INTERVAL_MS) {
+      lastActivityPublish = now;
+      publish(ctx, true);
+      return;
+    }
+    if (activityPublishPending) return;
+    activityPublishPending = true;
+    ctx.setTimeout(
+      () => {
+        activityPublishPending = false;
+        lastActivityPublish = Date.now();
+        publish(ctx, true);
+      },
+      ACTIVITY_MIN_INTERVAL_MS - (now - lastActivityPublish),
+    );
+  }
+
+  function toolCallKey(event: unknown, toolName: string | undefined): string {
+    if (event && typeof event === "object" && "toolCallId" in event && typeof event.toolCallId === "string") {
+      return event.toolCallId;
+    }
+    return toolName ?? "unknown";
   }
 
   function showCurrent(ctx: ExtensionContext) {
@@ -258,7 +577,7 @@ export default function controlBridge(pi: ExtensionAPI) {
 
   pi.registerCommand("m", {
     description:
-      "Show/set model, thinking level, and plan mode",
+      "Show/set model and thinking level",
 
     handler: async (args, ctx) => {
       const rawTokens = args
@@ -274,7 +593,6 @@ export default function controlBridge(pi: ExtensionAPI) {
 
       let targetModelSpec: string | undefined;
       let targetThinking: ThinkingLevel | undefined;
-      let targetPlan: boolean | undefined;
 
       let idx = 0;
       while (idx < rawTokens.length) {
@@ -286,32 +604,18 @@ export default function controlBridge(pi: ExtensionAPI) {
           continue;
         }
 
-        if (lower === "plan") {
-          const nextToken = rawTokens[idx + 1]?.toLowerCase();
-          if (nextToken === "on" || nextToken === "true" || nextToken === "1") {
-            targetPlan = true;
-            idx += 2;
-          } else if (nextToken === "off" || nextToken === "false" || nextToken === "0") {
-            targetPlan = false;
-            idx += 2;
-          } else {
-            // Direct toggle
-            const currentPlan = readPlanMode(ctx);
-            targetPlan = !currentPlan;
-            idx += 1;
-          }
-          continue;
-        }
-
-        if (lower === "plan:on" || lower === "plan=on") {
-          targetPlan = true;
-          idx++;
-          continue;
-        }
-
-        if (lower === "plan:off" || lower === "plan=off") {
-          targetPlan = false;
-          idx++;
+        if (lower === "plan" || lower.startsWith("plan:") || lower.startsWith("plan=")) {
+          // No extension API can enter or exit plan mode; pretending otherwise
+          // is what made the desktop button lie.
+          ctx.ui.notify(
+            "Plan mode can only be toggled by /plan (Alt+Shift+P) or the PiShift plan button.",
+            "warning",
+          );
+          idx +=
+            lower === "plan" &&
+            /^(on|off|true|false|1|0)$/.test(rawTokens[idx + 1]?.toLowerCase() ?? "")
+              ? 2
+              : 1;
           continue;
         }
 
@@ -354,10 +658,6 @@ export default function controlBridge(pi: ExtensionAPI) {
         pi.setThinkingLevel(targetThinking, false);
       }
 
-      if (targetPlan !== undefined) {
-        await applyPlanMode(targetPlan, ctx);
-      }
-
       publish(ctx);
       showCurrent(ctx);
     },
@@ -388,29 +688,13 @@ export default function controlBridge(pi: ExtensionAPI) {
   }
 
   // --------------------------------------------------
-  // Direct plan mode toggle (OFF <-> ON, no pause)
-  // --------------------------------------------------
-
-  pi.registerShortcut("alt+shift+o", {
-    description: "Toggle Plan Mode (ON/OFF)",
-
-    handler: async (ctx) => {
-      const current = readPlanMode(ctx);
-      const next = !current;
-      await applyPlanMode(next, ctx);
-      publish(ctx);
-    },
-  });
-
-  // --------------------------------------------------
   // State/event bridge
   // --------------------------------------------------
 
   pi.on("session_start", async (_event, ctx) => {
-    if (!ctx.hasUI) return;
-
     running = true;
     activity = "idle";
+    tracker.reset();
 
     publish(ctx);
 
@@ -420,74 +704,127 @@ export default function controlBridge(pi: ExtensionAPI) {
       heartbeatStarted = true;
 
       ctx.setInterval(() => {
-        publish(ctx, false);
-      }, 5000);
+        // Always UDP: file-only heartbeats left the desktop UI stuck on idle
+        // when a datagram was dropped mid-turn.
+        publish(ctx, true);
+      }, 2500);
+
+      // `/plan` fires no extension event, so poll the session branch. The
+      // leaf-id cache in readPlanMode makes an idle tick one cheap call.
+      ctx.setInterval(() => {
+        if (readPlanMode(ctx) !== publishedPlanMode) publish(ctx, true);
+      }, 250);
     }
   });
 
   pi.on("session_switch", async (_event, ctx) => {
-    if (!ctx.hasUI) return;
-
     activity = "idle";
+    tracker.reset();
+    pendingAsk = null;
+    todoState = null;
     publish(ctx);
   });
 
   pi.on(
     "before_agent_start",
     async (_event, ctx) => {
-      setActivity(ctx, "working");
+      tracker.agentStart();
+      syncActivity(ctx);
     },
   );
 
   pi.on("agent_start", async (_event, ctx) => {
-    setActivity(ctx, "working");
+    tracker.agentStart();
+    syncActivity(ctx);
   });
 
   pi.on("message_update", async (event, ctx) => {
-    if (!ctx.hasUI) return;
-
-    const type = getEventType(event);
-
-    switch (type) {
-      case "thinking_start":
-      case "thinking_delta":
-        setActivity(ctx, "thinking");
-        break;
-
-      case "thinking_end":
-      case "text_start":
-      case "text_delta":
-      case "toolcall_start":
-      case "toolcall_delta":
-      case "toolcall_end":
-        setActivity(ctx, "working");
-        break;
-    }
+    tracker.stream(extractStreamEventType(event), extractToolName(event));
+    syncActivity(ctx);
   });
 
   pi.on(
     "tool_execution_start",
-    async (_event, ctx) => {
-      setActivity(ctx, "working");
+    async (event, ctx) => {
+      const toolName = extractToolName(event);
+      tracker.toolStart(toolCallKey(event, toolName), toolName);
+      syncActivity(ctx);
+
+      if (
+        event &&
+        typeof event === "object" &&
+        "toolName" in event &&
+        event.toolName === "ask" &&
+        "toolCallId" in event &&
+        typeof event.toolCallId === "string"
+      ) {
+        const args = "args" in event ? event.args : ("arguments" in event ? event.arguments : undefined);
+        let questions = normalizeAskQuestions(
+          args && typeof args === "object" && "questions" in args ? args.questions : undefined,
+        );
+        if (questions.length === 0 && args && typeof args === "object") {
+          // Also support single-question arguments format { question, options, id, multi, recommended }
+          questions = normalizeAskQuestions([args]);
+        }
+        if (questions.length > 0) {
+          pendingAsk = { toolCallId: event.toolCallId, questions };
+          publish(ctx);
+        }
+      }
     },
   );
 
-  pi.on(
-    "tool_execution_update",
-    async (_event, ctx) => {
-      setActivity(ctx, "working");
-    },
-  );
+  pi.on("tool_execution_update", async (event, ctx) => {
+    const toolName = extractToolName(event);
+    tracker.toolUpdate(toolCallKey(event, toolName), toolName);
+    syncActivity(ctx);
+  });
 
   pi.on(
     "tool_execution_end",
-    async (_event, ctx) => {
-      setActivity(ctx, "working");
+    async (event, ctx) => {
+      tracker.toolEnd(toolCallKey(event, extractToolName(event)));
+      syncActivity(ctx);
+
+      if (
+        pendingAsk &&
+        event &&
+        typeof event === "object" &&
+        "toolCallId" in event &&
+        event.toolCallId === pendingAsk.toolCallId
+      ) {
+        pendingAsk = null;
+        publish(ctx);
+      }
+
+      if (
+        event &&
+        typeof event === "object" &&
+        "toolName" in event &&
+        event.toolName === "todo" &&
+        "result" in event &&
+        event.result &&
+        typeof event.result === "object" &&
+        "details" in event.result &&
+        event.result.details &&
+        typeof event.result.details === "object" &&
+        "phases" in event.result.details
+      ) {
+        const phases = normalizeTodoPhases(event.result.details.phases);
+        if (phases) {
+          todoState = phases;
+          publish(ctx);
+        }
+      }
     },
   );
 
-  pi.on("agent_end", async (_event, ctx) => {
-    setActivity(ctx, "idle");
+  pi.on("agent_end", async (event, ctx) => {
+    pendingAsk = null;
+    const willContinue =
+      Boolean(event) && typeof event === "object" && "willContinue" in event && event.willContinue === true;
+    tracker.agentEnd(willContinue);
+    syncActivity(ctx);
   });
 
   pi.on(
@@ -497,6 +834,7 @@ export default function controlBridge(pi: ExtensionAPI) {
 
       running = false;
       activity = "idle";
+      tracker.reset();
 
       publish(ctx);
 

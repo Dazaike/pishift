@@ -24,7 +24,12 @@ export class StateStore {
             .filter((t): t is TabState => typeof t?.cwd === "string" && existsSync(t.cwd))
             .map((t) => ({
               cwd: t.cwd,
-              ...(typeof t.customTitle === "string" && t.customTitle ? { customTitle: t.customTitle } : {}),
+              ...(typeof t.customTitle === "string" && t.customTitle
+                ? { customTitle: t.customTitle }
+                : {}),
+              ...(typeof t.colorTag === "string" && t.colorTag
+                ? { colorTag: t.colorTag }
+                : {}),
             }))
         : [];
       return {
@@ -32,12 +37,37 @@ export class StateStore {
         ompPath: raw.ompPath,
         themeName: raw.themeName,
         theme: raw.theme,
+        fontFamily: typeof raw.fontFamily === "string" ? raw.fontFamily : undefined,
+        fontSize:
+          typeof raw.fontSize === "number" && Number.isFinite(raw.fontSize)
+            ? raw.fontSize
+            : undefined,
         favoriteModels: Array.isArray(raw.favoriteModels) ? raw.favoriteModels : undefined,
         customModels: Array.isArray(raw.customModels) ? raw.customModels : undefined,
         showFavoritesOnly: raw.showFavoritesOnly,
         showUsageInHeader: raw.showUsageInHeader,
+        activityColors: raw.activityColors,
+        activityColorsOnTabs: raw.activityColorsOnTabs,
+        todoPanelVisible: raw.todoPanelVisible,
+        todoPanelMode: raw.todoPanelMode,
+        recentFolders: Array.isArray(raw.recentFolders)
+          ? raw.recentFolders.filter((f): f is string => typeof f === "string" && existsSync(f))
+          : undefined,
+        hideTopButtonLabels: typeof raw.hideTopButtonLabels === "boolean" ? raw.hideTopButtonLabels : undefined,
+        hideBottomButtonLabels: typeof raw.hideBottomButtonLabels === "boolean" ? raw.hideBottomButtonLabels : undefined,
+        collapseTopBarToMenu: typeof raw.collapseTopBarToMenu === "boolean" ? raw.collapseTopBarToMenu : undefined,
+        panelPosition:
+          raw.panelPosition === "center" ||
+          raw.panelPosition === "top-center" ||
+          raw.panelPosition === "bottom-center" ||
+          raw.panelPosition === "top-right"
+            ? raw.panelPosition
+            : undefined,
         tabs,
-        activeIndex: Math.min(Math.max(raw.activeIndex ?? 0, 0), Math.max(tabs.length - 1, 0)),
+        activeIndex: Math.min(
+          Math.max(raw.activeIndex ?? 0, 0),
+          Math.max(tabs.length - 1, 0),
+        ),
       };
     } catch {
       return { tabs: [], activeIndex: 0 };
@@ -54,6 +84,30 @@ export class StateStore {
 
   get ompPath(): string | undefined {
     return this.state.ompPath;
+  }
+  get recentFolders(): string[] {
+    return this.state.recentFolders ?? [];
+  }
+
+  addRecentFolder(folder: string): string[] {
+    const list = this.state.recentFolders ?? [];
+    const normalized = folder.replace(/[\\/]+$/, "");
+    const filtered = list.filter((f) => f.replace(/[\\/]+$/, "").toLowerCase() !== normalized.toLowerCase());
+    const updated = [folder, ...filtered].slice(0, 50);
+    this.patch({ recentFolders: updated });
+    return updated;
+  }
+
+  removeRecentFolder(folder: string): string[] {
+    const list = this.state.recentFolders ?? [];
+    const normalized = folder.replace(/[\\/]+$/, "").toLowerCase();
+    const updated = list.filter((f) => f.replace(/[\\/]+$/, "").toLowerCase() !== normalized);
+    this.patch({ recentFolders: updated });
+    return updated;
+  }
+
+  clearRecentFolders(): void {
+    this.patch({ recentFolders: [] });
   }
 
   patch(next: Partial<PersistedState>): void {

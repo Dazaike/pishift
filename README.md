@@ -43,7 +43,7 @@ No fake web-view wrappers pretending to be terminals. Just a genuine hardware-ac
 ### 🧠 Model & Reasoning Control for the Indecisive
 - **Model Switcher:** Grid view, list view, drag-and-drop reordering. Put your favorites at the top where they belong.
 - **One-Click Thinking Effort Cycle:** Stop typing `/m high` like a caveman. Just click through `Auto → Off → Min → Low → Medium → High → XHigh → Max`.
-- **Binary Plan Mode:** Solid emerald green when it's on. Off when it's off. No confusing ambiguous half-states.
+- **Honest Plan Mode:** One click always drives toward ON or OFF, but the button shows what omp is *actually* in — emerald `Plan: ON`, amber `Plan: PAUSED`, or `Plan: OFF` — and follows a `/plan` typed straight into the terminal. No optimistic lying.
 
 ### 🗂️ Tabs That Don’t Make You Want to Alt+F4
 - **Right-Click Power Context Menu:**
@@ -61,6 +61,13 @@ No fake web-view wrappers pretending to be terminals. Just a genuine hardware-ac
 ### 🎨 28 Themes Because Aesthetics Matter
 - 28 built-in palettes (Tokyo Night, Catppuccin, Gruvbox, Nord, Cyberpunk, Rose Pine, Synthwave...).
 - Syncs the entire Windows titlebar overlay and frame colors so your dark mode doesn't get ruined by a blinding white caption bar.
+
+### 🗃️ Quick-Switch Everything
+- **Recent Chats Popover:** Fuzzy-search and resume any past session by working directory without leaving the keyboard.
+- **Recent Folders Popover:** Jump straight to any workspace you've opened before.
+- **App Menu Popover:** The old "Usage" window is now a fast vertical popover (Todo, Settings, Relaunch, Quit) instead of a separate window — matches the Model/Thinking menu feel.
+- **Native-Feeling Ask & Confirm Dialogs:** In-app modals replace blocking OS prompts for destructive actions and quick input.
+- **Live Activity Sync:** Tab titles and status reflect the agent's actual state (`idle`, `working`, `thinking`) in real time instead of the generic "Temp" default.
 
 ---
 

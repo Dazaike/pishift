@@ -9,6 +9,7 @@ import {
   type ProviderUsageReport,
   type PtyData,
   type PtyExit,
+  type RecentChatInfo,
   type SpawnRequest,
   type SpawnResult,
 } from "../shared/ipc";
@@ -44,14 +45,22 @@ const api = {
   loadState: (): Promise<PersistedState> => ipcRenderer.invoke(CH.loadState),
   saveState: (next: Partial<PersistedState>): void => ipcRenderer.send(CH.saveState, next),
   homeDir: (): Promise<string> => ipcRenderer.invoke(CH.homeDir),
+  defaultCwd: (): Promise<string> => ipcRenderer.invoke(CH.defaultCwd),
   getModels: (): Promise<InstalledModelGroup[]> => ipcRenderer.invoke(CH.getModels),
   getProviderUsage: (): Promise<ProviderUsageReport[]> => ipcRenderer.invoke(CH.getProviderUsage),
+  getRecentFolders: (): Promise<string[]> => ipcRenderer.invoke(CH.getRecentFolders),
+  addRecentFolder: (folder: string): Promise<string[]> => ipcRenderer.invoke(CH.addRecentFolder, folder),
+  removeRecentFolder: (folder: string): Promise<string[]> => ipcRenderer.invoke(CH.removeRecentFolder, folder),
+  clearRecentFolders: (): void => ipcRenderer.send(CH.clearRecentFolders),
+  getRecentChats: (cwd?: string): Promise<RecentChatInfo[]> => ipcRenderer.invoke(CH.getRecentChats, cwd),
   setChromeColors: (background: string, symbol: string): void =>
     ipcRenderer.send(CH.setChromeColors, { background, symbol }),
   openPath: (targetPath: string): Promise<string> => ipcRenderer.invoke(CH.openPath, targetPath),
   showItemInFolder: (targetPath: string): Promise<void> =>
     ipcRenderer.invoke(CH.showItemInFolder, targetPath),
   copyText: (text: string): void => ipcRenderer.send(CH.copyText, text),
+  quitApp: (): void => ipcRenderer.send(CH.quitApp),
+  relaunchApp: (): void => ipcRenderer.send(CH.relaunchApp),
   // `File.path` was removed in Electron 32; this is the only way to recover the
   // on-disk path of a dropped file. Returns "" for in-memory Files.
   getPathForFile: (file: File): string => webUtils.getPathForFile(file),
