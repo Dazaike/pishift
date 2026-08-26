@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   BrowserWindow,
   Notification,
@@ -20,6 +20,7 @@ app.commandLine.appendSwitch("disable-features", "FluentScrollbar,OverlayScrollb
 import {
   CH,
   type ImagePreview,
+  type KillJobRequest,
   type PersistedState,
   type PtyData,
   type PtyExit,
@@ -28,6 +29,7 @@ import {
 } from "../shared/ipc";
 import { loadInstalledModels, loadRecentChats, loadRecentFolders, queryOmpUsage } from "./omp-data";
 import { loadSkillCommands } from "./omp-skills";
+import { loadJobActivity } from "./job-activity";
 import { PtyManager } from "./pty-manager";
 import { StateStore } from "./state-store";
 import { ControlBridgeListener } from "./control-bridge-listener";
@@ -197,6 +199,17 @@ function registerIpc(): void {
   ipcMain.on(CH.clearRecentFolders, () => store.clearRecentFolders());
   ipcMain.handle(CH.getRecentChats, (_e, cwd?: string) => loadRecentChats(cwd));
   ipcMain.handle(CH.getSkillCommands, (_e, cwd?: string) => loadSkillCommands(cwd));
+  ipcMain.handle(CH.getJobActivity, (_e, req) => loadJobActivity(req));
+  ipcMain.handle(CH.killJob, async (_e, req: KillJobRequest) => {
+    try {
+      const cancelPath = join(app.getPath("home"), ".omp", "agent", "cancel-job.json");
+      await mkdir(dirname(cancelPath), { recursive: true });
+      await writeFile(cancelPath, JSON.stringify(req), "utf8");
+      return true;
+    } catch {
+      return false;
+    }
+  });
   ipcMain.on(
     CH.setChromeColors,
     (_e, colors: { background: string; symbol: string }) => {

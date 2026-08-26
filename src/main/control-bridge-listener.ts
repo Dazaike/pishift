@@ -76,6 +76,7 @@ export class ControlBridgeListener {
     return [
       state.sessionId ?? "",
       state.pid ?? 0,
+      state.updateKind,
       state.activity ?? "",
       state.running ? "1" : "0",
       state.model ?? "",
@@ -83,6 +84,7 @@ export class ControlBridgeListener {
       state.planMode ?? "",
       state.ask?.toolCallId ?? "",
       state.todo ? JSON.stringify(state.todo) : "",
+      state.jobs ? state.jobs.map((j) => `${j.id}:${j.status}`).join(",") : "",
       // Intentionally omit updatedAt — heartbeats must not spam identical activity.
     ].join("|");
   }

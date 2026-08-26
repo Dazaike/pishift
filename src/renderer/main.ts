@@ -5,8 +5,10 @@ import {
   GLOW_ACTIVITIES,
   GLOW_ACTIVITY_LABELS,
   quotePath,
+  type AsyncJob,
   type ControlBridgeActivity,
   type ControlBridgeState,
+  isJobLifecycleUpdate,
   type CustomModelConfig,
   type GlowActivity,
   type InstalledModel,
@@ -16,6 +18,8 @@ import {
   type TodoPhase,
 } from "../shared/ipc";
 import { parseModelSlashCommand } from "../shared/model-command";
+import { findInstalledModel } from "../shared/model-match";
+import { buildAskQuestionKeys, type AskAnswer } from "../shared/ask-keys";
 import {
   DEFAULT_THEME_NAME,
   FONT_FAMILY,
@@ -52,7 +56,9 @@ import {
 } from "./term-view";
 import { DockToolsMenu } from "./dock-tools-menu";
 import { UsageModal } from "./usage-modal";
-import { AskModal, type AskAnswer } from "./ask-modal";
+import { AskModal } from "./ask-modal";
+import { PlanReviewModal, type PlanReviewAction } from "./plan-review-modal";
+import { JobActivityModal } from "./job-activity-modal";
 import { RecentFoldersModal } from "./recent-folders-modal";
 import { RecentChatsModal } from "./recent-chats-modal";
 import { TopMenu } from "./top-menu";
@@ -109,11 +115,19 @@ type Tab = {
   notice: HTMLDivElement | null;
   dock: DockState | undefined;
   pendingAsk: PendingAsk | null;
+  /** omp is blocked on an unanswered question. */
+  awaitingAsk: boolean;
+  /** In-flight delivery of ask answers to omp's sequential question dialogs. */
+  askSend: { keys: string[]; next: number; timer: number | null } | null;
   dismissedAskToolCallId: string | null;
   /** Auto-incrementing fallback label ("Session N") when no folder/auto-title applies. */
   sessionNumber: number;
   /** Read-only mirror of OMP's `/todo` tool state for this session. */
   todo: TodoPhase[] | null;
+  /** Read-only mirror of OMP's async job registry for this session. */
+  jobs: AsyncJob[];
+  /** Active Plan Review menu state in this session. */
+  planReview: { contextStats?: string } | null;
   /** Set when the user cancelled or the session died — that idle is not "done". */
   suppressDoneSound: boolean;
 };
@@ -159,11 +173,32 @@ let settingsModal: SettingsModal | null = null;
 let modelModal: ModelModal | null = null;
 let usageModal: UsageModal | null = null;
 let askModal: AskModal | null = null;
+let planReviewModal: PlanReviewModal | null = null;
+let jobActivityModal: JobActivityModal | null = null;
 let dockToolsMenu: DockToolsMenu | null = null;
 let recentFoldersModal: RecentFoldersModal | null = null;
 let recentChatsModal: RecentChatsModal | null = null;
 let topMenu: TopMenu | null = null;
+const confirmDialog = new ConfirmDialog();
+document.body.appendChild(confirmDialog.root);
 const tabContextMenu = new TabContextMenu();
+async function killJob(job: AsyncJob): Promise<void> {
+  if (!active) return;
+
+  void api.killJob({ jobId: job.id, sessionId: active.sessionKey ?? active.sessionId });
+  job.status = "cancelled";
+  const existing = active.jobs.find((j) => j.id === job.id);
+  if (existing) existing.status = "cancelled";
+  todoPanel.setJobs(active.jobs);
+
+  active.suppressDoneSound = true;
+  sendToPty(active, "\x1b");
+  await sleep(40);
+  if (active?.view) {
+    active.view.runSlash(`/cancel ${job.id}`);
+  }
+}
+
 const todoPanel = new TodoPanel(
   (visible) => {
     todoPanelVisible = visible;
@@ -173,9 +208,19 @@ const todoPanel = new TodoPanel(
     todoPanelMode = mode;
     persist();
   },
+  (job) => {
+    if (!jobActivityModal) {
+      jobActivityModal = new JobActivityModal();
+      document.body.appendChild(jobActivityModal.el);
+    }
+    void jobActivityModal.open(job, active?.cwd, (target) => {
+      killJob(target);
+    });
+  },
+  (job) => {
+    killJob(job);
+  },
 );
-const confirmDialog = new ConfirmDialog();
-document.body.appendChild(confirmDialog.root);
 
 function applyTheme(preset: ThemePreset): void {
   currentPreset = preset;
@@ -230,31 +275,12 @@ function setActivityColorsOnTabs(enabled: boolean): void {
   persist();
 }
 
-
-function findInstalledModel(modelSpec: string): InstalledModel | undefined {
-  if (!modelSpec) return undefined;
-  const specLow = modelSpec.toLowerCase();
-  const bare = specLow.includes("/") ? specLow.slice(specLow.lastIndexOf("/") + 1) : specLow;
-  return installedModels.find((m) => {
-    const id = m.id.toLowerCase();
-    const bareId = id.includes("/") ? id.slice(id.lastIndexOf("/") + 1) : id;
-    return (
-      id === specLow ||
-      bareId === bare ||
-      specLow.endsWith("/" + bareId) ||
-      id.endsWith("/" + bare) ||
-      bareId.includes(bare) ||
-      bare.includes(bareId)
-    );
-  });
-}
-
 function applyThinkingLevelsForModel(
   modelSpec: string,
   currentLevel?: string,
   targetTab: Tab | null = active,
 ): void {
-  const installed = findInstalledModel(modelSpec);
+  const installed = findInstalledModel(modelSpec, installedModels);
   const levels = buildThinkingLevelsForModel(installed);
   const cur = currentLevel ?? targetTab?.thinkingLevel ?? "low";
   const clamped = clampThinkingToLevels(cur, levels);
@@ -299,54 +325,55 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
-const ASK_ARROW_UP = "\x1b[A";
-const ASK_ARROW_DOWN = "\x1b[B";
-const ASK_KEY_ENTER = "\r";
-const ASK_KEY_SPACE = " ";
 
-function sanitizeAskText(text: string): string {
-  return text.replace(/[\r\n]+/g, " ").replace(/\x1b/g, "");
-}
-
-/**
- * Translate structured ask-modal answers into the raw keystroke sequence the
- * native omp `ask` TUI expects: ArrowDown to the target row, then Enter
- * (single-select) or Space per checked row + Enter (multi-select), with a
- * detour into the trailing "Other" row when `customText` is set.
- */
-function buildAskSequence(answers: AskAnswer[]): string {
-  let seq = "";
-  for (const a of answers) {
-    const otherIndex = a.optionsCount;
-    if (a.multi) {
-      let cursor = 0;
-      for (const idx of [...a.selectedIndices].sort((x, y) => x - y)) {
-        seq += ASK_ARROW_DOWN.repeat(idx - cursor);
-        cursor = idx;
-        seq += ASK_KEY_SPACE;
-      }
-      if (a.customText !== undefined) {
-        seq += ASK_ARROW_DOWN.repeat(otherIndex - cursor);
-        seq += ASK_KEY_ENTER + sanitizeAskText(a.customText) + ASK_KEY_ENTER;
-        seq += ASK_ARROW_UP + ASK_KEY_ENTER;
-      } else {
-        seq += ASK_KEY_ENTER;
-      }
-    } else if (a.customText !== undefined) {
-      seq += ASK_ARROW_DOWN.repeat(otherIndex);
-      seq += ASK_KEY_ENTER + sanitizeAskText(a.customText) + ASK_KEY_ENTER;
-    } else {
-      seq += ASK_ARROW_DOWN.repeat(a.selectedIndices[0] ?? 0);
-      seq += ASK_KEY_ENTER;
-    }
-  }
-  if (answers.length > 1) seq += ASK_KEY_ENTER;
-  return seq;
-}
+const ASK_STEP_TIMEOUT_MS = 1500;
 
 function sendAskAnswers(tab: Tab, answers: AskAnswer[]): void {
   if (!tab.view) return;
-  tab.view.writeRaw(buildAskSequence(answers));
+  clearAskSend(tab);
+  const multiQuestion = answers.length > 1;
+  const keys = answers.map((answer) => buildAskQuestionKeys(answer, multiQuestion));
+  tab.askSend = { keys, next: 0, timer: null };
+  advanceAskSend(tab);
+}
+
+/** Push the next question's keystrokes; arm a watchdog for the one after it. */
+function advanceAskSend(tab: Tab): void {
+  const send = tab.askSend;
+  if (!send || !tab.view) return clearAskSend(tab);
+  const chunk = send.keys[send.next];
+  if (chunk === undefined) return clearAskSend(tab);
+  tab.view.writeRaw(chunk);
+  send.next++;
+  if (send.next >= send.keys.length) return clearAskSend(tab);
+  // omp mounts the next selector only after this one resolves; parseStatusStream
+  // releases us early when it sees "(next/total)". The timer is the backstop for
+  // a progress marker split across PTY chunks.
+  send.timer = window.setTimeout(() => advanceAskSend(tab), ASK_STEP_TIMEOUT_MS);
+}
+
+function clearAskSend(tab: Tab): void {
+  if (tab.askSend?.timer !== null && tab.askSend?.timer !== undefined) {
+    window.clearTimeout(tab.askSend.timer);
+  }
+  tab.askSend = null;
+}
+
+function raiseAskAttention(tab: Tab, ask: PendingAsk): void {
+  tab.awaitingAsk = true;
+  renderTabs();
+  doneSound.play();
+  // A question the user is already staring at does not need an OS toast.
+  if (document.hasFocus() && tab === active) return;
+  const first = ask.questions[0]?.question ?? "omp needs an answer";
+  const body = first.length > 120 ? `${first.slice(0, 119)}…` : first;
+  api.notify(tab.customTitle || tab.title || basename(tab.cwd), body);
+}
+
+function clearAskAttention(tab: Tab): void {
+  if (!tab.awaitingAsk) return;
+  tab.awaitingAsk = false;
+  renderTabs();
 }
 
 function syncAskModal(tab: Tab): void {
@@ -361,14 +388,87 @@ function syncAskModal(tab: Tab): void {
     if (dockEl) dockEl.insertBefore(askModal.el, dockEl.firstChild);
     else document.body.appendChild(askModal.el);
   }
+  // Re-opening on every heartbeat would wipe half-entered answers; the sheet is
+  // rebuilt only when omp actually asks something new.
+  if (askModal.isOpen && askModal.toolCallId === pending.toolCallId) return;
   askModal.open(
     pending,
     (answers) => {
       sendAskAnswers(tab, answers);
       tab.pendingAsk = null;
+      clearAskAttention(tab);
     },
     () => {
       tab.dismissedAskToolCallId = pending.toolCallId;
+      clearAskAttention(tab);
+    },
+  );
+}
+async function sendPlanReviewAction(tab: Tab, action: PlanReviewAction): Promise<void> {
+  if (!tab.view) return;
+  tab.planReview = null;
+
+  if (action === "quit") {
+    tab.view.writeRaw("\x1b");
+    return;
+  }
+
+  const targetIndex =
+    action === "execute"
+      ? 0
+      : action === "compact"
+        ? 1
+        : action === "keep"
+          ? 2
+          : action === "refine"
+            ? 3
+            : action === "save"
+              ? 4
+              : 0;
+
+  if (targetIndex === 0) {
+    tab.view.writeRaw("\r");
+    return;
+  }
+
+  const arrowDown = {
+    key: "ArrowDown",
+    code: "ArrowDown",
+    ctrlKey: false,
+    shiftKey: false,
+    altKey: false,
+    metaKey: false,
+  };
+
+  for (let i = 0; i < targetIndex; i++) {
+    tab.view.writeArrow(arrowDown);
+    await sleep(35);
+  }
+  await sleep(25);
+  tab.view.writeRaw("\r");
+}
+
+function syncPlanReviewModal(tab: Tab): void {
+  if (!tab.planReview) {
+    planReviewModal?.close();
+    return;
+  }
+  if (!planReviewModal) {
+    planReviewModal = new PlanReviewModal();
+    const dockEl = document.getElementById("dock");
+    if (dockEl) dockEl.insertBefore(planReviewModal.el, dockEl.firstChild);
+    else document.body.appendChild(planReviewModal.el);
+  }
+  if (planReviewModal.isOpen) {
+    if (tab.planReview.contextStats) {
+      planReviewModal.updateStats(tab.planReview.contextStats);
+    }
+    return;
+  }
+  planReviewModal.open(
+    { contextStats: tab.planReview.contextStats },
+    (action) => {
+      sendPlanReviewAction(tab, action);
     },
   );
 }
@@ -469,6 +569,7 @@ function renderTabs(): void {
     const name = tabDisplayName(tab);
     tab.button.classList.toggle("active", tab === active);
     tab.button.classList.toggle("busy", tab.busy);
+    tab.button.classList.toggle("awaiting-ask", tab.awaitingAsk);
     if (activityColorsOnTabs && tab.activity !== "idle") {
       tab.button.style.setProperty("--tab-glow", activityColors[tab.activity]);
     } else {
@@ -640,7 +741,9 @@ function activate(tab: Tab): void {
   dock.setAgentBusy(tab.busy, tab.busy ? tab.activity : "idle");
   updateHeaderActivity(tab);
   syncAskModal(tab);
+  syncPlanReviewModal(tab);
   todoPanel.setPhases(tab.todo);
+  todoPanel.setJobs(tab.jobs);
   modelModal?.setCurrentModel(tab.modelName || "");
   if (recentFoldersModal?.isOpen) {
     recentFoldersModal.setCurrentCwd(tab.cwd);
@@ -670,12 +773,11 @@ function closeTab(tab: Tab): void {
 
   if (active === tab) {
     active = null;
+    askModal?.close();
+    planReviewModal?.close();
     const next = tabs[Math.min(index, tabs.length - 1)];
     if (next) activate(next);
   }
-  renderTabs();
-  syncTaskbarBusy();
-  persist();
   if (tabs.length === 0) {
     void addTab();
   }
@@ -877,7 +979,6 @@ async function startSession(tab: Tab): Promise<void> {
   }
   tab.sessionId = result.id;
   tab.sessionKey = result.id;
-  tab.ompPid = result.pid;
   bySession.set(result.id, tab);
   api.resize(result.id, view.cols, view.rows);
   for (const chunk of tab.pending.splice(0)) api.write(result.id, chunk);
@@ -944,9 +1045,13 @@ function makeTab(cwd: string, customTitle?: string, colorTag?: string): Tab {
     notice: null,
     dock: undefined,
     pendingAsk: null,
+    awaitingAsk: false,
+    askSend: null,
     dismissedAskToolCallId: null,
     sessionNumber: ++sessionCounter,
     todo: null,
+    jobs: [],
+    planReview: null,
     suppressDoneSound: false,
   };
   self = tab;
@@ -1167,6 +1272,18 @@ async function submitDock(payload: DockPayload): Promise<void> {
 /** Parse omp's terminal stream to extract active model, thinking level, plan state and usage metrics. */
 function parseStatusStream(tab: Tab, rawData: string): void {
   const plain = rawData.replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, "");
+  const send = tab.askSend;
+  if (send) {
+    // omp titles each question "…question text… (2/3)" — the only signal that
+    // the next selector is mounted and ready for keystrokes.
+    const marker = new RegExp(`\\(${send.next + 1}/${send.keys.length}\\)`);
+    if (marker.test(plain)) {
+      if (send.timer !== null) window.clearTimeout(send.timer);
+      send.timer = null;
+      advanceAskSend(tab);
+    }
+  }
+
 
   // Plan lines must be handled before the statusline gate: "Plan mode paused."
   // and "Plan mode disabled." can arrive without a statusline.
@@ -1174,6 +1291,24 @@ function parseStatusStream(tab: Tab, rawData: string): void {
   if (planStatus) tab.plan.observe(planStatus, Date.now());
   if (isPlanExitConfirm(plain)) tab.plan.confirmPrompt(Date.now());
 
+  // Plan review detection: OMP displays "Plan mode - next step" menu with options
+  const isPlanReview =
+    /Plan mode\s*[-–—]\s*next step/i.test(plain) ||
+    (plain.includes("Approve and execute") && plain.includes("Refine plan"));
+
+  if (isPlanReview) {
+    const statsMatch = /Approve and keep context\s*(\([^\)]+\))/i.exec(plain);
+    tab.planReview = { contextStats: statsMatch?.[1] };
+    if (tab === active) syncPlanReviewModal(tab);
+  } else if (
+    tab.planReview &&
+    !plain.includes("Approve and execute") &&
+    !plain.includes("Plan mode - next step") &&
+    (plain.includes("Plan mode enabled") || plain.includes("Plan mode disabled") || plain.includes("π ") || /^\s*π\s+/m.test(plain))
+  ) {
+    tab.planReview = null;
+    if (tab === active) syncPlanReviewModal(tab);
+  }
   // Only parse explicit statusline or command feedback lines to prevent chat text matching
   const isStatusLine =
     /^\s*π\s+/m.test(plain) || /(?:^|\n)[^\n]*?Thinking level set to/i.test(plain);
@@ -1432,30 +1567,23 @@ function findTabForBridgeStatus(status: {
   cwd?: string | null;
 }): Tab | undefined {
   const rawKey = status.sessionId?.trim();
-  if (rawKey) {
-    const key = rawKey.includes(":") ? rawKey.slice(rawKey.lastIndexOf(":") + 1) : rawKey;
-    const byKey = tabs.find((t) => t.sessionKey === key || t.sessionId === key);
-    // Session id is authoritative. Unknown ids must not fall through to another tab.
-    return byKey;
+  if (!rawKey) return undefined;
+
+  const key = rawKey.includes(":") ? rawKey.slice(rawKey.lastIndexOf(":") + 1) : rawKey;
+  const byKey = tabs.find((t) => t.sessionKey === key || t.sessionId === key);
+  // Background workers inherit OMPHIF_SESSION_ID. Only the hosted omp PID
+  // owns terminal/session chrome for that session; workers publish through
+  // the parent's job snapshot instead.
+  if (
+    byKey &&
+    typeof status.pid === "number" &&
+    status.pid > 0 &&
+    byKey.ompPid !== null &&
+    byKey.ompPid !== status.pid
+  ) {
+    return undefined;
   }
-
-  if (typeof status.pid === "number" && status.pid > 0) {
-    const byPid = tabs.find((t) => t.ompPid === status.pid);
-    if (byPid) return byPid;
-  }
-
-  // No session id (older hosts): only unambiguous ownership.
-  if (tabs.length === 1) return tabs[0];
-
-  const statusCwd = (status.cwd || "").replace(/[\\/]+$/, "").toLowerCase();
-  if (statusCwd) {
-    const matches = tabs.filter(
-      (t) => t.cwd.replace(/[\\/]+$/, "").toLowerCase() === statusCwd,
-    );
-    if (matches.length === 1) return matches[0];
-  }
-
-  return undefined;
+  return byKey;
 }
 
 function applyControlBridgeStatus(status: ControlBridgeState | null | undefined): void {
@@ -1474,6 +1602,15 @@ function applyControlBridgeStatus(status: ControlBridgeState | null | undefined)
     tab.ompPid = status.pid;
   }
 
+  // The job registry is independent from the terminal session lifecycle. Its
+  // polling updates must not reset activity chrome or overwrite model/thinking
+  // selections with the background worker's context.
+  if (isJobLifecycleUpdate(status)) {
+    tab.jobs = status.jobs ?? [];
+    if (tab === active) todoPanel.setJobs(tab.jobs);
+    return;
+  }
+
   const activity: ControlBridgeActivity = KNOWN_ACTIVITIES.includes(status.activity)
     ? status.activity
     : "idle";
@@ -1490,13 +1627,22 @@ function applyControlBridgeStatus(status: ControlBridgeState | null | undefined)
     tab.plan.observe(status.planMode, Date.now());
   }
   if ("ask" in status) {
+    const prevAskId = tab.pendingAsk?.toolCallId ?? null;
     tab.pendingAsk = status.ask ?? null;
     if (tab.pendingAsk && tab.pendingAsk.toolCallId !== tab.dismissedAskToolCallId) {
       tab.dismissedAskToolCallId = null;
     }
+    if (tab.pendingAsk && tab.pendingAsk.toolCallId !== prevAskId) {
+      raiseAskAttention(tab, tab.pendingAsk);
+    } else if (!tab.pendingAsk) {
+      clearAskAttention(tab);
+    }
   }
   if ("todo" in status) {
     tab.todo = status.todo ?? null;
+  }
+  if ("jobs" in status) {
+    tab.jobs = status.jobs ?? [];
   }
 
   // Dock / shared chrome only follows the active session.
@@ -1510,6 +1656,7 @@ function applyControlBridgeStatus(status: ControlBridgeState | null | undefined)
   }
   syncAskModal(tab);
   todoPanel.setPhases(tab.todo);
+  todoPanel.setJobs(tab.jobs);
 }
 
 api.onControlBridgeStatus((status) => {
@@ -1540,6 +1687,7 @@ api.onExit(({ id, exitCode }) => {
   tab.ompPid = null;
   tab.suppressDoneSound = true;
   setTabActivity(tab, "idle");
+  clearAskSend(tab);
   tab.view?.dispose();
   tab.view = null;
   showNotice(tab, `omp exited (code ${exitCode})`);

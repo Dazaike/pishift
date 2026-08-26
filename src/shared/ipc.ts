@@ -37,6 +37,8 @@ export const CH = {
   clearRecentFolders: "app:clear-recent-folders",
   getRecentChats: "app:get-recent-chats",
   getSkillCommands: "app:get-skill-commands",
+  getJobActivity: "app:get-job-activity",
+  killJob: "app:kill-job",
 } as const;
 
 export type ControlBridgeActivity = AgentActivity;
@@ -103,7 +105,56 @@ export interface TodoPhase {
   tasks: TodoTask[];
 }
 
+export interface AsyncJob {
+  id: string;
+  /** `task` | `bash` | `tool` | `command` as reported by omp; treat as open. */
+  type: string;
+  /** `running` | `completed` | `failed` | `cancelled` as reported by omp. */
+  status: string;
+  label: string;
+  /** Epoch ms; 0 when omp did not report one. */
+  startTime: number;
+}
+
+export interface JobActivityEvent {
+  type: "user_message" | "assistant_message" | "thinking" | "tool_call" | "tool_result" | "raw_log" | "artifact";
+  timestamp?: number;
+  text?: string;
+  toolName?: string;
+  toolIntent?: string;
+  toolArgs?: Record<string, unknown> | string;
+  toolResult?: string;
+  isError?: boolean;
+}
+
+export interface JobActivityDetails {
+  jobId: string;
+  label: string;
+  type: string;
+  status: string;
+  startTime: number;
+  artifactMarkdown?: string;
+  events: JobActivityEvent[];
+  rawLog?: string;
+}
+
+export interface GetJobActivityRequest {
+  jobId: string;
+  label?: string;
+  type?: string;
+  status?: string;
+  startTime?: number;
+  cwd?: string | null;
+}
+export interface KillJobRequest {
+  jobId: string;
+  sessionId?: string | null;
+}
+export type ControlBridgeUpdateKind = "session" | "jobs";
+
 export interface ControlBridgeState {
+  /** Identifies whether this publication is session telemetry or a job lifecycle update. */
+  updateKind: ControlBridgeUpdateKind;
   running: boolean;
   activity: ControlBridgeActivity;
   model: string | null;
@@ -116,11 +167,20 @@ export interface ControlBridgeState {
   planMode?: PlanMode;
   ask: PendingAsk | null;
   todo: TodoPhase[] | null;
+  /** Absent when the running bridge predates job publishing. */
+  jobs?: AsyncJob[];
   pid: number;
   cwd: string | null;
   /** Host session key (`OMPHIF_SESSION_ID` / ITERM_SESSION_ID suffix). */
   sessionId?: string | null;
   updatedAt: string;
+}
+
+/** Job lifecycle publications must never be applied as terminal session state. */
+export function isJobLifecycleUpdate(
+  status: Pick<ControlBridgeState, "updateKind">,
+): boolean {
+  return status.updateKind === "jobs";
 }
 
 

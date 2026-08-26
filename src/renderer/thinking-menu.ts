@@ -70,7 +70,7 @@ export class ThinkingMenu {
 
   private position(): void {
     const anchorRect = this.anchor.getBoundingClientRect();
-    const menuW = this.el.offsetWidth || 140;
+    const menuW = this.el.offsetWidth || 135;
     const menuH = this.el.offsetHeight;
 
     // Center horizontally over the Thinking button.

@@ -4,8 +4,11 @@ import { release } from "node:os";
 import {
   CH,
   type ControlBridgeState,
+  type GetJobActivityRequest,
   type ImagePreview,
   type InstalledModelGroup,
+  type JobActivityDetails,
+  type KillJobRequest,
   type PersistedState,
   type ProviderUsageReport,
   type PtyData,
@@ -67,6 +70,10 @@ const api = {
   getRecentChats: (cwd?: string): Promise<RecentChatInfo[]> => ipcRenderer.invoke(CH.getRecentChats, cwd),
   getSkillCommands: (cwd?: string): Promise<SlashCommand[]> =>
     ipcRenderer.invoke(CH.getSkillCommands, cwd),
+  getJobActivity: (req: GetJobActivityRequest): Promise<JobActivityDetails | null> =>
+    ipcRenderer.invoke(CH.getJobActivity, req),
+  killJob: (req: KillJobRequest): Promise<boolean> =>
+    ipcRenderer.invoke(CH.killJob, req),
   setChromeColors: (background: string, symbol: string): void =>
     ipcRenderer.send(CH.setChromeColors, { background, symbol }),
   setTaskbarBusy: (busy: boolean): void => ipcRenderer.send(CH.setTaskbarBusy, busy),

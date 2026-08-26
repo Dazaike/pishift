@@ -165,6 +165,7 @@ export class ActivityTracker {
   private phase: "thinking" | "responding" | null = null;
   private streamingTool: AgentActivity | null = null;
   private readonly inFlight = new Map<string, AgentActivity>();
+  private readonly ended = new Set<string>();
 
   get activity(): AgentActivity {
     if (!this.live) return "idle";
@@ -178,22 +179,28 @@ export class ActivityTracker {
     return "waiting";
   }
 
-  /** Session start / switch / shutdown. */
-  reset(): void {
-    this.live = false;
+  private clearForeground(): void {
     this.phase = null;
     this.streamingTool = null;
     this.inFlight.clear();
   }
 
+  /** Session start / switch / shutdown. */
+  reset(): void {
+    this.live = false;
+    this.clearForeground();
+    this.ended.clear();
+  }
+
   agentStart(): void {
-    this.reset();
+    this.clearForeground();
     this.live = true;
   }
 
   /** `willContinue` means omp is looping into another agent run, not finishing. */
   agentEnd(willContinue = false): void {
-    this.reset();
+    for (const toolCallId of this.inFlight.keys()) this.ended.add(toolCallId);
+    this.clearForeground();
     this.live = willContinue;
   }
 
@@ -229,23 +236,26 @@ export class ActivityTracker {
 
   toolStart(toolCallId: string, toolName: string | undefined): void {
     this.live = true;
+    this.ended.delete(toolCallId);
     this.inFlight.set(
       toolCallId,
       toolName !== undefined ? classifyToolActivity(toolName) : "working",
     );
   }
 
-  /** `tool_execution_update` — also recovers a start we never saw. */
+  /** `tool_execution_update` — also recovers a live start we never saw. */
   toolUpdate(toolCallId: string, toolName: string | undefined): void {
+    if (this.ended.has(toolCallId)) return;
     if (this.inFlight.has(toolCallId)) {
       this.live = true;
       return;
     }
-    this.toolStart(toolCallId, toolName);
+    if (this.live) this.toolStart(toolCallId, toolName);
   }
 
   toolEnd(toolCallId: string): void {
     this.inFlight.delete(toolCallId);
+    this.ended.add(toolCallId);
     // The call that was streaming arguments has finished executing.
     if (this.inFlight.size === 0) this.streamingTool = null;
   }

@@ -69,6 +69,10 @@
             <div class="side-section-title">Tasks</div>
             <div id="todo-panel-body"></div>
           </section>
+          <section id="jobs-section">
+            <div class="side-section-title">Jobs</div>
+            <div id="jobs-panel-body"></div>
+          </section>
           <section id="usage-section">
             <div class="side-section-title">Provider Quotas</div>
             <div id="usage-panel-body"></div>
@@ -115,10 +119,12 @@
               <span>Usage</span>
             </button>
           </div>
-          <button id="dock-plan" type="button" class="ctrl-btn plan-off" title="Plan mode OFF — click to enter">
-            <img src="./assets/icons/plan.png" alt="" class="btn-icon" />
-            <span class="dock-plan-label">Plan: OFF</span>
-          </button>
+          <div id="dock-plan-wrap">
+            <button id="dock-plan" type="button" class="ctrl-btn plan-off" title="Plan mode OFF — click to enter">
+              <img src="./assets/icons/plan.png" alt="" class="btn-icon" />
+              <span class="dock-plan-label">Plan: OFF</span>
+            </button>
+          </div>
           <div id="dock-model-wrap">
             <button id="dock-model" type="button" class="ctrl-btn" title="Switch Model">
               <span class="dock-model-icon">&#9889;</span>
