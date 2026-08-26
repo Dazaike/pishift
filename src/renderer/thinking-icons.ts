@@ -5,18 +5,21 @@
  * theme colors, and never suffer 404/asset resolution issues in production builds.
  */
 
-export function normalizeThinkingLevelKey(raw: string): "off" | "min" | "low" | "medium" | "high" | "xhigh" | "auto" {
+export function normalizeThinkingLevelKey(
+  raw: string,
+): "off" | "min" | "low" | "medium" | "high" | "xhigh" | "max" | "auto" {
   const key = (raw || "").trim().toLowerCase().replace(/[\s_-]+/g, "");
   if (key === "off" || key === "none" || key === "disabled" || key === "0") return "off";
   if (key === "min" || key === "minimal" || key === "minimum" || key === "1") return "min";
   if (key === "low" || key === "2") return "low";
   if (key === "med" || key === "medium" || key === "mid" || key === "3") return "medium";
   if (key === "high" || key === "hi" || key === "4") return "high";
-  if (key === "xhigh" || key === "xhi" || key === "extrahigh" || key === "max" || key === "maximum" || key === "5") return "xhigh";
+  if (key === "xhigh" || key === "xhi" || key === "extrahigh" || key === "5") return "xhigh";
+  if (key === "max" || key === "maximum" || key === "6") return "max";
   return "auto";
 }
 
-const THINKING_SVGS: Record<"off" | "min" | "low" | "medium" | "high" | "xhigh" | "auto", string> = {
+const THINKING_SVGS: Record<"off" | "min" | "low" | "medium" | "high" | "xhigh" | "max" | "auto", string> = {
   off: `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" class="btn-icon thinking-icon thinking-icon-off" aria-hidden="true">
   <circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.3" stroke-opacity="0.45"/>
   <line x1="3.5" y1="3.5" x2="12.5" y2="12.5" stroke="currentColor" stroke-width="1.4" stroke-opacity="0.75" stroke-linecap="round"/>
@@ -60,6 +63,15 @@ const THINKING_SVGS: Record<"off" | "min" | "low" | "medium" | "high" | "xhigh" 
   <rect x="7.5" y="7" width="2" height="7" rx="0.5" fill="currentColor"/>
   <rect x="10.5" y="5" width="2" height="9" rx="0.5" fill="currentColor"/>
   <rect x="13.5" y="3" width="2" height="11" rx="0.5" fill="currentColor"/>
+</svg>`,
+
+  max: `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" class="btn-icon thinking-icon thinking-icon-max" aria-hidden="true">
+  <rect x="1.5" y="11" width="2" height="3" rx="0.5" fill="currentColor"/>
+  <rect x="4.5" y="9" width="2" height="5" rx="0.5" fill="currentColor"/>
+  <rect x="7.5" y="7" width="2" height="7" rx="0.5" fill="currentColor"/>
+  <rect x="10.5" y="5" width="2" height="9" rx="0.5" fill="currentColor"/>
+  <rect x="13.5" y="3" width="2" height="11" rx="0.5" fill="currentColor"/>
+  <path d="M14.5 0.5 L15.5 1.5 L14.5 2.5 L13.5 1.5 Z" fill="currentColor"/>
 </svg>`,
 
   auto: `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" class="btn-icon thinking-icon thinking-icon-auto" aria-hidden="true">

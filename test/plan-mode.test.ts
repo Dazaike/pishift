@@ -77,15 +77,31 @@ describe("PlanReconciler", () => {
     expect(plan.mode).toBe("off");
   });
 
-  it("PAUSED -> ON walks PAUSED -> OFF -> ON with two toggles", () => {
-    const { plan, toggles } = harness();
+  it("PAUSED -> ON confirms exit, then walks PAUSED -> OFF -> ON", () => {
+    const { plan, toggles, confirms } = harness();
     plan.observe("paused", 0);
     plan.request("on", 1);
-    plan.observe("off", 2);
-    plan.observe("on", 3);
+    expect(toggles.length).toBe(1);
+    plan.confirmPrompt(2);
+    expect(confirms.length).toBe(1);
+    expect(plan.pending).toBe(true);
+    plan.observe("off", 3);
     expect(toggles.length).toBe(2);
+    plan.observe("on", 4);
     expect(plan.mode).toBe("on");
     expect(plan.pending).toBe(false);
+  });
+
+  it("OFF -> PAUSED walks OFF -> ON -> PAUSED with two toggles", () => {
+    const { plan, toggles } = harness();
+    plan.observe("off", 0);
+    plan.request("paused", 1);
+    expect(toggles.length).toBe(1);
+    plan.observe("on", 2);
+    expect(toggles.length).toBe(2);
+    plan.observe("paused", 3);
+    expect(plan.pending).toBe(false);
+    expect(plan.mode).toBe("paused");
   });
 
   it("never toggles on unsolicited observations", () => {

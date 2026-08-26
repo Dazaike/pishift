@@ -24,7 +24,7 @@ export type Attachment = { path: string; isImage: boolean };
  */
 export type Snippet = { id: string; text: string; label: string };
 
-/** Fallback when model metadata is unknown — no xhigh (many models lack it). */
+/** Universal thinking ladder exposed for every model. */
 export const DEFAULT_THINKING_LEVELS = [
   "auto",
   "off",
@@ -32,6 +32,7 @@ export const DEFAULT_THINKING_LEVELS = [
   "low",
   "medium",
   "high",
+  "xhigh",
   "max",
 ] as const;
 
@@ -51,6 +52,10 @@ export function formatThinkingLevel(raw: string): string {
     xhi: "XHigh",
     max: "Max",
     auto: "Auto",
+    none: "Off",
+    disabled: "Off",
+    extrahigh: "XHigh",
+    maximum: "Max",
   };
   const key = (raw ?? "").toLowerCase().trim();
   return map[key] || (key ? key.charAt(0).toUpperCase() + key.slice(1) : "Low");
@@ -60,45 +65,52 @@ export function formatThinkingLevel(raw: string): string {
 export function normalizeThinkingToken(raw: string): string {
   const key = (raw ?? "").toLowerCase().trim();
   if (key === "auto") return "auto";
-  if (key === "min") return "minimal";
-  if (key === "med") return "medium";
-  if (key === "xhi") return "xhigh";
+  if (key === "off" || key === "none" || key === "disabled") return "off";
+  if (key === "min" || key === "minimal") return "minimal";
+  if (key === "med" || key === "medium") return "medium";
+  if (key === "xhigh" || key === "xhi" || key === "extrahigh") return "xhigh";
+  if (key === "max" || key === "maximum") return "max";
   return key || "low";
 }
 
 /** Compact token preferred by control-bridge `/m`. */
 export function toThinkingCommandToken(raw: string): string {
   const key = normalizeThinkingToken(raw);
-  if (key === "auto") return "auto";
   if (key === "minimal") return "min";
   if (key === "medium") return "med";
-  if (key === "xhigh") return "xhi";
   return key;
 }
 
-export function buildThinkingLevelsForModel(opts: {
+export function buildThinkingLevelsForModel(opts?: {
   reasoning?: boolean;
   thinkingEfforts?: string[];
   thinkingRequiresEffort?: boolean;
 } | null | undefined): string[] {
   if (!opts) return [...DEFAULT_THINKING_LEVELS];
 
-  const efforts = (opts.thinkingEfforts ?? [])
-    .map(normalizeThinkingToken)
-    .filter(Boolean);
+  if (Array.isArray(opts.thinkingEfforts) && opts.thinkingEfforts.length > 0) {
+    const supportedTokens = new Set<string>();
+    for (const raw of opts.thinkingEfforts) {
+      supportedTokens.add(normalizeThinkingToken(raw));
+    }
 
-  // Non-reasoning / no effort ladder → thinking off only.
-  if (!opts.reasoning && efforts.length === 0) return ["off"];
+    const out: string[] = ["auto", "off"];
 
-  if (efforts.length === 0) return [...DEFAULT_THINKING_LEVELS];
+    const ladder = ["minimal", "low", "medium", "high", "xhigh", "max"] as const;
+    for (const step of ladder) {
+      if (supportedTokens.has(step)) {
+        out.push(step);
+      }
+    }
 
-  const unique: string[] = [];
-  for (const e of efforts) {
-    if (e !== "off" && e !== "auto" && !unique.includes(e)) unique.push(e);
+    return out.length > 0 ? out : ["off"];
   }
 
-  // Always expose Auto & Off so users can select automatic or disabled reasoning.
-  return ["auto", "off", ...unique];
+  if (opts.reasoning === false) {
+    return ["off"];
+  }
+
+  return [...DEFAULT_THINKING_LEVELS];
 }
 
 export function clampThinkingToLevels(level: string, levels: readonly string[]): string {
@@ -116,12 +128,14 @@ export function clampThinkingToLevels(level: string, levels: readonly string[]):
 
   // Only when the preferred token is absent from this model's ladder.
   const fallbacks: Record<string, string[]> = {
-    minimal: ["low"],
-    min: ["minimal", "low"],
+    max: ["xhigh", "high", "medium", "low"],
+    maximum: ["max", "xhigh", "high", "medium", "low"],
+    xhigh: ["high", "medium", "low", "max"],
+    xhi: ["xhigh", "high", "medium", "low", "max"],
+    minimal: ["low", "medium"],
+    min: ["minimal", "low", "medium"],
     medium: ["low", "high"],
     med: ["medium", "low", "high"],
-    xhigh: ["high", "max"],
-    xhi: ["xhigh", "high", "max"],
   };
   for (const alt of fallbacks[token] ?? []) {
     if (levels.includes(alt)) return alt;
@@ -258,8 +272,6 @@ export class Dock {
     this.toolsBtn?.addEventListener("click", () => this.hooks.openTools?.());
     this.expandBtn?.addEventListener("click", () => this.toggleExpand());
     this.planBtn.addEventListener("click", () => {
-      // Display-only: never mutate planMode here. The reconciler repaints once
-      // omp actually reports the new state.
       const target: PlanTarget = this.planMode === "off" ? "on" : "off";
       this.hooks.setPlanTarget(target);
     });
@@ -497,16 +509,13 @@ export class Dock {
     this.planBtn.classList.remove("plan-off", "plan-on", "plan-paused");
     this.planBtn.classList.toggle("plan-pending", this.planPending);
     const icon = `<img src="${planIcon}" alt="" class="btn-icon" />`;
-    const label =
-      this.planMode === "on" ? "Plan: ON" : this.planMode === "paused" ? "Plan: PAUSED" : "Plan: OFF";
+    const label = this.planMode === "on" ? "Plan: ON" : "Plan: OFF";
     this.planBtn.innerHTML = `${icon}<span class="dock-plan-label">${label}</span>`;
     this.planBtn.classList.add(`plan-${this.planMode}`);
     this.planBtn.title =
       this.planMode === "on"
         ? "Plan mode ON — click to exit"
-        : this.planMode === "paused"
-          ? "Plan mode PAUSED by omp — click to exit"
-          : "Plan mode OFF — click to enter";
+        : "Plan mode OFF — click to enter";
   }
 
   private checkSlashMenu(): void {

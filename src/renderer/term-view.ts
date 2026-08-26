@@ -654,8 +654,13 @@ export class TermView {
       '<span class="term-selection-icon" aria-hidden="true">&#8220;</span><span>Reference</span>';
     // Keep focus where it is: mousedown default would pull it off the terminal
     // and xterm clears the selection the moment it loses the pointer target.
-    btn.addEventListener("mousedown", (ev) => ev.preventDefault());
-    btn.addEventListener("click", () => {
+    btn.addEventListener("mousedown", (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+    });
+    btn.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
       const text = this.term.getSelection();
       this.hideSelectionAction();
       if (!text.trim()) return;
@@ -665,7 +670,10 @@ export class TermView {
     this.el.appendChild(btn);
     this.selectionBubble = btn;
 
-    this.el.addEventListener("mousedown", () => {
+    this.el.addEventListener("mousedown", (ev) => {
+      if (this.selectionBubble && (ev.target === this.selectionBubble || this.selectionBubble.contains(ev.target as Node))) {
+        return;
+      }
       this.selectionDragging = true;
       this.hideSelectionAction();
     });
@@ -680,7 +688,9 @@ export class TermView {
     });
     // Keyboard input and scrolling both invalidate the anchor position.
     this.term.onScroll(() => this.hideSelectionAction());
-    this.term.onData(() => this.hideSelectionAction());
+    this.term.onData(() => {
+      if (!this.term.hasSelection()) this.hideSelectionAction();
+    });
   }
 
   private readonly onSelectionMouseUp = (): void => {

@@ -9,7 +9,7 @@
  */
 
 export type PlanMode = "off" | "on" | "paused";
-export type PlanTarget = "on" | "off";
+export type PlanTarget = PlanMode;
 
 /** One native `/plan` step: OFF -> ON -> PAUSED -> OFF. */
 export function nextPlanAfterToggle(mode: PlanMode): PlanMode {
@@ -119,7 +119,9 @@ export class PlanReconciler {
   /** omp is asking "Exit plan mode?" — answer only if we asked to leave. */
   confirmPrompt(now: number): void {
     const intent = this.intent;
-    if (intent?.target === "off") {
+    // Leaving plan mode happens on the "off" request and on the paused -> off
+    // step of a longer cycle (e.g. paused -> off -> on).
+    if (intent && (intent.target === "off" || this.planMode === "paused")) {
       this.hooks.answerConfirm();
       // Not a cycle step, so it does not consume an attempt.
       intent.deadline = now + PLAN_STEP_TIMEOUT_MS;

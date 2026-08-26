@@ -5,7 +5,7 @@ import type {
 } from "@oh-my-pi/pi-coding-agent";
 
 import * as dgram from "node:dgram";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -176,6 +176,7 @@ class ActivityTracker {
   private phase: "thinking" | "responding" | null = null;
   private streamingTool: AgentActivity | null = null;
   private readonly inFlight = new Map<string, AgentActivity>();
+  private readonly ended = new Set<string>();
 
   get activity(): AgentActivity {
     if (!this.live) return "idle";
@@ -189,22 +190,28 @@ class ActivityTracker {
     return "waiting";
   }
 
-  /** Session start / switch / shutdown. */
-  reset(): void {
-    this.live = false;
+  private clearForeground(): void {
     this.phase = null;
     this.streamingTool = null;
     this.inFlight.clear();
   }
 
+  /** Session start / switch / shutdown. */
+  reset(): void {
+    this.live = false;
+    this.clearForeground();
+    this.ended.clear();
+  }
+
   agentStart(): void {
-    this.reset();
+    this.clearForeground();
     this.live = true;
   }
 
   /** `willContinue` means omp is looping into another agent run, not finishing. */
   agentEnd(willContinue = false): void {
-    this.reset();
+    for (const toolCallId of this.inFlight.keys()) this.ended.add(toolCallId);
+    this.clearForeground();
     this.live = willContinue;
   }
 
@@ -240,23 +247,26 @@ class ActivityTracker {
 
   toolStart(toolCallId: string, toolName: string | undefined): void {
     this.live = true;
+    this.ended.delete(toolCallId);
     this.inFlight.set(
       toolCallId,
       toolName !== undefined ? classifyToolActivity(toolName) : "working",
     );
   }
 
-  /** `tool_execution_update` — also recovers a start we never saw. */
+  /** `tool_execution_update` — also recovers a live start we never saw. */
   toolUpdate(toolCallId: string, toolName: string | undefined): void {
+    if (this.ended.has(toolCallId)) return;
     if (this.inFlight.has(toolCallId)) {
       this.live = true;
       return;
     }
-    this.toolStart(toolCallId, toolName);
+    if (this.live) this.toolStart(toolCallId, toolName);
   }
 
   toolEnd(toolCallId: string): void {
     this.inFlight.delete(toolCallId);
+    this.ended.add(toolCallId);
     // The call that was streaming arguments has finished executing.
     if (this.inFlight.size === 0) this.streamingTool = null;
   }
@@ -309,6 +319,72 @@ function normalizeTodoPhases(raw: unknown): TodoPhase[] | null {
   return phases;
 }
 
+export class AuthoritativeSnapshotCache<T> {
+  private snapshot: T[] = [];
+
+  read(reader: () => T[] | null): T[] {
+    let next: T[] | null;
+    try {
+      next = reader();
+    } catch {
+      return this.snapshot;
+    }
+    if (next !== null) this.snapshot = next;
+    return this.snapshot;
+  }
+
+  reset(): void {
+    this.snapshot = [];
+  }
+}
+
+interface AsyncJob {
+  id: string;
+  type: string;
+  status: string;
+  label: string;
+  startTime: number;
+}
+
+/** omp's ExtensionContext type may predate getAsyncJobSnapshot; access it structurally. */
+interface AsyncJobSnapshotLike {
+  running?: unknown;
+  recent?: unknown;
+}
+
+function normalizeJobs(raw: unknown, cap: number): AsyncJob[] {
+  if (!Array.isArray(raw)) return [];
+  const out: AsyncJob[] = [];
+  for (const j of raw) {
+    if (!j || typeof j !== "object") continue;
+    const id = "id" in j && typeof j.id === "string" ? j.id : "";
+    if (!id) continue;
+    out.push({
+      id,
+      type: "type" in j && typeof j.type === "string" ? j.type : "job",
+      status: "status" in j && typeof j.status === "string" ? j.status : "running",
+      label: "label" in j && typeof j.label === "string" ? j.label : id,
+      startTime: "startTime" in j && typeof j.startTime === "number" ? j.startTime : 0,
+    });
+    if (out.length >= cap) break;
+  }
+  return out;
+}
+
+/**
+ * Running jobs first, then the most recent finished ones. `null` means the
+ * registry is temporarily unavailable; an empty array is authoritative.
+ */
+function readAvailableJobs(ctx: ExtensionContext): AsyncJob[] | null {
+  const withJobs = ctx as ExtensionContext & {
+    getAsyncJobSnapshot?: (opts?: { recentLimit?: number }) => AsyncJobSnapshotLike | null;
+  };
+  if (typeof withJobs.getAsyncJobSnapshot !== "function") return null;
+  const snap = withJobs.getAsyncJobSnapshot({ recentLimit: 5 });
+  if (!snap) return null;
+  return [...normalizeJobs(snap.running, 24), ...normalizeJobs(snap.recent, 5)];
+}
+
 /**
  * Native plan tri-state. Kept identical to `src/shared/plan-mode.ts`; this
  * file cannot import from `src/` because it is copied standalone into
@@ -322,7 +398,14 @@ interface SessionManagerLike {
   getBranch?: () => unknown[] | undefined;
 }
 
+type BridgeUpdateKind = "session" | "jobs";
+
 interface BridgeState {
+  /**
+   * Job registry polling is independent of the terminal session lifecycle.
+   * Consumers must keep job updates out of session/model/thinking state.
+   */
+  updateKind: BridgeUpdateKind;
   running: boolean;
   activity: AgentActivity;
   model: string | null;
@@ -330,6 +413,7 @@ interface BridgeState {
   planMode: PlanMode;
   ask: PendingAsk | null;
   todo: TodoPhase[] | null;
+  jobs: AsyncJob[];
   pid: number;
   cwd: string | null;
   /** Matches host `OMPHIF_SESSION_ID` so multi-tab chrome can route activity. */
@@ -344,9 +428,15 @@ const STATUS_FILE = join(
   "runtime-status.json",
 );
 
+const CANCEL_REQUEST_FILE = join(
+  homedir(),
+  ".omp",
+  "agent",
+  "cancel-job.json",
+);
+
 const UDP_HOST = "127.0.0.1";
 const UDP_PORT = 37991;
-
 const THINKING_LEVELS: Record<string, ThinkingLevel> = {
   off: (ThinkingLevel?.Off ?? "off") as ThinkingLevel,
 
@@ -405,8 +495,12 @@ function normalizeAskQuestions(raw: unknown): PendingAskQuestion[] {
 }
 
 export default function controlBridge(pi: ExtensionAPI) {
+  const sessionId = process.env.OMPHIF_SESSION_ID?.trim() || null;
+  if (!sessionId) return;
+
   let activity: AgentActivity = "idle";
   const tracker = new ActivityTracker();
+  const jobSnapshots = new AuthoritativeSnapshotCache<AsyncJob>();
   let lastActivityPublish = 0;
   let activityPublishPending = false;
   let running = false;
@@ -415,6 +509,7 @@ export default function controlBridge(pi: ExtensionAPI) {
   let publishedPlanMode: PlanMode | null = null;
   let pendingAsk: PendingAsk | null = null;
   let todoState: TodoPhase[] | null = null;
+  let publishedJobsSig = "";
 
   let udp: dgram.Socket | undefined;
   let heartbeatStarted = false;
@@ -427,6 +522,44 @@ export default function controlBridge(pi: ExtensionAPI) {
 
     return udp;
   }
+  function checkAndExecuteCancel(ctx: ExtensionContext): void {
+    if (!existsSync(CANCEL_REQUEST_FILE)) return;
+    try {
+      const raw = readFileSync(CANCEL_REQUEST_FILE, "utf8");
+      const req = JSON.parse(raw) as { jobId?: string; sessionId?: string; timestamp?: number };
+      if (!req || !req.jobId) return;
+
+      if (req.sessionId && req.sessionId !== sessionId) return;
+
+      const targetId = req.jobId.trim();
+
+      const withSession = ctx as unknown as {
+        session?: { asyncJobManager?: { cancel: (id: string) => boolean } };
+        asyncJobManager?: { cancel: (id: string) => boolean };
+        sessionManager?: { session?: { asyncJobManager?: { cancel: (id: string) => boolean } } };
+      };
+
+      const mgr =
+        withSession.session?.asyncJobManager ??
+        withSession.asyncJobManager ??
+        withSession.sessionManager?.session?.asyncJobManager;
+
+      if (mgr && typeof mgr.cancel === "function") {
+        mgr.cancel(targetId);
+      }
+
+      if (typeof ctx.invokeTool === "function") {
+        void ctx.invokeTool("hub", { op: "cancel", ids: [targetId] });
+      }
+
+      try {
+        unlinkSync(CANCEL_REQUEST_FILE);
+      } catch {}
+
+      publish(ctx, true, "jobs");
+    } catch {}
+  }
+
 
   /**
    * Derive plan mode the way omp itself does: walk the current branch back to
@@ -460,16 +593,14 @@ export default function controlBridge(pi: ExtensionAPI) {
     return next;
   }
 
-  function makeState(ctx: ExtensionContext): BridgeState {
+  function makeState(ctx: ExtensionContext, updateKind: BridgeUpdateKind): BridgeState {
     const model = ctx.models.current();
     const thinking = pi.getThinkingLevel();
     const currentPlanMode = readPlanMode(ctx);
-    const sessionId =
-      process.env.OMPHIF_SESSION_ID ||
-      process.env.ITERM_SESSION_ID?.split(":").pop() ||
-      null;
+    const currentSessionId = sessionId;
 
     return {
+      updateKind,
       running,
       activity,
       model: model
@@ -481,9 +612,10 @@ export default function controlBridge(pi: ExtensionAPI) {
       planMode: currentPlanMode,
       ask: pendingAsk,
       todo: todoState,
+      jobs: jobSnapshots.read(() => readAvailableJobs(ctx)),
       pid: process.pid,
       cwd: ctx.cwd ?? null,
-      sessionId,
+      sessionId: currentSessionId,
       updatedAt: new Date().toISOString(),
     };
   }
@@ -491,9 +623,12 @@ export default function controlBridge(pi: ExtensionAPI) {
   function publish(
     ctx: ExtensionContext,
     sendUdp = true,
+    updateKind: BridgeUpdateKind = "session",
   ) {
-    const state = makeState(ctx);
+    if (!ctx || !ctx.hasUI) return;
+    const state = makeState(ctx, updateKind);
     publishedPlanMode = state.planMode;
+    publishedJobsSig = state.jobs.map((j) => `${j.id}:${j.status}`).join("|");
     const json = JSON.stringify(state);
 
     mkdirSync(dirname(STATUS_FILE), {
@@ -527,6 +662,7 @@ export default function controlBridge(pi: ExtensionAPI) {
   const ACTIVITY_MIN_INTERVAL_MS = 120;
 
   function syncActivity(ctx: ExtensionContext) {
+    if (!ctx || !ctx.hasUI) return;
     const next = tracker.activity;
     if (next === activity) return;
     activity = next;
@@ -558,6 +694,7 @@ export default function controlBridge(pi: ExtensionAPI) {
   }
 
   function showCurrent(ctx: ExtensionContext) {
+    if (!ctx || !ctx.hasUI) return;
     publish(ctx);
   }
 
@@ -565,6 +702,7 @@ export default function controlBridge(pi: ExtensionAPI) {
     level: ThinkingLevel,
     ctx: ExtensionContext,
   ) {
+    if (!ctx || !ctx.hasUI) return;
     // false = session-only, don't rewrite your global default.
     pi.setThinkingLevel(level, false);
 
@@ -580,6 +718,7 @@ export default function controlBridge(pi: ExtensionAPI) {
       "Show/set model and thinking level",
 
     handler: async (args, ctx) => {
+      if (!ctx || !ctx.hasUI) return;
       const rawTokens = args
         .trim()
         .split(/\s+/)
@@ -682,6 +821,7 @@ export default function controlBridge(pi: ExtensionAPI) {
       description: `Set thinking to ${level}`,
 
       handler: (ctx) => {
+        if (!ctx || !ctx.hasUI) return;
         setThinking(level, ctx);
       },
     });
@@ -692,10 +832,13 @@ export default function controlBridge(pi: ExtensionAPI) {
   // --------------------------------------------------
 
   pi.on("session_start", async (_event, ctx) => {
+    if (!ctx || !ctx.hasUI) return;
     running = true;
     activity = "idle";
     tracker.reset();
+    jobSnapshots.reset();
 
+    planLeafId = null;
     publish(ctx);
 
     // Heartbeat so consumers can distinguish
@@ -712,33 +855,48 @@ export default function controlBridge(pi: ExtensionAPI) {
       // `/plan` fires no extension event, so poll the session branch. The
       // leaf-id cache in readPlanMode makes an idle tick one cheap call.
       ctx.setInterval(() => {
-        if (readPlanMode(ctx) !== publishedPlanMode) publish(ctx, true);
+        checkAndExecuteCancel(ctx);
+        if (readPlanMode(ctx) !== publishedPlanMode) {
+          publish(ctx, true);
+          return;
+        }
+        const sig = jobSnapshots
+          .read(() => readAvailableJobs(ctx))
+          .map((j) => `${j.id}:${j.status}`)
+          .join("|");
+        if (sig !== publishedJobsSig) publish(ctx, true, "jobs");
       }, 250);
     }
   });
 
   pi.on("session_switch", async (_event, ctx) => {
+    if (!ctx || !ctx.hasUI) return;
     activity = "idle";
     tracker.reset();
+    jobSnapshots.reset();
     pendingAsk = null;
     todoState = null;
+    planLeafId = null;
     publish(ctx);
   });
 
   pi.on(
     "before_agent_start",
     async (_event, ctx) => {
+      if (!ctx || !ctx.hasUI) return;
       tracker.agentStart();
       syncActivity(ctx);
     },
   );
 
   pi.on("agent_start", async (_event, ctx) => {
+    if (!ctx || !ctx.hasUI) return;
     tracker.agentStart();
     syncActivity(ctx);
   });
 
   pi.on("message_update", async (event, ctx) => {
+    if (!ctx || !ctx.hasUI) return;
     tracker.stream(extractStreamEventType(event), extractToolName(event));
     syncActivity(ctx);
   });
@@ -746,6 +904,7 @@ export default function controlBridge(pi: ExtensionAPI) {
   pi.on(
     "tool_execution_start",
     async (event, ctx) => {
+      if (!ctx || !ctx.hasUI) return;
       const toolName = extractToolName(event);
       tracker.toolStart(toolCallKey(event, toolName), toolName);
       syncActivity(ctx);
@@ -775,6 +934,7 @@ export default function controlBridge(pi: ExtensionAPI) {
   );
 
   pi.on("tool_execution_update", async (event, ctx) => {
+    if (!ctx || !ctx.hasUI) return;
     const toolName = extractToolName(event);
     tracker.toolUpdate(toolCallKey(event, toolName), toolName);
     syncActivity(ctx);
@@ -783,9 +943,9 @@ export default function controlBridge(pi: ExtensionAPI) {
   pi.on(
     "tool_execution_end",
     async (event, ctx) => {
+      if (!ctx || !ctx.hasUI) return;
       tracker.toolEnd(toolCallKey(event, extractToolName(event)));
       syncActivity(ctx);
-
       if (
         pendingAsk &&
         event &&
@@ -820,6 +980,7 @@ export default function controlBridge(pi: ExtensionAPI) {
   );
 
   pi.on("agent_end", async (event, ctx) => {
+    if (!ctx || !ctx.hasUI) return;
     pendingAsk = null;
     const willContinue =
       Boolean(event) && typeof event === "object" && "willContinue" in event && event.willContinue === true;
@@ -830,7 +991,7 @@ export default function controlBridge(pi: ExtensionAPI) {
   pi.on(
     "session_shutdown",
     async (_event, ctx) => {
-      if (!ctx.hasUI) return;
+      if (!ctx || !ctx.hasUI) return;
 
       running = false;
       activity = "idle";

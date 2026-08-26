@@ -161,6 +161,40 @@ describe("ActivityTracker", () => {
     expect(tracker.activity).toBe("running");
   });
 
+  it("ignores late updates after a tool has ended", () => {
+    const tracker = new ActivityTracker();
+    tracker.agentStart();
+    tracker.toolStart("late", "bash");
+    tracker.toolEnd("late");
+    tracker.toolUpdate("late", "bash");
+    expect(tracker.activity).toBe("waiting");
+  });
+
+  it("ignores tool updates after the foreground agent has ended", () => {
+    const tracker = new ActivityTracker();
+    tracker.agentStart();
+    tracker.toolStart("late", "bash");
+    tracker.agentEnd();
+    tracker.toolUpdate("late", "bash");
+    tracker.toolUpdate("unknown", "bash");
+    expect(tracker.activity).toBe("idle");
+  });
+
+  it("keeps ended tool IDs tombstoned until the session resets", () => {
+    const tracker = new ActivityTracker();
+    tracker.agentStart();
+    tracker.toolStart("reused", "bash");
+    tracker.toolEnd("reused");
+    tracker.agentStart();
+    tracker.toolUpdate("reused", "bash");
+    expect(tracker.activity).toBe("waiting");
+
+    tracker.reset();
+    tracker.agentStart();
+    tracker.toolUpdate("reused", "bash");
+    expect(tracker.activity).toBe("running");
+  });
+
   it("treats an unnamed streaming tool call as work, not waiting", () => {
     const tracker = new ActivityTracker();
     tracker.agentStart();
