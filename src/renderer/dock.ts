@@ -184,6 +184,7 @@ export interface DockHooks {
   openUsage(): void;
   openTools?(): void;
   selectThinking(level: string): void;
+  openCwd(): void;
   changeCwd(): void;
 }
 
@@ -213,7 +214,7 @@ export class Dock {
   private readonly tray = document.getElementById("dock-chips") as HTMLDivElement;
   private readonly input = document.getElementById("dock-input") as HTMLTextAreaElement;
   private readonly mirror = document.getElementById("dock-highlight") as HTMLPreElement;
-  private readonly cwdLabel = document.getElementById("dock-cwd") as HTMLSpanElement;
+  private readonly cwdLabel = document.getElementById("dock-cwd") as HTMLButtonElement;
   private readonly changeDirBtn = document.getElementById("dock-change-dir") as HTMLButtonElement;
   private readonly usageBtn = document.getElementById("dock-usage-btn") as HTMLButtonElement;
   private readonly toolsBtn = document.getElementById("dock-tools-btn") as HTMLButtonElement | null;
@@ -243,6 +244,9 @@ export class Dock {
   private thinkingLevels: string[] = [...DEFAULT_THINKING_LEVELS];
   private readonly previews = new Map<string, ImagePreview>();
   private skillCwd = "";
+  private toastEl: HTMLDivElement | null = null;
+  private toastTimer: number | null = null;
+  private toastLeavingTimer: number | null = null;
   constructor(private readonly hooks: DockHooks) {
     this.slashMenu = new SlashMenu((cmd) => {
       const text = this.input.value;
@@ -260,6 +264,15 @@ export class Dock {
     this.glow = new DockGlow(editorEl);
     this.lightbox = new ImageLightbox();
     this.root.appendChild(this.slashMenu.el);
+
+    const toast = document.createElement("div");
+    toast.id = "dock-toast";
+    toast.hidden = true;
+    toast.setAttribute("role", "status");
+    toast.setAttribute("aria-live", "polite");
+    toast.innerHTML = `<span class="dock-toast-icon">&#x2713;</span><span class="dock-toast-text">Just copied</span>`;
+    this.root.appendChild(toast);
+    this.toastEl = toast;
     this.stopButton.addEventListener("click", () => {
       this.hooks.interrupt();
     });
@@ -267,6 +280,7 @@ export class Dock {
       this.submit();
     });
     this.changeDirBtn.addEventListener("click", () => this.hooks.changeCwd());
+    this.cwdLabel.addEventListener("click", () => this.hooks.openCwd());
     this.usageBtn.addEventListener("click", () => this.hooks.openUsage());
     this.modelBtn.addEventListener("click", () => this.hooks.openModel());
     this.toolsBtn?.addEventListener("click", () => this.hooks.openTools?.());
@@ -415,6 +429,41 @@ export class Dock {
     this.thinkingBtn.innerHTML = `${iconSvg}<span class="dock-thinking-label">Thinking: ${this.thinkingLevel}</span>`;
   }
 
+
+  /**
+   * Show a temporary floating status toast in the dock area (e.g. "Just copied").
+   */
+  showToast(message = "Just copied", durationMs = 1300): void {
+    if (!this.toastEl) return;
+    if (this.toastTimer) {
+      clearTimeout(this.toastTimer);
+      this.toastTimer = null;
+    }
+    if (this.toastLeavingTimer) {
+      clearTimeout(this.toastLeavingTimer);
+      this.toastLeavingTimer = null;
+    }
+    const textEl = this.toastEl.querySelector(".dock-toast-text");
+    if (textEl) textEl.textContent = message;
+    this.toastEl.classList.remove("leaving");
+    this.toastEl.hidden = false;
+
+    this.toastEl.style.animation = "none";
+    void this.toastEl.offsetHeight;
+    this.toastEl.style.animation = "";
+
+    this.toastTimer = window.setTimeout(() => {
+      if (!this.toastEl || this.toastEl.hidden) return;
+      this.toastEl.classList.add("leaving");
+      this.toastLeavingTimer = window.setTimeout(() => {
+        if (!this.toastEl) return;
+        this.toastEl.hidden = true;
+        this.toastEl.classList.remove("leaving");
+        this.toastLeavingTimer = null;
+      }, 160);
+      this.toastTimer = null;
+    }, durationMs);
+  }
   toggleExpanded(): void {
     this.root.classList.toggle("expanded");
     this.autoGrow();
@@ -925,9 +974,15 @@ export class Dock {
     const preview = await window.omphif.imagePreview(path, FULL_PREVIEW_SIZE);
     if (!preview) return;
     const fileName = path.split(/[\\/]/).pop() || "Image Preview";
-    this.lightbox.open(preview.dataUrl, fileName, {
-      width: preview.width,
-      height: preview.height,
-    });
+    this.lightbox.open(
+      preview.dataUrl,
+      fileName,
+      { width: preview.width, height: preview.height },
+      path,
+      () => {
+        this.previews.delete(path);
+        this.renderChips();
+      },
+    );
   }
 }

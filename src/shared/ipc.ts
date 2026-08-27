@@ -8,6 +8,9 @@ export const CH = {
   ptyWrite: "pty:write",
   ptyResize: "pty:resize",
   ptyAck: "pty:ack",
+  ptyStalled: "pty:stalled",
+  ptyStallCleared: "pty:stall-cleared",
+  ptyResumeFlow: "pty:resume-flow",
   ptyKill: "pty:kill",
   ptyData: "pty:data",
   ptyExit: "pty:exit",
@@ -15,6 +18,7 @@ export const CH = {
   notify: "app:notify",
   saveClipboardImage: "app:save-clipboard-image",
   imagePreview: "app:image-preview",
+  saveImageEdit: "app:save-image-edit",
   readClipboardText: "app:read-clipboard-text",
   loadState: "app:load-state",
   saveState: "app:save-state",
@@ -36,9 +40,11 @@ export const CH = {
   removeRecentFolder: "app:remove-recent-folder",
   clearRecentFolders: "app:clear-recent-folders",
   getRecentChats: "app:get-recent-chats",
+  getSessionMessages: "app:get-session-messages",
   getSkillCommands: "app:get-skill-commands",
   getJobActivity: "app:get-job-activity",
   killJob: "app:kill-job",
+  openExternal: "app:open-external",
 } as const;
 
 export type ControlBridgeActivity = AgentActivity;
@@ -242,6 +248,8 @@ export type SpawnResult = { id: string; pid: number } | { error: string };
 
 export type PtyData = { id: string; data: string };
 export type PtyExit = { id: string; exitCode: number };
+export type PtyStall = { id: string; pausedMs: number };
+export type PtyStallCleared = { id: string };
 
 export type TabState = { cwd: string; customTitle?: string; colorTag?: string };
 
@@ -262,6 +270,12 @@ export interface RecentChatInfo {
   cwd: string;
   updatedAt: string;
   mtime: number;
+}
+
+/** One user-authored turn, extracted from a session's on-disk transcript. */
+export interface SessionMessage {
+  text: string;
+  at: number;
 }
 
 export type PanelPosition = "top-right" | "center" | "top-center" | "bottom-center";

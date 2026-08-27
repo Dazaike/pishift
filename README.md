@@ -39,6 +39,7 @@ No fake web-view wrappers pretending to be terminals. Just a genuine hardware-ac
 - **Multi-Line Expanded Sheet:** Hit `Ctrl+Shift+E` (or `⤢`) when you need to write a thesis prompt instead of squinting at a single-line input.
 - **Drag-and-Drop Image Chips + Lightbox:** Drag an image in, get a nice thumbnail chip. Click it to zoom in full resolution. Shocking, right?
 - **Real-Time Markdown Highlighting:** Code blocks, bolding, URLs, and paths highlight as you type.
+- **Clickable Workspace Path:** Click the current folder path in the dock to open it in File Explorer. Because copying paths into Explorer like it's 2008 was always a bad plan.
 
 ### 🧠 Model & Reasoning Control for the Indecisive
 - **Model Switcher:** Grid view, list view, drag-and-drop reordering. Put your favorites at the top where they belong.
@@ -68,6 +69,7 @@ No fake web-view wrappers pretending to be terminals. Just a genuine hardware-ac
 - **App Menu Popover:** The old "Usage" window is now a fast vertical popover (Todo, Settings, Relaunch, Quit) instead of a separate window — matches the Model/Thinking menu feel.
 - **Native-Feeling Ask & Confirm Dialogs:** In-app modals replace blocking OS prompts for destructive actions and quick input.
 - **Live Activity Sync:** Tab titles and status reflect the agent's actual state (`idle`, `working`, `thinking`) in real time instead of the generic "Temp" default.
+- **Stall Recovery That Doesn’t Lie:** A frozen terminal output stream gets an explicit Resume or Kill action; long-running tools show elapsed time instead of pretending they vanished into the void.
 
 ---
 

@@ -479,7 +479,7 @@ export class RecentChatsModal {
   }
 }
 
-function formatRelativeTime(dateStrOrMs: string | number): string {
+export function formatRelativeTime(dateStrOrMs: string | number): string {
   const time = typeof dateStrOrMs === "number" ? dateStrOrMs : new Date(dateStrOrMs).getTime();
   if (Number.isNaN(time)) return "";
   const diff = Date.now() - time;

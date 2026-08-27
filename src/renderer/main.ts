@@ -19,7 +19,8 @@ import {
 } from "../shared/ipc";
 import { parseModelSlashCommand } from "../shared/model-command";
 import { findInstalledModel } from "../shared/model-match";
-import { buildAskQuestionKeys, type AskAnswer } from "../shared/ask-keys";
+import { ASK_ENTER_GAP_MS, ASK_KEY_GAP_MS, buildAskDialogSteps, type AskAnswer } from "../shared/ask-keys";
+import { formatElapsed } from "../shared/elapsed";
 import {
   DEFAULT_THEME_NAME,
   FONT_FAMILY,
@@ -28,6 +29,7 @@ import {
   type ThemePreset,
 } from "./theme";
 import { TodoPanel, type TodoPanelMode } from "./todo-panel";
+import { ActivityTab, type SentMessageEntry } from "./activity-tab";
 import { ConfirmDialog } from "./confirm-dialog";
 import {
   Dock,
@@ -108,6 +110,9 @@ type Tab = {
   activity: ControlBridgeActivity;
   /** Clears stuck progressBusy if omp never sends 9;4;0. */
   progressBusyTimer: number | null;
+  stallBanner: HTMLDivElement | null;
+  /** When the current non-idle activity began; null while idle. */
+  activitySince: number | null;
   button: HTMLButtonElement;
   appIcon: HTMLImageElement;
   colorDot: HTMLSpanElement;
@@ -117,8 +122,9 @@ type Tab = {
   pendingAsk: PendingAsk | null;
   /** omp is blocked on an unanswered question. */
   awaitingAsk: boolean;
-  /** In-flight delivery of ask answers to omp's sequential question dialogs. */
-  askSend: { keys: string[]; next: number; timer: number | null } | null;
+  /** In-flight delivery of ask answers to omp's AskDialogComponent. */
+  askSend: { seq: number } | null;
+  askSendSeq: number;
   dismissedAskToolCallId: string | null;
   /** Auto-incrementing fallback label ("Session N") when no folder/auto-title applies. */
   sessionNumber: number;
@@ -128,8 +134,16 @@ type Tab = {
   jobs: AsyncJob[];
   /** Active Plan Review menu state in this session. */
   planReview: { contextStats?: string } | null;
+  /** omp is blocked on the plan-review menu. */
+  awaitingPlanReview: boolean;
+  /** omp is compacting context after "Approve and Compact Context"; suppress reopen/close flicker until done. */
+  planReviewCompacting: boolean;
   /** Set when the user cancelled or the session died — that idle is not "done". */
   suppressDoneSound: boolean;
+  /** Messages sent from the dock this session, for the activity tab's jump-to-message list. */
+  sentMessages: SentMessageEntry[];
+  /** omp session key whose transcript already backfilled `sentMessages`; guards repeat loads. */
+  activityBackfilledKey: string | null;
 };
 
 const tabs: Tab[] = [];
@@ -151,6 +165,7 @@ let activityColors: Record<GlowActivity, string> = { ...DEFAULT_ACTIVITY_COLORS 
 let activityColorsOnTabs = false;
 let todoPanelVisible = false;
 let todoPanelMode: TodoPanelMode = "overlay";
+const ELAPSED_MIN_MS = 5000;
 let hideTopButtonLabels = false;
 let hideBottomButtonLabels = false;
 let collapseTopBarToMenu = false;
@@ -221,6 +236,8 @@ const todoPanel = new TodoPanel(
     killJob(job);
   },
 );
+
+const activityTab = new ActivityTab();
 
 function applyTheme(preset: ThemePreset): void {
   currentPreset = preset;
@@ -326,36 +343,59 @@ function sleep(ms: number): Promise<void> {
 }
 
 
-const ASK_STEP_TIMEOUT_MS = 1500;
-
-function sendAskAnswers(tab: Tab, answers: AskAnswer[]): void {
+async function sendAskAnswers(tab: Tab, answers: AskAnswer[]): Promise<void> {
   if (!tab.view) return;
-  clearAskSend(tab);
-  const multiQuestion = answers.length > 1;
-  const keys = answers.map((answer) => buildAskQuestionKeys(answer, multiQuestion));
-  tab.askSend = { keys, next: 0, timer: null };
-  advanceAskSend(tab);
-}
-
-/** Push the next question's keystrokes; arm a watchdog for the one after it. */
-function advanceAskSend(tab: Tab): void {
-  const send = tab.askSend;
-  if (!send || !tab.view) return clearAskSend(tab);
-  const chunk = send.keys[send.next];
-  if (chunk === undefined) return clearAskSend(tab);
-  tab.view.writeRaw(chunk);
-  send.next++;
-  if (send.next >= send.keys.length) return clearAskSend(tab);
-  // omp mounts the next selector only after this one resolves; parseStatusStream
-  // releases us early when it sees "(next/total)". The timer is the backstop for
-  // a progress marker split across PTY chunks.
-  send.timer = window.setTimeout(() => advanceAskSend(tab), ASK_STEP_TIMEOUT_MS);
+  const seq = ++tab.askSendSeq;
+  tab.askSend = { seq };
+  const steps = buildAskDialogSteps(answers);
+  const ARROW_KEY_BY_DIR: Record<"up" | "down" | "left" | "right", string> = {
+    up: "ArrowUp",
+    down: "ArrowDown",
+    left: "ArrowLeft",
+    right: "ArrowRight",
+  };
+  const arrow = (dir: "up" | "down" | "left" | "right") => {
+    const key = ARROW_KEY_BY_DIR[dir];
+    tab.view?.writeArrow({
+      key,
+      code: key,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      metaKey: false,
+    });
+  };
+  for (const step of steps) {
+    if (tab.askSendSeq !== seq || !tab.view) return;
+    switch (step.type) {
+      case "arrow":
+        arrow(step.dir);
+        await sleep(ASK_KEY_GAP_MS);
+        break;
+      case "space":
+        tab.view.writeRaw(" ");
+        await sleep(ASK_KEY_GAP_MS);
+        break;
+      case "enter":
+        tab.view.writeRaw("\r");
+        await sleep(ASK_ENTER_GAP_MS);
+        await tab.view.waitForQuiet(40, 250);
+        break;
+      case "wait":
+        await sleep(step.ms);
+        await tab.view.waitForQuiet(40, 250);
+        break;
+      case "text":
+        tab.view.writeRaw(step.value);
+        await sleep(ASK_KEY_GAP_MS);
+        break;
+    }
+  }
+  if (tab.askSendSeq === seq) tab.askSend = null;
 }
 
 function clearAskSend(tab: Tab): void {
-  if (tab.askSend?.timer !== null && tab.askSend?.timer !== undefined) {
-    window.clearTimeout(tab.askSend.timer);
-  }
+  tab.askSendSeq++;
   tab.askSend = null;
 }
 
@@ -373,6 +413,23 @@ function raiseAskAttention(tab: Tab, ask: PendingAsk): void {
 function clearAskAttention(tab: Tab): void {
   if (!tab.awaitingAsk) return;
   tab.awaitingAsk = false;
+  renderTabs();
+}
+
+function raisePlanReviewAttention(tab: Tab): void {
+  tab.awaitingPlanReview = true;
+  renderTabs();
+  doneSound.play();
+  if (document.hasFocus() && tab === active) return;
+  api.notify(
+    tab.customTitle || tab.title || basename(tab.cwd),
+    "Plan ready — choose next step",
+  );
+}
+
+function clearPlanReviewAttention(tab: Tab): void {
+  if (!tab.awaitingPlanReview) return;
+  tab.awaitingPlanReview = false;
   renderTabs();
 }
 
@@ -394,7 +451,7 @@ function syncAskModal(tab: Tab): void {
   askModal.open(
     pending,
     (answers) => {
-      sendAskAnswers(tab, answers);
+      void sendAskAnswers(tab, answers);
       tab.pendingAsk = null;
       clearAskAttention(tab);
     },
@@ -407,6 +464,8 @@ function syncAskModal(tab: Tab): void {
 async function sendPlanReviewAction(tab: Tab, action: PlanReviewAction): Promise<void> {
   if (!tab.view) return;
   tab.planReview = null;
+  if (action === "compact") tab.planReviewCompacting = true;
+  clearPlanReviewAttention(tab);
 
   if (action === "quit") {
     tab.view.writeRaw("\x1b");
@@ -449,6 +508,16 @@ async function sendPlanReviewAction(tab: Tab, action: PlanReviewAction): Promise
 }
 
 function syncPlanReviewModal(tab: Tab): void {
+  if (tab.planReviewCompacting) {
+    if (!planReviewModal) {
+      planReviewModal = new PlanReviewModal();
+      const dockEl = document.getElementById("dock");
+      if (dockEl) dockEl.insertBefore(planReviewModal.el, dockEl.firstChild);
+      else document.body.appendChild(planReviewModal.el);
+    }
+    planReviewModal.showCompacting();
+    return;
+  }
   if (!tab.planReview) {
     planReviewModal?.close();
     return;
@@ -569,7 +638,7 @@ function renderTabs(): void {
     const name = tabDisplayName(tab);
     tab.button.classList.toggle("active", tab === active);
     tab.button.classList.toggle("busy", tab.busy);
-    tab.button.classList.toggle("awaiting-ask", tab.awaitingAsk);
+    tab.button.classList.toggle("awaiting-ask", tab.awaitingAsk || tab.awaitingPlanReview);
     if (activityColorsOnTabs && tab.activity !== "idle") {
       tab.button.style.setProperty("--tab-glow", activityColors[tab.activity]);
     } else {
@@ -614,13 +683,29 @@ function updateHeaderActivity(tab: Tab | null = active): void {
     tab.activity !== "idle" ? (tab.activity as GlowActivity) : "working";
   const color = activityColors[kind] ?? DEFAULT_ACTIVITY_COLORS[kind];
   const label = GLOW_ACTIVITY_LABELS[kind] ?? "Working";
+  const elapsedMs = tab.activitySince === null ? 0 : Date.now() - tab.activitySince;
+  const elapsed = elapsedMs >= ELAPSED_MIN_MS ? ` · ${formatElapsed(elapsedMs)}` : "";
 
   headerActivity.hidden = false;
   headerActivity.dataset.activity = kind;
   headerActivity.title = `Agent activity: ${label}`;
-  headerActivityText.textContent = label;
+  headerActivityText.textContent = `${label}${elapsed}`;
   headerActivityDot.style.background = color;
   headerActivity.style.setProperty("--header-activity-color", color);
+}
+
+let elapsedTicker: number | null = null;
+
+/** Repaint the header once a second while a turn is running, so the elapsed
+ * label advances without waiting for the next bridge update. */
+function syncElapsedTicker(): void {
+  const needed = active !== null && active.activitySince !== null;
+  if (needed && elapsedTicker === null) {
+    elapsedTicker = window.setInterval(() => updateHeaderActivity(), 1000);
+  } else if (!needed && elapsedTicker !== null) {
+    window.clearInterval(elapsedTicker);
+    elapsedTicker = null;
+  }
 }
 
 function syncTabBusy(tab: Tab): void {
@@ -680,6 +765,10 @@ function setTabProgressBusy(tab: Tab, busy: boolean): void {
 }
 
 function setTabActivity(tab: Tab, activity: ControlBridgeActivity): void {
+  if (activity === "idle") tab.activitySince = null;
+  else if (tab.activity !== activity || tab.activitySince === null) {
+    tab.activitySince = Date.now();
+  }
   tab.activity = activity;
   // Authoritative idle from the bridge also clears a stuck OSC progress flag.
   if (activity === "idle") {
@@ -690,6 +779,7 @@ function setTabActivity(tab: Tab, activity: ControlBridgeActivity): void {
     tab.progressBusy = false;
   }
   syncTabBusy(tab);
+  syncElapsedTicker();
 }
 
 function updateUsageDisplay(tab: Tab): void {
@@ -727,10 +817,12 @@ function activate(tab: Tab): void {
     active.dock = dock.snapshot();
     active.view?.deactivate();
     active.notice?.classList.remove("active");
+    active.stallBanner?.classList.remove("active");
   }
   active = tab;
   tab.view?.activate(viewsEl);
   tab.notice?.classList.add("active");
+  tab.stallBanner?.classList.add("active");
   playViewSwitch(tab, dir);
   dock.load(tab.dock);
   dock.setCwd(tab.cwd);
@@ -742,6 +834,7 @@ function activate(tab: Tab): void {
   updateHeaderActivity(tab);
   syncAskModal(tab);
   syncPlanReviewModal(tab);
+  syncActivityTab(tab);
   todoPanel.setPhases(tab.todo);
   todoPanel.setJobs(tab.jobs);
   modelModal?.setCurrentModel(tab.modelName || "");
@@ -757,6 +850,7 @@ function activate(tab: Tab): void {
   renderTabs();
   updateUsageDisplay(tab);
   persist();
+  syncElapsedTicker();
 }
 
 function closeTab(tab: Tab): void {
@@ -769,12 +863,15 @@ function closeTab(tab: Tab): void {
   }
   tab.view?.dispose();
   tab.notice?.remove();
+  clearStallBanner(tab);
   tab.button.remove();
 
   if (active === tab) {
     active = null;
     askModal?.close();
+    activityTab.setEntries([], () => false);
     planReviewModal?.close();
+    clearPlanReviewAttention(tab);
     const next = tabs[Math.min(index, tabs.length - 1)];
     if (next) activate(next);
   }
@@ -902,6 +999,43 @@ function showNotice(tab: Tab, message: string): void {
   tab.notice = notice;
 }
 
+/** Overlay offering manual recovery when the PTY has been paused awaiting an
+ * ack. Unlike showNotice(), this never replaces the terminal view. */
+function showStallBanner(tab: Tab): void {
+  if (tab.stallBanner) return;
+  const banner = document.createElement("div");
+  banner.className = tab === active ? "stall-banner active" : "stall-banner";
+
+  const text = document.createElement("span");
+  text.textContent = "Terminal output stalled.";
+
+  const resumeBtn = document.createElement("button");
+  resumeBtn.type = "button";
+  resumeBtn.textContent = "Resume output";
+  resumeBtn.addEventListener("click", () => {
+    if (tab.sessionId) api.resumeFlow(tab.sessionId);
+    clearStallBanner(tab);
+  });
+
+  const killBtn = document.createElement("button");
+  killBtn.type = "button";
+  killBtn.className = "stall-banner-kill";
+  killBtn.textContent = "Kill session";
+  killBtn.addEventListener("click", () => {
+    clearStallBanner(tab);
+    if (tab.sessionId) api.kill(tab.sessionId);
+  });
+
+  banner.append(text, resumeBtn, killBtn);
+  viewsEl.appendChild(banner);
+  tab.stallBanner = banner;
+}
+
+function clearStallBanner(tab: Tab): void {
+  tab.stallBanner?.remove();
+  tab.stallBanner = null;
+}
+
 function cycleTab(step: -1 | 1): void {
   if (!active || tabs.length < 2) return;
   const index = (tabs.indexOf(active) + step + tabs.length) % tabs.length;
@@ -941,6 +1075,10 @@ function createView(tab: Tab): TermView {
         // selection must not leak into whatever the user is composing.
         if (tab !== active) return;
         dock.addSnippet(text);
+      },
+      onCopyFromTerminal: () => {
+        if (tab !== active) return;
+        dock.showToast("Just copied", 1300);
       },
     },
     currentPreset,
@@ -1043,16 +1181,23 @@ function makeTab(cwd: string, customTitle?: string, colorTag?: string): Tab {
     colorDot,
     label,
     notice: null,
+    stallBanner: null,
+    activitySince: null,
     dock: undefined,
     pendingAsk: null,
     awaitingAsk: false,
     askSend: null,
+    askSendSeq: 0,
     dismissedAskToolCallId: null,
     sessionNumber: ++sessionCounter,
     todo: null,
     jobs: [],
     planReview: null,
+    awaitingPlanReview: false,
+    planReviewCompacting: false,
     suppressDoneSound: false,
+    sentMessages: [],
+    activityBackfilledKey: null,
   };
   self = tab;
 
@@ -1207,6 +1352,65 @@ const ATTACH_SETTLE_MS = 70;
 const EDITOR_SETTLE_MS = 16;
 
 /**
+ * Resolve a clicked activity row to a terminal position. A live marker is
+ * exact; a transcript-backfilled row has none, so fall back to finding its
+ * text in the scrollback. Returns false when neither locates anything.
+ */
+function jumpToSentMessage(tab: Tab, entry: SentMessageEntry): boolean {
+  const view = tab.view;
+  if (!view) return false;
+  if (entry.marker && !entry.marker.isDisposed) {
+    view.scrollToMarker(entry.marker);
+    view.focus();
+    return true;
+  }
+  if (!view.scrollToText(entry.text)) return false;
+  view.focus();
+  return true;
+}
+
+function syncActivityTab(tab: Tab): void {
+  activityTab.setEntries(tab.sentMessages, (entry) => jumpToSentMessage(tab, entry));
+}
+
+function recordSentMessage(tab: Tab, text: string): void {
+  if (!tab.view) return;
+  const marker = tab.view.markCurrentLine();
+  tab.sentMessages.push({ text, marker, at: Date.now() });
+  if (tab === active) syncActivityTab(tab);
+}
+
+/** Starting a fresh chat context (new/resumed session) invalidates every
+ * marker pointing into the just-replaced terminal buffer; drop the stale
+ * entries instead of leaving them listed and disabled/grayed. */
+function resetActivityHistory(tab: Tab): void {
+  for (const entry of tab.sentMessages) entry.marker?.dispose();
+  tab.sentMessages = [];
+  if (tab === active) syncActivityTab(tab);
+}
+
+/**
+ * Backfill the activity tab from a session's on-disk transcript, so opening or
+ * resuming a chat lists what was already typed instead of starting empty.
+ *
+ * Transcript entries get no terminal marker (their text predates this window's
+ * buffer), so they list but cannot be jumped to. Live entries recorded in this
+ * window are preserved and kept last; a transcript row repeating a live entry's
+ * text is dropped so the newest message is not listed twice.
+ */
+async function backfillSessionMessages(tab: Tab, sessionId: string): Promise<void> {
+  tab.activityBackfilledKey = sessionId;
+  const messages = await window.omphif.getSessionMessages(sessionId);
+  const live = tab.sentMessages.filter((entry) => entry.marker !== null);
+  const liveTexts = new Set(live.map((entry) => entry.text));
+  const historical: SentMessageEntry[] = messages
+    .filter((m) => !liveTexts.has(m.text))
+    .map((m) => ({ text: m.text, marker: null, at: m.at }));
+  tab.sentMessages = [...historical, ...live];
+  if (tab === active) syncActivityTab(tab);
+}
+
+/**
  * Submit the dock as a single user turn:
  * 1) paste image/file paths (omp expands images into attachment atoms)
  * 2) brief settle so the editor owns the atoms
@@ -1265,6 +1469,10 @@ async function submitDock(payload: DockPayload): Promise<void> {
     }
   }
 
+  if (hasText) {
+    recordSentMessage(tab, text);
+  }
+
   // Single submit for attachments + text together.
   view.submit();
 }
@@ -1272,19 +1480,6 @@ async function submitDock(payload: DockPayload): Promise<void> {
 /** Parse omp's terminal stream to extract active model, thinking level, plan state and usage metrics. */
 function parseStatusStream(tab: Tab, rawData: string): void {
   const plain = rawData.replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, "");
-  const send = tab.askSend;
-  if (send) {
-    // omp titles each question "…question text… (2/3)" — the only signal that
-    // the next selector is mounted and ready for keystrokes.
-    const marker = new RegExp(`\\(${send.next + 1}/${send.keys.length}\\)`);
-    if (marker.test(plain)) {
-      if (send.timer !== null) window.clearTimeout(send.timer);
-      send.timer = null;
-      advanceAskSend(tab);
-    }
-  }
-
-
   // Plan lines must be handled before the statusline gate: "Plan mode paused."
   // and "Plan mode disabled." can arrive without a statusline.
   const planStatus = parsePlanStatus(plain);
@@ -1297,16 +1492,20 @@ function parseStatusStream(tab: Tab, rawData: string): void {
     (plain.includes("Approve and execute") && plain.includes("Refine plan"));
 
   if (isPlanReview) {
+    const first = tab.planReview === null;
     const statsMatch = /Approve and keep context\s*(\([^\)]+\))/i.exec(plain);
     tab.planReview = { contextStats: statsMatch?.[1] };
+    if (first) raisePlanReviewAttention(tab);
     if (tab === active) syncPlanReviewModal(tab);
   } else if (
-    tab.planReview &&
+    (tab.planReview || tab.planReviewCompacting) &&
     !plain.includes("Approve and execute") &&
     !plain.includes("Plan mode - next step") &&
     (plain.includes("Plan mode enabled") || plain.includes("Plan mode disabled") || plain.includes("π ") || /^\s*π\s+/m.test(plain))
   ) {
     tab.planReview = null;
+    tab.planReviewCompacting = false;
+    clearPlanReviewAttention(tab);
     if (tab === active) syncPlanReviewModal(tab);
   }
   // Only parse explicit statusline or command feedback lines to prevent chat text matching
@@ -1416,6 +1615,7 @@ const dock = new Dock({
           const sel = active.view.getSelection();
           if (sel) {
             void navigator.clipboard.writeText(sel);
+            dock.showToast("Just copied", 1300);
           }
         },
         onPaste: () => {
@@ -1464,6 +1664,9 @@ const dock = new Dock({
     active.thinkingLevel = formatThinkingLevel(clamped);
     dock.setThinkingLevel(clamped);
     active.view.runSlash(`/m ${toThinkingCommandToken(clamped)}`);
+  },
+  openCwd: () => {
+    if (active) void api.openPath(active.cwd);
   },
   changeCwd: async () => {
     if (!active) return;
@@ -1555,9 +1758,23 @@ window.addEventListener("focus", () => updateKeyTargetIndicator());
 updateKeyTargetIndicator();
 api.onData(({ id, data }) => {
   const tab = bySession.get(id);
-  if (!tab?.view) return;
+  if (!tab?.view) {
+    // Nothing can render this chunk, but the PTY stays paused until we ack.
+    // A silent return wedges the session permanently.
+    api.ack(id);
+    return;
+  }
   tab.view.feed(data, () => api.ack(id));
   parseStatusStream(tab, data);
+});
+
+api.onStalled(({ id }) => {
+  const tab = bySession.get(id);
+  if (tab) showStallBanner(tab);
+});
+api.onStallCleared(({ id }) => {
+  const tab = bySession.get(id);
+  if (tab) clearStallBanner(tab);
 });
 
 /** Route control-bridge telemetry to the owning tab only. */
@@ -1597,6 +1814,12 @@ function applyControlBridgeStatus(status: ControlBridgeState | null | undefined)
   if (rawKey) {
     const key = rawKey.includes(":") ? rawKey.slice(rawKey.lastIndexOf(":") + 1) : rawKey;
     tab.sessionKey = key;
+    // First sight of a session (startup, `/new`, or a `/resume` typed straight
+    // into the terminal) is the only reliable moment to load what that chat
+    // already contains — the modal's resume click is just one of those paths.
+    if (key !== tab.activityBackfilledKey) {
+      void backfillSessionMessages(tab, key);
+    }
   }
   if (typeof status.pid === "number" && status.pid > 0) {
     tab.ompPid = status.pid;
@@ -1691,6 +1914,7 @@ api.onExit(({ id, exitCode }) => {
   tab.view?.dispose();
   tab.view = null;
   showNotice(tab, `omp exited (code ${exitCode})`);
+  clearStallBanner(tab);
   renderTabs();
 });
 
@@ -1804,18 +2028,23 @@ function openRecentChatsModal(): void {
     recentChatsModal = new RecentChatsModal(recentChatsBtn, {
       onResumeChat: (sessionId) => {
         if (active?.view) {
+          const tab = active;
+          resetActivityHistory(tab);
+          void backfillSessionMessages(tab, sessionId);
           active.view.runSlash(`/resume ${sessionId}`);
           active.view.focus();
         }
       },
       onTriggerResumePicker: () => {
         if (active?.view) {
+          resetActivityHistory(active);
           active.view.runSlash(`/resume`);
           active.view.focus();
         }
       },
       onNewChat: () => {
         if (active?.view) {
+          resetActivityHistory(active);
           active.view.runSlash(`/new`);
           active.view.focus();
         }
@@ -1946,6 +2175,21 @@ relaunchBtn?.addEventListener("click", () => {
 quitBtn?.addEventListener("click", () => {
   persist();
   api.quitApp();
+});
+
+document.addEventListener("click", (event) => {
+  const anchor = (event.target as HTMLElement | null)?.closest("a");
+  if (anchor && anchor.href) {
+    try {
+      const parsed = new URL(anchor.href);
+      if (parsed.protocol === "http:" || parsed.protocol === "https:" || parsed.protocol === "mailto:") {
+        event.preventDefault();
+        void api.openExternal(anchor.href);
+      }
+    } catch {
+      // Ignore invalid URLs
+    }
+  }
 });
 
 window.addEventListener(

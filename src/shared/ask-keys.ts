@@ -9,10 +9,16 @@ export interface AskAnswer {
   customText?: string;
 }
 
-export const ASK_ARROW_UP = "\x1b[A";
-export const ASK_ARROW_DOWN = "\x1b[B";
-export const ASK_ARROW_RIGHT = "\x1b[C";
-export const ASK_KEY_ENTER = "\r";
+export type AskKeyStep =
+  | { type: "arrow"; dir: "up" | "down" | "left" | "right" }
+  | { type: "enter" }
+  | { type: "space" }
+  | { type: "text"; value: string }
+  | { type: "wait"; ms: number };
+
+export const ASK_KEY_GAP_MS = 35;
+export const ASK_ENTER_GAP_MS = 80;
+export const ASK_EDITOR_GAP_MS = 80;
 
 /** CR/LF would submit early and ESC would cancel the whole ask tool. */
 export function sanitizeAskText(text: string): string {
@@ -20,44 +26,81 @@ export function sanitizeAskText(text: string): string {
 }
 
 /**
- * Keystrokes that answer exactly ONE question of omp's native ask dialog.
+ * Keystrokes that answer the whole AskDialogComponent in one sequence.
  *
- * `multiQuestion` selects the terminator: multi-select in a multi-question ask
- * is left with the right arrow (omp only shows a "Done selecting" row when the
- * ask has a single question), and that Done row shifts the "Other" row down by
- * one when it is present.
+ * One widget holds every question; do not split per question for PTY gating.
  */
-export function buildAskQuestionKeys(answer: AskAnswer, multiQuestion: boolean): string {
-  const n = answer.optionsCount;
-  const origin = Math.min(Math.max(answer.recommended ?? 0, 0), Math.max(n - 1, 0));
-  const move = (from: number, to: number): string =>
-    to > from ? ASK_ARROW_DOWN.repeat(to - from) : ASK_ARROW_UP.repeat(from - to);
+export function buildAskDialogSteps(answers: AskAnswer[]): AskKeyStep[] {
+  if (answers.length === 0) return [];
 
-  if (!answer.multi) {
-    if (answer.customText !== undefined) {
-      return (
-        move(origin, n) + ASK_KEY_ENTER + sanitizeAskText(answer.customText) + ASK_KEY_ENTER
-      );
+  const steps: AskKeyStep[] = [];
+  // A single-question ask has no "Submit" tab: confirming the last (only)
+  // question's answer submits the whole dialog. A multi-question ask needs an
+  // explicit tab-advance after every INTERMEDIATE question (Enter on a
+  // just-confirmed Other row reopens its editor instead of advancing). The
+  // LAST question needs no such advance: its own confirming Enter already
+  // reaches Submit, exactly like the plain-selection path already does — an
+  // extra ArrowRight there has nowhere real to go and wraps the tab bar back
+  // to question 1, reopening its Other editor with stale text.
+  const multiQuestion = answers.length > 1;
+
+  answers.forEach((answer, index) => {
+    const isLastQuestion = index === answers.length - 1;
+    const n = answer.optionsCount;
+    let cursor = Math.min(Math.max(answer.recommended ?? 0, 0), Math.max(n - 1, 0));
+
+    const moveTo = (target: number): void => {
+      while (cursor < target) {
+        steps.push({ type: "arrow", dir: "down" });
+        cursor++;
+      }
+      while (cursor > target) {
+        steps.push({ type: "arrow", dir: "up" });
+        cursor--;
+      }
+    };
+
+    if (!answer.multi) {
+      if (answer.customText !== undefined) {
+        moveTo(n);
+        steps.push({ type: "enter" });
+        steps.push({ type: "wait", ms: ASK_EDITOR_GAP_MS });
+        steps.push({ type: "text", value: sanitizeAskText(answer.customText) });
+        steps.push({ type: "enter" });
+        // Enter on a just-confirmed Other row reopens its editor instead of
+        // advancing; the arrow keys are the only reliable tab-to-tab move.
+        // The last question needs no advance: its Enter already reaches
+        // Submit, and an extra ArrowRight would wrap back to question 1.
+        if (multiQuestion && !isLastQuestion) steps.push({ type: "arrow", dir: "right" });
+      } else {
+        moveTo(answer.selectedIndices[0] ?? 0);
+        steps.push({ type: "enter" });
+      }
+      return;
     }
-    return move(origin, answer.selectedIndices[0] ?? 0) + ASK_KEY_ENTER;
+
+    const checked = [...answer.selectedIndices].sort((a, b) => a - b);
+    for (const idx of checked) {
+      moveTo(idx);
+      steps.push({ type: "space" });
+    }
+    if (answer.customText !== undefined) {
+      moveTo(n);
+      // Other is a checkbox row like any other multi-select option: Space
+      // toggles it on and opens its inline editor, same as the other rows.
+      steps.push({ type: "space" });
+      steps.push({ type: "wait", ms: ASK_EDITOR_GAP_MS });
+      steps.push({ type: "text", value: sanitizeAskText(answer.customText) });
+      steps.push({ type: "enter" });
+      if (multiQuestion && !isLastQuestion) steps.push({ type: "arrow", dir: "right" });
+    } else {
+      steps.push({ type: "enter" });
+    }
+  });
+
+  if (multiQuestion) {
+    steps.push({ type: "enter" });
   }
 
-  const checked = [...answer.selectedIndices].sort((a, b) => a - b);
-  let cursor = origin;
-  let seq = "";
-  for (const idx of checked) {
-    seq += move(cursor, idx) + ASK_KEY_ENTER;
-    cursor = idx;
-  }
-  if (answer.customText !== undefined) {
-    // "Done selecting" only exists for single-question asks with a checked box.
-    const otherIndex = !multiQuestion && checked.length > 0 ? n + 1 : n;
-    return (
-      seq + move(cursor, otherIndex) + ASK_KEY_ENTER + sanitizeAskText(answer.customText) + ASK_KEY_ENTER
-    );
-  }
-  if (multiQuestion) return seq + ASK_ARROW_RIGHT;
-  // Single-question multi-select: commit via the "Done selecting" row at index n.
-  if (checked.length === 0) return seq + ASK_ARROW_RIGHT;
-  return seq + move(cursor, n) + ASK_KEY_ENTER;
+  return steps;
 }

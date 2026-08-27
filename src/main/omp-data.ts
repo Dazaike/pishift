@@ -9,6 +9,7 @@ import type {
   ProviderUsageReport,
   ProviderUsageStat,
   RecentChatInfo,
+  SessionMessage,
 } from "../shared/ipc";
 import { resolveOmpPath } from "./omp-locate";
 
@@ -472,4 +473,88 @@ export function loadRecentChats(targetCwd?: string): RecentChatInfo[] {
   } catch {}
 
   return results.sort((a, b) => b.mtime - a.mtime).slice(0, 100);
+}
+
+/** Preview-scan byte budget when locating which session file holds `sessionId`. */
+const SESSION_ID_PREVIEW_BYTES = 65536;
+
+/**
+ * Load every user-typed turn from a specific session's on-disk JSONL
+ * transcript, oldest first — used to backfill the activity tab's history
+ * after `/resume` loads a chat that predates this window.
+ */
+export function loadSessionMessages(sessionId: string): SessionMessage[] {
+  const sessionsDir = join(OMP_DIR, "agent", "sessions");
+  if (!existsSync(sessionsDir)) return [];
+
+  let matchedPath: string | null = null;
+  try {
+    outer: for (const sub of readdirSync(sessionsDir)) {
+      const subPath = join(sessionsDir, sub);
+      try {
+        if (!statSync(subPath).isDirectory()) continue;
+        for (const file of readdirSync(subPath).filter((f) => f.endsWith(".jsonl"))) {
+          const filePath = join(subPath, file);
+          try {
+            const fd = openSync(filePath, "r");
+            const buf = Buffer.alloc(SESSION_ID_PREVIEW_BYTES);
+            const bytesRead = readSync(fd, buf, 0, SESSION_ID_PREVIEW_BYTES, 0);
+            closeSync(fd);
+            const preview = buf.toString("utf8", 0, bytesRead);
+            for (const rawLine of preview.split("\n")) {
+              const line = rawLine.trim();
+              if (!line) continue;
+              try {
+                const obj = JSON.parse(line) as { type?: string; id?: string };
+                if (obj.type === "session" && obj.id === sessionId) {
+                  matchedPath = filePath;
+                  break outer;
+                }
+              } catch {}
+            }
+          } catch {}
+        }
+      } catch {}
+    }
+  } catch {}
+
+  if (!matchedPath) return [];
+
+  const messages: SessionMessage[] = [];
+  try {
+    const text = readFileSync(matchedPath, "utf8");
+    for (const rawLine of text.split("\n")) {
+      const line = rawLine.trim();
+      if (!line) continue;
+      let obj: {
+        type?: string;
+        timestamp?: string;
+        message?: {
+          role?: string;
+          attribution?: string;
+          content?: string | { type?: string; text?: string }[];
+        };
+      };
+      try {
+        obj = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      const msg = obj.message;
+      if (obj.type !== "message" || msg?.role !== "user" || msg.attribution !== "user" || !msg.content) continue;
+      const text2 =
+        typeof msg.content === "string"
+          ? msg.content
+          : msg.content
+              .filter((part) => part.type === "text" && part.text)
+              .map((part) => part.text)
+              .join("");
+      const trimmed = text2.trim();
+      if (!trimmed) continue;
+      const at = obj.timestamp ? new Date(obj.timestamp).getTime() : Date.now();
+      messages.push({ text: trimmed, at: Number.isNaN(at) ? Date.now() : at });
+    }
+  } catch {}
+
+  return messages;
 }

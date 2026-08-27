@@ -1,86 +1,201 @@
 import { describe, expect, it } from "vitest";
-import { buildAskQuestionKeys, sanitizeAskText } from "../src/shared/ask-keys";
+import { ASK_EDITOR_GAP_MS, buildAskDialogSteps, sanitizeAskText } from "../src/shared/ask-keys";
 
-describe("buildAskQuestionKeys", () => {
+describe("buildAskDialogSteps", () => {
   it("moves up from the recommended row for single-select", () => {
     expect(
-      buildAskQuestionKeys(
+      buildAskDialogSteps([
         {
           multi: false,
           optionsCount: 3,
           recommended: 2,
           selectedIndices: [0],
         },
-        false,
-      ),
-    ).toBe("\x1b[A\x1b[A\r");
+      ]),
+    ).toEqual([
+      { type: "arrow", dir: "up" },
+      { type: "arrow", dir: "up" },
+      { type: "enter" },
+    ]);
   });
 
   it("moves down from row zero for single-select", () => {
     expect(
-      buildAskQuestionKeys(
+      buildAskDialogSteps([
         {
           multi: false,
           optionsCount: 3,
           selectedIndices: [2],
         },
-        false,
-      ),
-    ).toBe("\x1b[B\x1b[B\r");
+      ]),
+    ).toEqual([
+      { type: "arrow", dir: "down" },
+      { type: "arrow", dir: "down" },
+      { type: "enter" },
+    ]);
   });
 
   it("selects and fills the trailing Other row", () => {
     expect(
-      buildAskQuestionKeys(
+      buildAskDialogSteps([
         {
           multi: false,
           optionsCount: 3,
           selectedIndices: [],
           customText: "my answer",
         },
-        false,
-      ),
-    ).toBe("\x1b[B\x1b[B\x1b[B\rmy answer\r");
+      ]),
+    ).toEqual([
+      { type: "arrow", dir: "down" },
+      { type: "arrow", dir: "down" },
+      { type: "arrow", dir: "down" },
+      { type: "enter" },
+      { type: "wait", ms: ASK_EDITOR_GAP_MS },
+      { type: "text", value: "my answer" },
+      { type: "enter" },
+    ]);
   });
 
-  it("finishes multi-select in a multi-question ask with right arrow", () => {
+  it("toggles multi-select with space and submits without a Submit tab", () => {
     expect(
-      buildAskQuestionKeys(
+      buildAskDialogSteps([
         {
           multi: true,
           optionsCount: 4,
           selectedIndices: [0, 2],
         },
-        true,
-      ),
-    ).toBe("\r\x1b[B\x1b[B\r\x1b[C");
+      ]),
+    ).toEqual([
+      { type: "space" },
+      { type: "arrow", dir: "down" },
+      { type: "arrow", dir: "down" },
+      { type: "space" },
+      { type: "enter" },
+    ]);
   });
 
-  it("commits single-question multi-select through Done selecting", () => {
+  it("opens Other on multi-select via space; confirming submits the sole question", () => {
     expect(
-      buildAskQuestionKeys(
-        {
-          multi: true,
-          optionsCount: 4,
-          selectedIndices: [1],
-        },
-        false,
-      ),
-    ).toBe("\x1b[B\r\x1b[B\x1b[B\x1b[B\r");
-  });
-
-  it("accounts for Done selecting before Other", () => {
-    expect(
-      buildAskQuestionKeys(
+      buildAskDialogSteps([
         {
           multi: true,
           optionsCount: 3,
           selectedIndices: [0],
           customText: "x",
         },
-        false,
-      ),
-    ).toBe("\r\x1b[B\x1b[B\x1b[B\x1b[B\rx\r");
+      ]),
+    ).toEqual([
+      { type: "space" },
+      { type: "arrow", dir: "down" },
+      { type: "arrow", dir: "down" },
+      { type: "arrow", dir: "down" },
+      { type: "space" },
+      { type: "wait", ms: ASK_EDITOR_GAP_MS },
+      { type: "text", value: "x" },
+      { type: "enter" },
+    ]);
+  });
+
+  it("advances with an arrow key (not Enter) after Other text in a multi-question ask", () => {
+    expect(
+      buildAskDialogSteps([
+        {
+          multi: true,
+          optionsCount: 2,
+          selectedIndices: [0],
+          customText: "x",
+        },
+        {
+          multi: false,
+          optionsCount: 3,
+          selectedIndices: [0],
+        },
+      ]),
+    ).toEqual([
+      { type: "space" },
+      { type: "arrow", dir: "down" },
+      { type: "arrow", dir: "down" },
+      { type: "space" },
+      { type: "wait", ms: ASK_EDITOR_GAP_MS },
+      { type: "text", value: "x" },
+      { type: "enter" },
+      { type: "arrow", dir: "right" },
+      { type: "enter" },
+      { type: "enter" },
+    ]);
+  });
+
+  it("advances with an arrow key (not Enter) after single-select Other text in a multi-question ask", () => {
+    expect(
+      buildAskDialogSteps([
+        {
+          multi: false,
+          optionsCount: 2,
+          selectedIndices: [],
+          customText: "y",
+        },
+        {
+          multi: false,
+          optionsCount: 3,
+          selectedIndices: [0],
+        },
+      ]),
+    ).toEqual([
+      { type: "arrow", dir: "down" },
+      { type: "arrow", dir: "down" },
+      { type: "enter" },
+      { type: "wait", ms: ASK_EDITOR_GAP_MS },
+      { type: "text", value: "y" },
+      { type: "enter" },
+      { type: "arrow", dir: "right" },
+      { type: "enter" },
+      { type: "enter" },
+    ]);
+  });
+
+  it("does not advance with an arrow key after Other text on the LAST question of a multi-question ask", () => {
+    expect(
+      buildAskDialogSteps([
+        {
+          multi: false,
+          optionsCount: 3,
+          selectedIndices: [0],
+        },
+        {
+          multi: true,
+          optionsCount: 2,
+          selectedIndices: [0],
+          customText: "zxc",
+        },
+      ]),
+    ).toEqual([
+      { type: "enter" },
+      { type: "space" },
+      { type: "arrow", dir: "down" },
+      { type: "arrow", dir: "down" },
+      { type: "space" },
+      { type: "wait", ms: ASK_EDITOR_GAP_MS },
+      { type: "text", value: "zxc" },
+      { type: "enter" },
+      { type: "enter" },
+    ]);
+  });
+
+  it("adds a Submit-tab Enter after two single-select questions", () => {
+    expect(
+      buildAskDialogSteps([
+        {
+          multi: false,
+          optionsCount: 3,
+          selectedIndices: [0],
+        },
+        {
+          multi: false,
+          optionsCount: 3,
+          selectedIndices: [0],
+        },
+      ]),
+    ).toEqual([{ type: "enter" }, { type: "enter" }, { type: "enter" }]);
   });
 });
 
