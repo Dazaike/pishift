@@ -36,6 +36,8 @@ const REPIN_POLL_MS = 100;
 /** Pointer travel before middle-button autoscroll engages. */
 const AUTOSCROLL_DEADZONE_PX = 12;
 const AUTOSCROLL_ROWS_PER_PX = 0.35;
+/** Leading characters of a message used when jumping by scrollback search. */
+const TEXT_JUMP_MAX_CHARS = 48;
 /** Shared chrome row that hosts the keystroke-target chip and the jump pill. */
 const JUMP_SLOT_ID = "key-target-row";
 /** Keystroke-target chip that sits left of the pill and slides to make room. */
@@ -63,6 +65,8 @@ export interface TermViewHooks {
   onUserCancel?(): void;
   /** User referenced a highlighted region — host attaches it to the composer. */
   onReferenceSelection?(text: string): void;
+  /** Fired when text is copied specifically from the terminal. */
+  onCopyFromTerminal?(text: string): void;
 }
 const PTY_RESIZE_DEBOUNCE_MS = 80;
 const MIN_FONT = 8;
@@ -97,6 +101,7 @@ export class TermView {
   private readonly autoScroll = new AbortController();
   private opened = false;
   private disposed = false;
+  private lastFeedAt = 0;
   private lastCols = 0;
   private lastRows = 0;
   /** DECCKM — when true, interactive TUI menus want arrow keys as SS3. */
@@ -151,7 +156,15 @@ export class TermView {
     this.term.loadAddon(this.fit);
     this.term.loadAddon(new Unicode11Addon());
     this.term.unicode.activeVersion = "11";
-    this.term.loadAddon(new WebLinksAddon());
+    this.term.loadAddon(
+      new WebLinksAddon((_event, uri) => {
+        if (window.omphif?.openExternal) {
+          void window.omphif.openExternal(uri);
+        } else if (/^https?:\/\//i.test(uri)) {
+          window.open(uri, "_blank", "noopener,noreferrer");
+        }
+      }),
+    );
     this.term.loadAddon(this.search);
 
     this.term.onData((data) => this.hooks.write(data));
@@ -162,6 +175,13 @@ export class TermView {
     // xterm.js would otherwise deliver a second, competing paste; Ctrl+V is
     // forwarded to omp as 0x16 so omp reads the OS clipboard itself.
     this.el.addEventListener("paste", (ev) => ev.preventDefault());
+
+    this.el.addEventListener("copy", () => {
+      const selected = this.term.getSelection();
+      if (selected) {
+        this.hooks.onCopyFromTerminal?.(selected);
+      }
+    });
 
     this.el.addEventListener(
       "wheel",
@@ -214,13 +234,75 @@ export class TermView {
 
   /** PTY data in, with the flow-control ack fired once the parser has consumed it. */
   feed(data: string, ack: () => void): void {
-    if (this.disposed) return;
-    this.term.write(data, ack);
+    if (this.disposed) {
+      // The PTY stays paused until someone acks; dropping this wedges omp.
+      ack();
+      return;
+    }
+    this.lastFeedAt = Date.now();
+    try {
+      this.term.write(data, ack);
+    } catch {
+      // xterm throws past its 50 MB DISCARD_WATERMARK and on parser faults.
+      // write() throws before queueing the callback, so ack here. pty.resume()
+      // is idempotent, so a late queued callback acking again is harmless.
+      ack();
+    }
+  }
+
+  /** Resolves once PTY output has been quiet for `quietMs`, or after `timeoutMs` total elapsed, whichever comes first. */
+  async waitForQuiet(quietMs: number, timeoutMs: number): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const idleFor = Date.now() - this.lastFeedAt;
+      if (idleFor >= quietMs) return;
+      await new Promise<void>((resolve) => window.setTimeout(resolve, Math.min(quietMs - idleFor, 20)));
+    }
   }
 
   /** Send user text as a bracketed paste (never submits on its own). */
   paste(text: string): void {
     if (text) this.hooks.write(bracketPaste(text));
+  }
+
+  /**
+   * Registers a marker at the row the cursor currently sits on — call this
+   * right before submitting so it anchors to the just-typed, already-visible
+   * composer line.
+   */
+  markCurrentLine(): IMarker {
+    return this.term.registerMarker(0);
+  }
+
+  /**
+   * Scrolls a marker registered via markCurrentLine() into view, using the
+   * same viewport primitive the resize-repin path uses. No-ops once the
+   * marker's line has scrolled out of the 20k-line scrollback and xterm has
+   * disposed it.
+   */
+  scrollToMarker(marker: IMarker): void {
+    if (marker.isDisposed) return;
+    this.endRepin();
+    this.pinViewport(marker.line);
+  }
+
+  /**
+   * Best-effort jump for a message with no marker (one backfilled from a
+   * session transcript): find its text in the scrollback and scroll there.
+   * Returns false when the text is not in the buffer at all — the turn
+   * predates this window and was never replayed.
+   *
+   * Only the first line is used, and only its leading characters: a long turn
+   * wraps and a multi-line one cannot match a single search term.
+   */
+  scrollToText(text: string): boolean {
+    const needle = (text.split("\n")[0] ?? "").trim().slice(0, TEXT_JUMP_MAX_CHARS);
+    if (!needle) return false;
+    this.endRepin();
+    // findPrevious walks backwards, so seeking from the bottom lands on the
+    // most recent occurrence rather than the oldest.
+    this.term.scrollToBottom();
+    return this.search.findPrevious(needle, { caseSensitive: false });
   }
 
   /**
@@ -896,11 +978,12 @@ export class TermView {
     if (ev.type !== "keydown") return true;
 
     // Copy selected terminal text. Must run before Ctrl+C is forwarded as ^C.
-    if (ev.ctrlKey && !ev.altKey && ev.key.toLowerCase() === "c") {
+    if (ev.ctrlKey && !ev.altKey && (ev.key.toLowerCase() === "c" || ev.key === "Insert")) {
       const selected = this.term.getSelection();
       if (selected) {
         ev.preventDefault();
         void navigator.clipboard.writeText(selected);
+        this.hooks.onCopyFromTerminal?.(selected);
         return false;
       }
       // No selection: interrupt — clear host busy chrome immediately.

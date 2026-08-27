@@ -18,6 +18,7 @@ export class PlanReviewModal {
   readonly el: HTMLDivElement;
   private onActionCallback: ((action: PlanReviewAction) => void) | null = null;
   private statsSpan: HTMLSpanElement | null = null;
+  private isLoading = false;
 
   constructor() {
     this.el = document.createElement("div");
@@ -48,6 +49,7 @@ export class PlanReviewModal {
     opts: PlanReviewOptions,
     onAction: (action: PlanReviewAction) => void,
   ): void {
+    this.isLoading = false;
     this.onActionCallback = onAction;
     this.render(opts);
     this.el.hidden = false;
@@ -63,11 +65,28 @@ export class PlanReviewModal {
     this.el.hidden = true;
     this.onActionCallback = null;
     this.statsSpan = null;
+    this.isLoading = false;
+  }
+
+  /** Swap the picker UI for an inline loading state; keeps the sheet visible (no reopen flash). */
+  showCompacting(): void {
+    this.el.hidden = false;
+    if (this.isLoading) return;
+    this.isLoading = true;
+    this.el.replaceChildren();
+    const loading = document.createElement("div");
+    loading.className = "job-modal-loading";
+    loading.innerHTML = `<span class="job-spinner"></span> Compacting context…`;
+    this.el.appendChild(loading);
   }
 
   private triggerAction(action: PlanReviewAction): void {
     const cb = this.onActionCallback;
-    this.close();
+    if (action === "compact") {
+      this.showCompacting();
+    } else {
+      this.close();
+    }
     cb?.(action);
   }
 

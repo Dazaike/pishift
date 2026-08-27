@@ -13,7 +13,10 @@ import {
   type ProviderUsageReport,
   type PtyData,
   type PtyExit,
+  type PtyStall,
+  type PtyStallCleared,
   type RecentChatInfo,
+  type SessionMessage,
   type SpawnRequest,
   type SpawnResult,
 } from "../shared/ipc";
@@ -26,6 +29,7 @@ const api = {
     ipcRenderer.send(CH.ptyResize, id, cols, rows),
   ack: (id: string): void => ipcRenderer.send(CH.ptyAck, id),
   kill: (id: string): void => ipcRenderer.send(CH.ptyKill, id),
+  resumeFlow: (id: string): void => ipcRenderer.send(CH.ptyResumeFlow, id),
 
   // xterm needs ConPTY compat flags: without them a row increase replaces rows
   // instead of pulling scrollback back into the viewport, losing output.
@@ -43,6 +47,12 @@ const api = {
   onExit: (fn: (payload: PtyExit) => void): void => {
     ipcRenderer.on(CH.ptyExit, (_e, payload: PtyExit) => fn(payload));
   },
+  onStalled: (fn: (payload: PtyStall) => void): void => {
+    ipcRenderer.on(CH.ptyStalled, (_e, payload: PtyStall) => fn(payload));
+  },
+  onStallCleared: (fn: (payload: PtyStallCleared) => void): void => {
+    ipcRenderer.on(CH.ptyStallCleared, (_e, payload: PtyStallCleared) => fn(payload));
+  },
 
   onControlBridgeStatus: (fn: (state: ControlBridgeState) => void): void => {
     ipcRenderer.on(CH.controlBridgeStatus, (_e, state: ControlBridgeState) => fn(state));
@@ -57,6 +67,8 @@ const api = {
   readClipboardText: (): Promise<string> => ipcRenderer.invoke(CH.readClipboardText),
   imagePreview: (path: string, maxSize: number): Promise<ImagePreview | null> =>
     ipcRenderer.invoke(CH.imagePreview, path, maxSize),
+  saveImageEdit: (path: string, dataUrl: string): Promise<boolean> =>
+    ipcRenderer.invoke(CH.saveImageEdit, path, dataUrl),
   loadState: (): Promise<PersistedState> => ipcRenderer.invoke(CH.loadState),
   saveState: (next: Partial<PersistedState>): void => ipcRenderer.send(CH.saveState, next),
   homeDir: (): Promise<string> => ipcRenderer.invoke(CH.homeDir),
@@ -68,6 +80,8 @@ const api = {
   removeRecentFolder: (folder: string): Promise<string[]> => ipcRenderer.invoke(CH.removeRecentFolder, folder),
   clearRecentFolders: (): void => ipcRenderer.send(CH.clearRecentFolders),
   getRecentChats: (cwd?: string): Promise<RecentChatInfo[]> => ipcRenderer.invoke(CH.getRecentChats, cwd),
+  getSessionMessages: (sessionId: string): Promise<SessionMessage[]> =>
+    ipcRenderer.invoke(CH.getSessionMessages, sessionId),
   getSkillCommands: (cwd?: string): Promise<SlashCommand[]> =>
     ipcRenderer.invoke(CH.getSkillCommands, cwd),
   getJobActivity: (req: GetJobActivityRequest): Promise<JobActivityDetails | null> =>
@@ -80,6 +94,7 @@ const api = {
   openPath: (targetPath: string): Promise<string> => ipcRenderer.invoke(CH.openPath, targetPath),
   showItemInFolder: (targetPath: string): Promise<void> =>
     ipcRenderer.invoke(CH.showItemInFolder, targetPath),
+  openExternal: (url: string): Promise<boolean> => ipcRenderer.invoke(CH.openExternal, url),
   copyText: (text: string): void => ipcRenderer.send(CH.copyText, text),
   quitApp: (): void => ipcRenderer.send(CH.quitApp),
   relaunchApp: (): void => ipcRenderer.send(CH.relaunchApp),

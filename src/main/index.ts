@@ -24,10 +24,13 @@ import {
   type PersistedState,
   type PtyData,
   type PtyExit,
+  type PtyStall,
+  type PtyStallCleared,
   type SpawnRequest,
   type SpawnResult,
 } from "../shared/ipc";
-import { loadInstalledModels, loadRecentChats, loadRecentFolders, queryOmpUsage } from "./omp-data";
+import { isSafeExternalUrl } from "../shared/url";
+import { loadInstalledModels, loadRecentChats, loadRecentFolders, loadSessionMessages, queryOmpUsage } from "./omp-data";
 import { loadSkillCommands } from "./omp-skills";
 import { loadJobActivity } from "./job-activity";
 import { PtyManager } from "./pty-manager";
@@ -56,7 +59,10 @@ let win: BrowserWindow | null = null;
 let store: StateStore;
 let ptys: PtyManager;
 let bridgeListener: ControlBridgeListener | null = null;
-function send(channel: string, payload: PtyData | PtyExit): void {
+function send(
+  channel: string,
+  payload: PtyData | PtyExit | PtyStall | PtyStallCleared,
+): void {
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
 }
 
@@ -102,8 +108,19 @@ function createWindow(): BrowserWindow {
   });
 
   window.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
+    if (isSafeExternalUrl(url)) {
+      void shell.openExternal(url);
+    }
     return { action: "deny" };
+  });
+
+  window.webContents.on("will-navigate", (event, url) => {
+    if (url !== window.webContents.getURL()) {
+      event.preventDefault();
+      if (isSafeExternalUrl(url)) {
+        void shell.openExternal(url);
+      }
+    }
   });
 
   const devUrl = process.env.ELECTRON_RENDERER_URL;
@@ -134,6 +151,7 @@ function registerIpc(): void {
     ptys.resize(id, cols, rows),
   );
   ipcMain.on(CH.ptyAck, (_e, id: string) => ptys.ack(id));
+  ipcMain.on(CH.ptyResumeFlow, (_e, id: string) => ptys.resumeFlow(id));
   ipcMain.on(CH.ptyKill, (_e, id: string) => ptys.kill(id));
 
   ipcMain.handle(CH.pickDirectory, async (): Promise<string | null> => {
@@ -172,18 +190,25 @@ function registerIpc(): void {
       const image = nativeImage.createFromPath(path);
       if (image.isEmpty()) return null;
       const { width, height } = image.getSize();
-      const scale = Math.min(1, maxSize / Math.max(width, height));
-      const scaled =
-        scale < 1
-          ? image.resize({
-              width: Math.max(1, Math.round(width * scale)),
-              height: Math.max(1, Math.round(height * scale)),
-              quality: "good",
-            })
-          : image;
+      const scale = maxSize / Math.max(width, height);
+      const scaled = image.resize({
+        width: Math.max(1, Math.round(width * scale)),
+        height: Math.max(1, Math.round(height * scale)),
+        quality: "good",
+      });
       return { dataUrl: scaled.toDataURL(), width, height };
     },
   );
+
+  // Overwrites a dock attachment in place with an annotated PNG (drawn strokes
+  // baked over the original), so submission and the thumbnail cache pick up
+  // the edited pixels under the same path.
+  ipcMain.handle(CH.saveImageEdit, async (_e, path: string, dataUrl: string): Promise<boolean> => {
+    const match = /^data:image\/png;base64,(.+)$/.exec(dataUrl);
+    if (!match) return false;
+    await writeFile(path, Buffer.from(match[1]!, "base64"));
+    return true;
+  });
 
   ipcMain.handle(CH.readClipboardText, () => clipboard.readText());
   ipcMain.handle(CH.loadState, (): PersistedState => store.get());
@@ -198,6 +223,7 @@ function registerIpc(): void {
   ipcMain.handle(CH.removeRecentFolder, (_e, folder: string) => store.removeRecentFolder(folder));
   ipcMain.on(CH.clearRecentFolders, () => store.clearRecentFolders());
   ipcMain.handle(CH.getRecentChats, (_e, cwd?: string) => loadRecentChats(cwd));
+  ipcMain.handle(CH.getSessionMessages, (_e, sessionId: string) => loadSessionMessages(sessionId));
   ipcMain.handle(CH.getSkillCommands, (_e, cwd?: string) => loadSkillCommands(cwd));
   ipcMain.handle(CH.getJobActivity, (_e, req) => loadJobActivity(req));
   ipcMain.handle(CH.killJob, async (_e, req: KillJobRequest) => {
@@ -238,6 +264,13 @@ function registerIpc(): void {
   ipcMain.handle(CH.openPath, (_e, targetPath: string) => shell.openPath(targetPath));
   ipcMain.handle(CH.showItemInFolder, (_e, targetPath: string) => shell.showItemInFolder(targetPath));
   ipcMain.on(CH.copyText, (_e, text: string) => clipboard.writeText(text));
+  ipcMain.handle(CH.openExternal, async (_e, url: string) => {
+    if (typeof url === "string" && isSafeExternalUrl(url)) {
+      await shell.openExternal(url);
+      return true;
+    }
+    return false;
+  });
   ipcMain.on(CH.quitApp, () => {
     store.flush();
     app.quit();

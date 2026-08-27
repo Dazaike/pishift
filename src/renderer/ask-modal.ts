@@ -1,5 +1,6 @@
 import type { AskAnswer } from "../shared/ask-keys";
 import type { PendingAsk, PendingAskQuestion } from "../shared/ipc";
+const ASK_BODY_MAX_HEIGHT_PX = 640;
 
 interface QuestionAnswerState {
   selected: Set<number>;
@@ -12,6 +13,12 @@ export class AskModal {
   private pending: PendingAsk | null = null;
   private answerState: QuestionAnswerState[] = [];
   private body: HTMLDivElement | null = null;
+  private titleEl: HTMLHeadingElement | null = null;
+  private backBtn: HTMLButtonElement | null = null;
+  private forwardBtn: HTMLButtonElement | null = null;
+  private currentIndex = 0;
+  private bodyResizeObserver: ResizeObserver | null = null;
+  private lastBodyWidth = 0;
   private focusOtherIndex: number | null = null;
   private onSubmitCallback: ((answers: AskAnswer[]) => void) | null = null;
   private onDismissCallback: (() => void) | null = null;
@@ -22,12 +29,18 @@ export class AskModal {
     this.el.hidden = true;
     this.el.setAttribute("role", "dialog");
     this.el.setAttribute("aria-label", "Question");
+    this.bodyResizeObserver = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width ?? 0;
+      if (Math.abs(width - this.lastBodyWidth) < 1) return;
+      this.lastBodyWidth = width;
+      this.syncCurrentQuestion();
+    });
+    this.bodyResizeObserver.observe(this.el);
   }
 
   get isOpen(): boolean {
     return !this.el.hidden;
   }
-
   get toolCallId(): string | null {
     return this.pending?.toolCallId ?? null;
   }
@@ -91,6 +104,7 @@ export class AskModal {
       const block = this.el.querySelector<HTMLElement>(`.ask-question-block[data-index="${missing}"]`);
       block?.classList.add("missing");
       block?.scrollIntoView({ block: "nearest" });
+      this.syncCurrentQuestion();
       return;
     }
 
@@ -108,13 +122,78 @@ export class AskModal {
     this.close();
   }
 
+  /**
+   * Whichever question block's top edge sits closest to the scrollport's
+   * content top is the one currently snapped into view (scroll-snap-align:
+   * start settles a block flush with that edge).
+   */
+  private detectCurrentIndex(): number {
+    if (!this.body) return 0;
+    const blocks = Array.from(this.body.children) as HTMLElement[];
+    if (blocks.length === 0) return 0;
+    const contentTop =
+      this.body.getBoundingClientRect().top + parseFloat(getComputedStyle(this.body).paddingTop);
+    let currentIndex = 0;
+    let bestDelta = Infinity;
+    blocks.forEach((block, i) => {
+      const delta = Math.abs(block.getBoundingClientRect().top - contentTop);
+      if (delta < bestDelta) {
+        bestDelta = delta;
+        currentIndex = i;
+      }
+    });
+    return currentIndex;
+  }
+
+  /** Size the sheet to one question and point the header/nav at it. */
+  private applyQuestion(index: number): void {
+    if (!this.body || !this.pending) return;
+    const blocks = Array.from(this.body.children) as HTMLElement[];
+    const current = blocks[index];
+    if (!current) return;
+    this.currentIndex = index;
+
+    // border-box means the scrollport's own padding is inside `height`, so the
+    // block's natural height alone would clip it by exactly that padding.
+    const styles = getComputedStyle(this.body);
+    const padding = parseFloat(styles.paddingTop) + parseFloat(styles.paddingBottom);
+    this.body.style.height = `${Math.min(current.scrollHeight + padding, ASK_BODY_MAX_HEIGHT_PX)}px`;
+
+    if (this.titleEl) this.titleEl.textContent = this.titleText(index);
+    if (this.backBtn) this.backBtn.disabled = index === 0;
+    if (this.forwardBtn) this.forwardBtn.disabled = index >= blocks.length - 1;
+  }
+
+  private syncCurrentQuestion(): void {
+    this.applyQuestion(this.detectCurrentIndex());
+  }
+
+  /** Header nav: page to a question and snap the scrollport onto it. */
+  private goToQuestion(index: number): void {
+    if (!this.body) return;
+    const blocks = Array.from(this.body.children) as HTMLElement[];
+    const clamped = Math.min(Math.max(index, 0), blocks.length - 1);
+    const target = blocks[clamped];
+    if (!target) return;
+    // Resize first so the sheet is already the right height as the scroll runs.
+    this.applyQuestion(clamped);
+    target.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }
+
+  private titleText(currentIndex: number): string {
+    const total = this.pending?.questions.length ?? 0;
+    return total > 1 ? `Question ${currentIndex + 1} of ${total}` : "Question";
+  }
+
   private renderOptions(q: PendingAskQuestion, index: number, host: HTMLElement): void {
     const state = this.answerState[index]!;
     const options = document.createElement("div");
     options.className = "ask-options";
 
     q.options.forEach((option, optionIndex) => {
-      const selected = state.customText === undefined && state.selected.has(optionIndex);
+      const selected = q.multi
+        ? state.selected.has(optionIndex)
+        : state.customText === undefined && state.selected.has(optionIndex);
       const row = document.createElement("button");
       row.type = "button";
       row.className = "ask-option-row";
@@ -155,9 +234,10 @@ export class AskModal {
     });
 
     const customSelected = state.customText !== undefined;
-    const otherRow = document.createElement("button");
-    otherRow.type = "button";
+    const otherRow = document.createElement("div");
     otherRow.className = "ask-other-row";
+    otherRow.setAttribute("role", "button");
+    otherRow.tabIndex = 0;
     otherRow.classList.toggle("selected", customSelected);
     otherRow.setAttribute("aria-pressed", String(customSelected));
 
@@ -201,7 +281,22 @@ export class AskModal {
         this.render();
         return;
       }
+      if (q.multi) {
+        state.customText = undefined;
+        this.render();
+        return;
+      }
       otherRow.querySelector<HTMLInputElement>(".ask-other-input")?.focus();
+    });
+
+    // The nested input handles its own Enter/typing; only Enter/Space landing
+    // on the row itself (keyboard focus, not the input) should toggle it.
+    otherRow.addEventListener("keydown", (event) => {
+      if (event.target !== otherRow) return;
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        otherRow.click();
+      }
     });
 
     options.appendChild(otherRow);
@@ -212,6 +307,9 @@ export class AskModal {
     const scrollTop = this.body?.scrollTop ?? 0;
     this.el.replaceChildren();
     this.body = null;
+    this.titleEl = null;
+    this.backBtn = null;
+    this.forwardBtn = null;
     if (!this.pending) return;
 
     const total = this.pending.questions.length;
@@ -219,7 +317,28 @@ export class AskModal {
     header.className = "ask-header";
 
     const title = document.createElement("h2");
-    title.textContent = total === 1 ? "Question" : `${total} Questions`;
+    title.textContent = this.titleText(0);
+    this.titleEl = title;
+
+    const nav = document.createElement("div");
+    nav.className = "ask-nav";
+    nav.hidden = total === 1;
+
+    const backBtn = document.createElement("button");
+    backBtn.type = "button";
+    backBtn.className = "ask-nav-btn";
+    backBtn.textContent = "Backward";
+    backBtn.addEventListener("click", () => this.goToQuestion(this.currentIndex - 1));
+    this.backBtn = backBtn;
+
+    const forwardBtn = document.createElement("button");
+    forwardBtn.type = "button";
+    forwardBtn.className = "ask-nav-btn";
+    forwardBtn.textContent = "Forward";
+    forwardBtn.addEventListener("click", () => this.goToQuestion(this.currentIndex + 1));
+    this.forwardBtn = forwardBtn;
+
+    nav.append(backBtn, forwardBtn);
 
     const dismissBtn = document.createElement("button");
     dismissBtn.type = "button";
@@ -227,7 +346,7 @@ export class AskModal {
     dismissBtn.setAttribute("aria-label", "Dismiss");
     dismissBtn.textContent = "×";
     dismissBtn.addEventListener("click", () => this.dismiss());
-    header.append(title, dismissBtn);
+    header.append(title, nav, dismissBtn);
 
     const body = document.createElement("div");
     body.className = "ask-body";
@@ -267,6 +386,8 @@ export class AskModal {
 
     this.el.append(header, body, footer);
     this.body = body;
+    body.addEventListener("scrollend", () => this.syncCurrentQuestion());
     body.scrollTop = scrollTop;
+    this.syncCurrentQuestion();
   }
 }
