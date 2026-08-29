@@ -27,6 +27,25 @@ No fake web-view wrappers pretending to be terminals. Just a genuine hardware-ac
 
 ---
 
+## 🖼️ Screenshots
+
+### Main Window
+<p align="center">
+  <img src="https://images.guns.lol/fb790494e15181d40c662760276c78639851a223/6eCNL1.jpg" alt="PiShift main window" width="900" />
+</p>
+
+### Settings Window
+<p align="center">
+  <img src="https://images.guns.lol/fb790494e15181d40c662760276c78639851a223/UnCqFr.png" alt="PiShift settings window" width="900" />
+</p>
+
+### Custom Theme
+<p align="center">
+  <img src="https://images.guns.lol/fb790494e15181d40c662760276c78639851a223/Iw58pF.jpg" alt="PiShift custom theme" width="900" />
+</p>
+
+---
+
 ## ⚡ What makes it not suck
 
 ### 🚀 Actual Terminal Hardware Acceleration
