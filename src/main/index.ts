@@ -1,7 +1,9 @@
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   BrowserWindow,
   Notification,
@@ -265,11 +267,27 @@ function registerIpc(): void {
   ipcMain.handle(CH.showItemInFolder, (_e, targetPath: string) => shell.showItemInFolder(targetPath));
   ipcMain.on(CH.copyText, (_e, text: string) => clipboard.writeText(text));
   ipcMain.handle(CH.openExternal, async (_e, url: string) => {
-    if (typeof url === "string" && isSafeExternalUrl(url)) {
+    if (typeof url !== "string") return false;
+    if (isSafeExternalUrl(url)) {
       await shell.openExternal(url);
       return true;
     }
-    return false;
+    try {
+      const targetPath = fileURLToPath(url);
+      if (process.platform === "win32") {
+        const explorer = spawn("explorer.exe", [targetPath], {
+          detached: true,
+          stdio: "ignore",
+          windowsHide: true,
+        });
+        explorer.once("error", () => {});
+        explorer.unref();
+        return true;
+      }
+      return (await shell.openPath(targetPath)) === "";
+    } catch {
+      return false;
+    }
   });
   ipcMain.on(CH.quitApp, () => {
     store.flush();

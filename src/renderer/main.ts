@@ -22,6 +22,25 @@ import { findInstalledModel } from "../shared/model-match";
 import { ASK_ENTER_GAP_MS, ASK_KEY_GAP_MS, buildAskDialogSteps, type AskAnswer } from "../shared/ask-keys";
 import { formatElapsed } from "../shared/elapsed";
 import {
+  PASTE_MENU_POLL_MS,
+  PASTE_MENU_PROBE_MS,
+  PASTE_MENU_WAIT_MS,
+  countPasteLines,
+  detectPasteMenu,
+  isLargePaste,
+  isPasteModeSetting,
+  isPasteMarkerPaint,
+  isPasteMarkerStyle,
+  pasteMenuDownCount,
+  renderPasteMarkersForHistory,
+  splitPasteSegments,
+  triggersPasteMenu,
+  type PasteMode,
+  type PasteModeSetting,
+  type PasteMarkerPaint,
+  type PasteMarkerStyle,
+} from "../shared/paste-attach";
+import {
   DEFAULT_THEME_NAME,
   FONT_FAMILY,
   FONT_SIZE,
@@ -144,6 +163,8 @@ type Tab = {
   sentMessages: SentMessageEntry[];
   /** omp session key whose transcript already backfilled `sentMessages`; guards repeat loads. */
   activityBackfilledKey: string | null;
+  /** omp's large-paste selector is on screen, awaiting the mode we already chose. */
+  pasteMenuSeen: boolean;
 };
 
 const tabs: Tab[] = [];
@@ -171,6 +192,10 @@ let hideBottomButtonLabels = false;
 let collapseTopBarToMenu = false;
 let panelPosition: PanelPosition = "top-right";
 let terminalScrollSteps = DEFAULT_SCROLL_STEPS;
+let pasteMode: PasteModeSetting = "ask";
+let pasteMarkerStyle: PasteMarkerStyle = "content";
+let pasteMarkerPaint: PasteMarkerPaint = "pill";
+let pasteMarkerPulse = true;
 let doneSoundEnabled = true;
 let doneSoundVolume = DEFAULT_DONE_SOUND_VOLUME;
 const doneSound = new CompletionSound(doneSoundEnabled, doneSoundVolume);
@@ -183,6 +208,9 @@ function applyButtonLabelVisibility(): void {
   document.body.classList.toggle("hide-top-button-labels", hideTopButtonLabels);
   document.body.classList.toggle("hide-bottom-button-labels", hideBottomButtonLabels);
   document.body.classList.toggle("top-bar-as-menu", collapseTopBarToMenu);
+}
+function applyPasteMarkerPaint(): void {
+  document.body.dataset.pastePaint = pasteMarkerPaint;
 }
 let settingsModal: SettingsModal | null = null;
 let modelModal: ModelModal | null = null;
@@ -392,6 +420,43 @@ async function sendAskAnswers(tab: Tab, answers: AskAnswer[]): Promise<void> {
     }
   }
   if (tab.askSendSeq === seq) tab.askSend = null;
+}
+
+/**
+ * Answer omp's large-paste selector with the mode the user already picked in
+ * the dock.
+ *
+ * omp's threshold is user-configurable, so the menu's appearance is never
+ * assumed: without a sighting in the stream nothing is sent, and the following
+ * `view.submit()` remains an ordinary Enter.
+ */
+async function answerPasteMenu(tab: Tab, mode: PasteMode, expected: boolean): Promise<void> {
+  if (!tab.view) return;
+  const budget = expected ? PASTE_MENU_WAIT_MS : PASTE_MENU_PROBE_MS;
+  const deadline = Date.now() + budget;
+  while (!tab.pasteMenuSeen && Date.now() < deadline) {
+    await sleep(PASTE_MENU_POLL_MS);
+  }
+  if (!tab.pasteMenuSeen || !tab.view) {
+    tab.pasteMenuSeen = false;
+    return;
+  }
+  tab.pasteMenuSeen = false;
+
+  for (let i = 0; i < pasteMenuDownCount(mode); i++) {
+    tab.view.writeArrow({
+      key: "ArrowDown",
+      code: "ArrowDown",
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      metaKey: false,
+    });
+    await sleep(ASK_KEY_GAP_MS);
+  }
+  tab.view.writeRaw("\r");
+  await sleep(ASK_ENTER_GAP_MS);
+  await tab.view.waitForQuiet(40, 250);
 }
 
 function clearAskSend(tab: Tab): void {
@@ -615,6 +680,10 @@ function persist(): void {
     fontFamily: customFontFamily,
     fontSize: terminalFontSize,
     scrollSteps: terminalScrollSteps,
+    pasteMode,
+    pasteMarkerStyle,
+    pasteMarkerPaint,
+    pasteMarkerPulse,
     activityColors,
     activityColorsOnTabs,
     todoPanelVisible,
@@ -1198,6 +1267,7 @@ function makeTab(cwd: string, customTitle?: string, colorTag?: string): Tab {
     suppressDoneSound: false,
     sentMessages: [],
     activityBackfilledKey: null,
+    pasteMenuSeen: false,
   };
   self = tab;
 
@@ -1460,17 +1530,42 @@ async function submitDock(payload: DockPayload): Promise<void> {
     // Append onto the same composer line as any attachment atoms.
     // Prefer type() so we don't open a second bracketed-paste "segment".
     const body = text.replace(/\r\n/g, "\n");
-    if (!body.includes("\n")) {
-      const chunk = DIRECTIVE.test(body) ? body.trimStart() : body;
-      view.type(hasFiles ? ` ${chunk}` : chunk);
-    } else {
-      view.paste(hasFiles ? ` ${body}` : body);
-      await sleep(EDITOR_SETTLE_MS);
-    }
-  }
+    const bySeq = new Map(payload.pastes.map((item) => [item.seq, item]));
+    const segments = splitPasteSegments(body, new Set(bySeq.keys()));
+    // No dock choice was possible for a long body that never became a chip
+    // (a recalled history entry, say), so honour the pinned setting.
+    const fallback: PasteMode = pasteMode === "ask" ? "inline" : pasteMode;
+    let first = true;
 
-  if (hasText) {
-    recordSentMessage(tab, text);
+    for (const segment of segments) {
+      const lead = first && hasFiles ? " " : "";
+      first = false;
+      if (segment.kind === "paste") {
+        const item = bySeq.get(segment.seq)!;
+        if (lead) view.type(lead);
+        // Only a sighting produced by this paste may answer for it.
+        tab.pasteMenuSeen = false;
+        view.paste(item.text);
+        await sleep(EDITOR_SETTLE_MS);
+        await answerPasteMenu(tab, item.mode, triggersPasteMenu(item.lines));
+        continue;
+      }
+      if (!segment.text.includes("\n")) {
+        const chunk = DIRECTIVE.test(segment.text) ? segment.text.trimStart() : segment.text;
+        view.type(lead + chunk);
+        continue;
+      }
+      tab.pasteMenuSeen = false;
+      view.paste(lead + segment.text);
+      await sleep(EDITOR_SETTLE_MS);
+      await answerPasteMenu(
+        tab,
+        fallback,
+        isLargePaste(segment.text) && triggersPasteMenu(countPasteLines(segment.text)),
+      );
+    }
+
+    recordSentMessage(tab, renderPasteMarkersForHistory(body));
   }
 
   // Single submit for attachments + text together.
@@ -1480,6 +1575,9 @@ async function submitDock(payload: DockPayload): Promise<void> {
 /** Parse omp's terminal stream to extract active model, thinking level, plan state and usage metrics. */
 function parseStatusStream(tab: Tab, rawData: string): void {
   const plain = rawData.replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, "");
+  // Ahead of the statusline gate: omp's large-paste selector replaces the
+  // statusline entirely while it is up.
+  if (detectPasteMenu(plain)) tab.pasteMenuSeen = true;
   // Plan lines must be handled before the statusline gate: "Plan mode paused."
   // and "Plan mode disabled." can arrive without a statusline.
   const planStatus = parsePlanStatus(plain);
@@ -1545,6 +1643,9 @@ function parseStatusStream(tab: Tab, rawData: string): void {
 }
 
 const dock = new Dock({
+  pasteMode: () => pasteMode,
+  pasteMarkerStyle: () => pasteMarkerStyle,
+  pasteMarkerPulse: () => pasteMarkerPulse,
   submit: (payload) => void submitDock(payload),
   interrupt: () => {
     if (!active) return;
@@ -2110,6 +2211,27 @@ function openSettingsModal(): void {
         applyScrollSteps(steps);
         persist();
       },
+      pasteMode,
+      onPasteModeChange: (mode) => {
+        pasteMode = mode;
+        persist();
+      },
+      pasteMarkerStyle,
+      onPasteMarkerStyleChange: (style) => {
+        pasteMarkerStyle = style;
+        persist();
+      },
+      pasteMarkerPaint,
+      onPasteMarkerPaintChange: (paint) => {
+        pasteMarkerPaint = paint;
+        applyPasteMarkerPaint();
+        persist();
+      },
+      pasteMarkerPulse,
+      onTogglePasteMarkerPulse: (enabled) => {
+        pasteMarkerPulse = enabled;
+        persist();
+      },
       doneSoundEnabled,
       doneSoundVolume,
       onToggleDoneSound: (enabled) => {
@@ -2138,6 +2260,10 @@ function openSettingsModal(): void {
     collapseTopBarToMenu,
     panelPosition,
     scrollSteps: terminalScrollSteps,
+    pasteMode,
+    pasteMarkerStyle,
+    pasteMarkerPaint,
+    pasteMarkerPulse,
     doneSoundEnabled,
     doneSoundVolume,
   });
@@ -2295,6 +2421,19 @@ async function boot(): Promise<void> {
   if (typeof state.scrollSteps === "number") {
     terminalScrollSteps = clampScrollSteps(state.scrollSteps);
   }
+  if (isPasteModeSetting(state.pasteMode)) {
+    pasteMode = state.pasteMode;
+  }
+  if (isPasteMarkerStyle(state.pasteMarkerStyle)) {
+    pasteMarkerStyle = state.pasteMarkerStyle;
+  }
+  if (isPasteMarkerPaint(state.pasteMarkerPaint)) {
+    pasteMarkerPaint = state.pasteMarkerPaint;
+  }
+  if (typeof state.pasteMarkerPulse === "boolean") {
+    pasteMarkerPulse = state.pasteMarkerPulse;
+  }
+  applyPasteMarkerPaint();
   if (typeof state.doneSoundEnabled === "boolean") {
     doneSoundEnabled = state.doneSoundEnabled;
     doneSound.setEnabled(doneSoundEnabled);

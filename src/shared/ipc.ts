@@ -2,6 +2,11 @@
 
 import type { AgentActivity } from "./activity";
 import type { PlanMode } from "./plan-mode";
+import type {
+  PasteMarkerPaint,
+  PasteMarkerStyle,
+  PasteModeSetting,
+} from "./paste-attach";
 
 export const CH = {
   ptySpawn: "pty:spawn",
@@ -290,6 +295,14 @@ export type PersistedState = {
   fontSize?: number;
   /** Rows the terminal advances per wheel detent. */
   scrollSteps?: number;
+  /** How a long dock paste is attached; "ask" shows the chooser. */
+  pasteMode?: PasteModeSetting;
+  /** Composer marker wording for a collapsed paste. */
+  pasteMarkerStyle?: PasteMarkerStyle;
+  /** Composer marker paint treatment. */
+  pasteMarkerPaint?: PasteMarkerPaint;
+  /** Flash the marker when a paste lands. */
+  pasteMarkerPulse?: boolean;
   favoriteModels?: string[];
   customModels?: CustomModelConfig[];
   showFavoritesOnly?: boolean;

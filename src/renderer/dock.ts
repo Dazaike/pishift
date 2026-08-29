@@ -10,10 +10,22 @@ import { ThinkingMenu } from "./thinking-menu";
 import { getThinkingIconSvg } from "./thinking-icons";
 import planIcon from "./assets/icons/plan.png";
 import type { PlanMode, PlanTarget } from "../shared/plan-mode";
+import { PasteMenu } from "./paste-menu";
+import {
+  countPasteLines,
+  isLargePaste,
+  normalizePaste,
+  pasteMarker,
+  triggersPasteMenu,
+  type PasteMode,
+  type PasteModeSetting,
+  type PasteMarkerStyle,
+} from "../shared/paste-attach";
 export type DockPayload = {
   text: string;
   imagePaths: string[];
   otherPaths: string[];
+  pastes: PastePayload[];
 };
 export type Attachment = { path: string; isImage: boolean };
 
@@ -23,6 +35,32 @@ export type Attachment = { path: string; isImage: boolean };
  * omp sees the exact text without a temp file round-trip.
  */
 export type Snippet = { id: string; text: string; label: string };
+
+/** First lines of a referenced selection; CSS clamps the visible height. */
+function snippetPreview(text: string): string {
+  const preview = text
+    .split("\n", 3)
+    .map((line) => line.trimEnd())
+    .join("\n");
+  return preview.length > 400 ? `${preview.slice(0, 400)}…` : preview;
+}
+
+/**
+ * A long paste collapsed out of the composer. The text lives here; the textarea
+ * only holds a short marker, which is replayed to omp as its own bracketed
+ * paste on submit so omp performs the real attachment.
+ */
+export type PasteItem = {
+  id: string;
+  seq: number;
+  text: string;
+  lines: number;
+  mode: PasteMode;
+  /** Literal composer text for this paste, in the style chosen when it landed. */
+  marker: string;
+};
+
+export type PastePayload = Omit<PasteItem, "id" | "marker">;
 
 /** Universal thinking ladder exposed for every model. */
 export const DEFAULT_THINKING_LEVELS = [
@@ -161,6 +199,8 @@ export type DockState = {
   text: string;
   chips: Attachment[];
   snippets: Snippet[];
+  pastes: PasteItem[];
+  pasteSeq: number;
   history: string[];
   // Plan state deliberately absent: it lives on the tab's PlanReconciler so
   // there is exactly one source of truth.
@@ -169,6 +209,12 @@ export type DockState = {
 };
 
 export interface DockHooks {
+  /** Live Settings value, read at paste time. */
+  pasteMode(): PasteModeSetting;
+  /** Live Settings value, read when a paste lands. */
+  pasteMarkerStyle(): PasteMarkerStyle;
+  /** Live Settings value, read when a paste lands. */
+  pasteMarkerPulse(): boolean;
   submit(payload: DockPayload): void;
   interrupt(): void;
   focusTerminal(): void;
@@ -226,6 +272,7 @@ export class Dock {
   private readonly sendButton = document.getElementById("dock-send") as HTMLButtonElement;
   private readonly sendLabel = this.sendButton.querySelector(".dock-send-label") as HTMLSpanElement | null;
   private readonly slashMenu: SlashMenu;
+  private readonly pasteMenu = new PasteMenu();
   private readonly thinkingMenu: ThinkingMenu;
   private readonly lightbox: ImageLightbox;
   private readonly glow: DockGlow;
@@ -234,6 +281,8 @@ export class Dock {
   private chips: Attachment[] = [];
   private snippets: Snippet[] = [];
   private snippetSeq = 0;
+  private pastes: PasteItem[] = [];
+  private pasteSeq = 0;
   private history: string[] = [];
   private historyIndex = -1;
   private draft = "";
@@ -264,6 +313,7 @@ export class Dock {
     this.glow = new DockGlow(editorEl);
     this.lightbox = new ImageLightbox();
     this.root.appendChild(this.slashMenu.el);
+    this.root.appendChild(this.pasteMenu.el);
 
     const toast = document.createElement("div");
     toast.id = "dock-toast";
@@ -315,6 +365,7 @@ export class Dock {
       setTimeout(() => {
         if (document.activeElement !== this.input) {
           this.slashMenu.close();
+          this.pasteMenu.cancel();
         }
       }, 150);
     });
@@ -531,6 +582,8 @@ export class Dock {
       text: this.input.value,
       chips: [...this.chips],
       snippets: [...this.snippets],
+      pastes: [...this.pastes],
+      pasteSeq: this.pasteSeq,
       history: [...this.history],
       modelName: this.modelName,
       thinkingLevel: this.thinkingLevel,
@@ -541,12 +594,15 @@ export class Dock {
     this.input.value = state?.text ?? "";
     this.chips = state ? [...state.chips] : [];
     this.snippets = state?.snippets ? [...state.snippets] : [];
+    this.pastes = Array.isArray(state?.pastes) ? [...state.pastes] : [];
+    this.pasteSeq = typeof state?.pasteSeq === "number" ? state.pasteSeq : 0;
     this.history = state ? [...state.history] : [];
     this.modelName = state?.modelName ?? "";
     this.thinkingLevel = state?.thinkingLevel ?? "low";
     this.historyIndex = -1;
     this.draft = "";
     this.slashMenu.close();
+    this.pasteMenu.close();
     this.updatePlanButton();
     this.setModelName(this.modelName);
     this.setThinkingLevel(this.thinkingLevel);
@@ -583,11 +639,18 @@ export class Dock {
       text: text + block,
       imagePaths: this.chips.filter((chip) => chip.isImage).map((chip) => chip.path),
       otherPaths: this.chips.filter((chip) => !chip.isImage).map((chip) => chip.path),
+      pastes: this.pastes.map(({ seq, text: body, lines, mode }) => ({
+        seq,
+        text: body,
+        lines,
+        mode,
+      })),
     };
-    const hasBody = Boolean(text.trim()) || block.length > 0;
+    const hasBody = Boolean(text.trim()) || block.length > 0 || this.pastes.length > 0;
     if (!hasBody && payload.imagePaths.length + payload.otherPaths.length === 0) return;
 
     this.slashMenu.close();
+    this.pasteMenu.close();
     this.playComposerSink();
     this.hooks.submit(payload);
 
@@ -600,6 +663,7 @@ export class Dock {
     this.input.value = "";
     this.chips = [];
     this.snippets = [];
+    this.pastes = [];
     this.renderChips();
     this.render();
   }
@@ -620,6 +684,17 @@ export class Dock {
   private onKeyDown(ev: KeyboardEvent): void {
     const arrowKey = this.arrowKeyOf(ev);
     const isArrow = arrowKey !== null;
+
+    // Modal over everything else, including the slash menu and PTY arrow
+    // forwarding: the popover owes an answer before the paste can land.
+    if (this.pasteMenu.isOpen) {
+      const handled = this.handlePasteMenuKey(ev);
+      if (handled) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        return;
+      }
+    }
 
     // Composer-focused: Alt(+Shift)+arrows are a host shortcut that injects
     // normal (or app-cursor) arrow sequences into the PTY. Alt is NOT part of
@@ -827,6 +902,21 @@ export class Dock {
       this.addPaths(paths);
       return;
     }
+
+    // A long text paste is collapsed to a chip + marker instead of flooding the
+    // composer, exactly as omp does with its own large pastes.
+    const pasted = ev.clipboardData?.getData("text/plain") ?? "";
+    if (pasted && isLargePaste(pasted)) {
+      ev.preventDefault();
+      const lines = countPasteLines(pasted);
+      const mode = this.hooks.pasteMode();
+      if (mode === "ask" && triggersPasteMenu(lines)) {
+        this.pasteMenu.open(lines, (chosen) => this.commitPaste(pasted, lines, chosen));
+      } else {
+        this.commitPaste(pasted, lines, mode === "ask" ? "inline" : mode);
+      }
+      return;
+    }
     if (!files.some((file) => file.type.startsWith("image/"))) return;
 
     ev.preventDefault();
@@ -847,7 +937,68 @@ export class Dock {
     this.render();
   }
 
+  private handlePasteMenuKey(ev: KeyboardEvent): boolean {
+    if (ev.key === "ArrowUp") {
+      this.pasteMenu.moveSelection(-1);
+      return true;
+    }
+    if (ev.key === "ArrowDown") {
+      this.pasteMenu.moveSelection(1);
+      return true;
+    }
+    if (ev.key === "Enter" || ev.key === "Tab") {
+      this.pasteMenu.selectCurrent();
+      return true;
+    }
+    if (ev.key === "Escape") {
+      this.pasteMenu.cancel();
+      return true;
+    }
+    return false;
+  }
+
+  private commitPaste(text: string, lines: number, mode: PasteMode): void {
+    const seq = ++this.pasteSeq;
+    const marker = pasteMarker(seq, this.hooks.pasteMarkerStyle(), text);
+    this.pastes.push({ id: `paste-${seq}`, seq, text, lines, mode, marker });
+    this.renderChips();
+    this.focus();
+    this.insertText(`${marker} `);
+    this.pulseMarker(seq);
+  }
+
+  /**
+   * One-shot flash on the marker that just landed, so the eye connects it to
+   * the chip appearing in the tray. Any later re-render clears it by itself.
+   */
+  private pulseMarker(seq: number): void {
+    if (!this.hooks.pasteMarkerPulse()) return;
+    const el = this.mirror.querySelector(`.hl-paste[data-seq="${seq}"]`);
+    if (el instanceof HTMLElement) el.classList.add("pulse");
+  }
+
+  /**
+   * The marker in the textarea is the source of truth: deleting it drops the
+   * paste. Returns true when the tray needs a repaint.
+   */
+  private syncPastes(): boolean {
+    if (this.pastes.length === 0) return false;
+    const value = this.input.value;
+    const kept = this.pastes.filter((item) => value.includes(item.marker));
+    if (kept.length === this.pastes.length) return false;
+    this.pastes = kept;
+    return true;
+  }
+
+  private removePaste(item: PasteItem): void {
+    this.pastes = this.pastes.filter((p) => p !== item);
+    this.input.value = this.input.value.replace(`${item.marker} `, "").replace(item.marker, "");
+    this.renderChips();
+    this.render();
+  }
+
   private render(): void {
+    if (this.syncPastes()) this.renderChips();
     this.mirror.innerHTML = highlightMessage(this.input.value);
     this.autoGrow();
   }
@@ -876,6 +1027,43 @@ export class Dock {
 
   private renderChips(): void {
     this.tray.replaceChildren();
+    for (const item of this.pastes) {
+      const card = document.createElement("div");
+      card.className = "chip-paste";
+      card.title = item.text.length > 600 ? `${item.text.slice(0, 600)}…` : item.text;
+
+      const preview = document.createElement("div");
+      preview.className = "chip-paste-preview";
+      preview.textContent = normalizePaste(item.text)
+        .split("\n", 4)
+        .map((line) => (line.length > 28 ? `${line.slice(0, 28)}…` : line))
+        .join("\n");
+      card.appendChild(preview);
+
+      const meta = document.createElement("div");
+      meta.className = "chip-paste-meta";
+
+      const count = document.createElement("span");
+      count.className = "chip-paste-count";
+      count.textContent = `+${item.lines} lines`;
+      meta.appendChild(count);
+
+      const tag = document.createElement("span");
+      tag.className = "chip-paste-tag";
+      tag.textContent = `#${item.seq} · ${item.mode}`;
+      meta.appendChild(tag);
+      card.appendChild(meta);
+
+      const removeBtn = document.createElement("button");
+      removeBtn.type = "button";
+      removeBtn.className = "chip-paste-remove";
+      removeBtn.textContent = "\u00d7";
+      removeBtn.setAttribute("aria-label", `Remove paste #${item.seq}`);
+      removeBtn.addEventListener("click", () => this.removePaste(item));
+      card.appendChild(removeBtn);
+
+      this.tray.appendChild(card);
+    }
     for (const snip of this.snippets) {
       const el = document.createElement("span");
       el.className = "chip chip-snippet";
@@ -890,7 +1078,9 @@ export class Dock {
 
       const name = document.createElement("span");
       name.className = "chip-name";
-      name.textContent = snip.label;
+      // The chip wraps, so show real content; `label` stays short for the
+      // fenced block header in the outgoing message.
+      name.textContent = snippetPreview(snip.text);
       el.appendChild(name);
 
       const remove = document.createElement("button");

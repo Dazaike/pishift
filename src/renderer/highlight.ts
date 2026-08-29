@@ -7,6 +7,8 @@
  * alignment with the glyphs beneath it.
  */
 
+import { PASTE_MARKER_RE, pasteMarkerSeq } from "../shared/paste-attach";
+
 const ESCAPE: Record<string, string> = {
   "&": "&amp;",
   "<": "&lt;",
@@ -22,6 +24,7 @@ const LEADING = /^\s*(?:\/[A-Za-z][\w-]*|[#!$](?=\s|$))/;
 
 const TOKENS = new RegExp(
   [
+    `(?<paste>${PASTE_MARKER_RE.source})`,
     "(?<fence>```[\\s\\S]*?(?:```|$))",
     "(?<code>`[^`\\n]+`)",
     "(?<bold>\\*\\*[^*\\n]+\\*\\*)",
@@ -34,6 +37,7 @@ const TOKENS = new RegExp(
 
 const CLASS: Record<string, string> = {
   fence: "hl-code",
+  paste: "hl-paste",
   code: "hl-code",
   bold: "hl-bold",
   url: "hl-url",
@@ -61,7 +65,9 @@ export function highlightMessage(text: string): string {
     const name = Object.keys(groups).find((key) => groups[key] !== undefined);
     if (!name) continue;
     out += escapeHtml(rest.slice(last, match.index));
-    out += `<span class="${CLASS[name]}">${escapeHtml(match[0])}</span>`;
+    const attrs =
+      name === "paste" ? ` data-seq="${pasteMarkerSeq(match[0]) ?? ""}"` : "";
+    out += `<span class="${CLASS[name]}"${attrs}>${escapeHtml(match[0])}</span>`;
     last = match.index + match[0].length;
   }
   out += escapeHtml(rest.slice(last));

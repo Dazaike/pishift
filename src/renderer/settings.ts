@@ -18,6 +18,14 @@ import {
   MIN_SCROLL_STEPS,
 } from "./term-view";
 import { clampVolume, DEFAULT_DONE_SOUND_VOLUME } from "./completion-sound";
+import {
+  isPasteMarkerPaint,
+  isPasteMarkerStyle,
+  isPasteModeSetting,
+  type PasteMarkerPaint,
+  type PasteMarkerStyle,
+  type PasteModeSetting,
+} from "../shared/paste-attach";
 
 export class SettingsModal {
   readonly el: HTMLDivElement;
@@ -41,6 +49,14 @@ export class SettingsModal {
   private onToggleHideBottomButtonLabels: (hide: boolean) => void;
   private onToggleCollapseTopBarToMenu: (collapse: boolean) => void;
   private onPanelPositionChange: (pos: PanelPosition) => void;
+  private pasteMode: PasteModeSetting;
+  private onPasteModeChange: (mode: PasteModeSetting) => void;
+  private pasteMarkerStyle: PasteMarkerStyle;
+  private pasteMarkerPaint: PasteMarkerPaint;
+  private pasteMarkerPulse: boolean;
+  private onPasteMarkerStyleChange: (style: PasteMarkerStyle) => void;
+  private onPasteMarkerPaintChange: (paint: PasteMarkerPaint) => void;
+  private onTogglePasteMarkerPulse: (enabled: boolean) => void;
   private scrollSteps: number;
   private doneSoundEnabled: boolean;
   private doneSoundVolume: number;
@@ -71,11 +87,19 @@ export class SettingsModal {
     onPanelPositionChange: (pos: PanelPosition) => void;
     initialScrollSteps: number | undefined;
     onScrollStepsChange: (steps: number) => void;
+    pasteMode: PasteModeSetting | undefined;
+    onPasteModeChange: (mode: PasteModeSetting) => void;
     doneSoundEnabled: boolean | undefined;
     doneSoundVolume: number | undefined;
     onToggleDoneSound: (enabled: boolean) => void;
     onDoneSoundVolumeChange: (volume: number) => void;
     onPreviewDoneSound: () => void;
+    pasteMarkerStyle: PasteMarkerStyle | undefined;
+    onPasteMarkerStyleChange: (style: PasteMarkerStyle) => void;
+    pasteMarkerPaint: PasteMarkerPaint | undefined;
+    onPasteMarkerPaintChange: (paint: PasteMarkerPaint) => void;
+    pasteMarkerPulse: boolean | undefined;
+    onTogglePasteMarkerPulse: (enabled: boolean) => void;
   }) {
     this.currentPreset = getThemeByName(opts.initialThemeName ?? DEFAULT_THEME_NAME);
     this.showUsageInHeader = opts.showUsageInHeader ?? true;
@@ -98,12 +122,20 @@ export class SettingsModal {
     this.onPanelPositionChange = opts.onPanelPositionChange;
     this.scrollSteps = clampScrollSteps(opts.initialScrollSteps ?? DEFAULT_SCROLL_STEPS);
     this.onScrollStepsChange = opts.onScrollStepsChange;
+    this.pasteMode = opts.pasteMode ?? "ask";
+    this.onPasteModeChange = opts.onPasteModeChange;
     this.doneSoundEnabled = opts.doneSoundEnabled ?? true;
     this.doneSoundVolume = clampVolume(opts.doneSoundVolume ?? DEFAULT_DONE_SOUND_VOLUME);
     this.onToggleDoneSound = opts.onToggleDoneSound;
     this.onDoneSoundVolumeChange = opts.onDoneSoundVolumeChange;
     this.onPreviewDoneSound = opts.onPreviewDoneSound;
 
+    this.pasteMarkerStyle = opts.pasteMarkerStyle ?? "content";
+    this.onPasteMarkerStyleChange = opts.onPasteMarkerStyleChange;
+    this.pasteMarkerPaint = opts.pasteMarkerPaint ?? "pill";
+    this.onPasteMarkerPaintChange = opts.onPasteMarkerPaintChange;
+    this.pasteMarkerPulse = opts.pasteMarkerPulse ?? true;
+    this.onTogglePasteMarkerPulse = opts.onTogglePasteMarkerPulse;
     this.el = document.createElement("div");
     this.el.id = "settings-backdrop";
     this.el.hidden = true;
@@ -147,6 +179,10 @@ export class SettingsModal {
     collapseTopBarToMenu?: boolean;
     panelPosition?: PanelPosition;
     scrollSteps?: number;
+    pasteMode?: PasteModeSetting;
+    pasteMarkerStyle?: PasteMarkerStyle;
+    pasteMarkerPaint?: PasteMarkerPaint;
+    pasteMarkerPulse?: boolean;
     doneSoundEnabled?: boolean;
     doneSoundVolume?: number;
   }): void {
@@ -179,6 +215,18 @@ export class SettingsModal {
     }
     if (typeof state.scrollSteps === "number") {
       this.scrollSteps = clampScrollSteps(state.scrollSteps);
+    }
+    if (isPasteModeSetting(state.pasteMode)) {
+      this.pasteMode = state.pasteMode;
+    }
+    if (isPasteMarkerStyle(state.pasteMarkerStyle)) {
+      this.pasteMarkerStyle = state.pasteMarkerStyle;
+    }
+    if (isPasteMarkerPaint(state.pasteMarkerPaint)) {
+      this.pasteMarkerPaint = state.pasteMarkerPaint;
+    }
+    if (typeof state.pasteMarkerPulse === "boolean") {
+      this.pasteMarkerPulse = state.pasteMarkerPulse;
     }
     if (typeof state.doneSoundEnabled === "boolean") {
       this.doneSoundEnabled = state.doneSoundEnabled;
@@ -511,7 +559,110 @@ export class SettingsModal {
     scrollHead.append(scrollLabel, scrollValue);
     scrollRow.append(scrollHead, scrollInput);
 
-    // Option 7: Completion chime + its volume
+    // Option 7: How long pastes attach
+    const pasteRow = document.createElement("div");
+    pasteRow.className = "settings-pos-row";
+    const pasteLabel = document.createElement("label");
+    pasteLabel.className = "settings-pos-label";
+    pasteLabel.textContent = "Long Paste";
+
+    const pasteSelect = document.createElement("select");
+    pasteSelect.className = "settings-select";
+    const pasteOptions: { id: PasteModeSetting; label: string }[] = [
+      { id: "ask", label: "Ask Each Time" },
+      { id: "wrapped", label: "Always Attach as a Wrapped Block" },
+      { id: "file", label: "Always Attach as a Local File" },
+      { id: "inline", label: "Always Paste Inline" },
+    ];
+    for (const opt of pasteOptions) {
+      const el = document.createElement("option");
+      el.value = opt.id;
+      el.textContent = opt.label;
+      if (opt.id === this.pasteMode) el.selected = true;
+      pasteSelect.appendChild(el);
+    }
+    pasteSelect.addEventListener("change", () => {
+      if (!isPasteModeSetting(pasteSelect.value)) return;
+      this.pasteMode = pasteSelect.value;
+      this.onPasteModeChange(this.pasteMode);
+    });
+    pasteRow.append(pasteLabel, pasteSelect);
+
+    // Option 8: How the collapsed paste looks in the composer
+    const markerRow = document.createElement("div");
+    markerRow.className = "settings-pos-row";
+    const markerLabel = document.createElement("label");
+    markerLabel.className = "settings-pos-label";
+    markerLabel.textContent = "Paste Marker";
+
+    const markerSelect = document.createElement("select");
+    markerSelect.className = "settings-select";
+    const markerOptions: { id: PasteMarkerStyle; label: string }[] = [
+      { id: "content", label: "Content Tag  \u29c91 UserScript \u00b7 353 ln" },
+      { id: "footnote", label: "Footnote  paste\u00b9" },
+      { id: "brackets", label: "Brackets  \u27e6 paste 1 \u27e7" },
+      { id: "local", label: "Local File  local://paste-1.md" },
+      { id: "dot", label: "Dot  \u25cf paste 1" },
+    ];
+    for (const opt of markerOptions) {
+      const el = document.createElement("option");
+      el.value = opt.id;
+      el.textContent = opt.label;
+      if (opt.id === this.pasteMarkerStyle) el.selected = true;
+      markerSelect.appendChild(el);
+    }
+    markerSelect.addEventListener("change", () => {
+      if (!isPasteMarkerStyle(markerSelect.value)) return;
+      this.pasteMarkerStyle = markerSelect.value;
+      this.onPasteMarkerStyleChange(this.pasteMarkerStyle);
+    });
+    markerRow.append(markerLabel, markerSelect);
+
+    // Option 9: How that marker is painted
+    const paintRow = document.createElement("div");
+    paintRow.className = "settings-pos-row";
+    const paintLabel = document.createElement("label");
+    paintLabel.className = "settings-pos-label";
+    paintLabel.textContent = "Paste Marker Paint";
+
+    const paintSelect = document.createElement("select");
+    paintSelect.className = "settings-select";
+    const paintOptions: { id: PasteMarkerPaint; label: string }[] = [
+      { id: "pill", label: "Accent Pill" },
+      { id: "fold", label: "Document Fold + Glow" },
+      { id: "knockout", label: "Highlighter Knockout" },
+      { id: "rail", label: "Underline Rail" },
+      { id: "plain", label: "Plain Accent Text" },
+    ];
+    for (const opt of paintOptions) {
+      const el = document.createElement("option");
+      el.value = opt.id;
+      el.textContent = opt.label;
+      if (opt.id === this.pasteMarkerPaint) el.selected = true;
+      paintSelect.appendChild(el);
+    }
+    paintSelect.addEventListener("change", () => {
+      if (!isPasteMarkerPaint(paintSelect.value)) return;
+      this.pasteMarkerPaint = paintSelect.value;
+      this.onPasteMarkerPaintChange(this.pasteMarkerPaint);
+    });
+    paintRow.append(paintLabel, paintSelect);
+
+    // Option 10: Flash the marker as it lands
+    const pulseLabel = document.createElement("label");
+    pulseLabel.className = "settings-check-label";
+    const pulseCheck = document.createElement("input");
+    pulseCheck.type = "checkbox";
+    pulseCheck.checked = this.pasteMarkerPulse;
+    pulseCheck.addEventListener("change", () => {
+      this.pasteMarkerPulse = pulseCheck.checked;
+      this.onTogglePasteMarkerPulse(this.pasteMarkerPulse);
+    });
+    const pulseText = document.createElement("span");
+    pulseText.textContent = "Flash the Marker When a Paste Lands";
+    pulseLabel.append(pulseCheck, pulseText);
+
+    // Option 11: Completion chime + its volume
     const doneSoundLabel = document.createElement("label");
     doneSoundLabel.className = "settings-check-label";
     const doneSoundCheck = document.createElement("input");
@@ -566,6 +717,10 @@ export class SettingsModal {
       burgerMenuLabel,
       posRow,
       scrollRow,
+      pasteRow,
+      markerRow,
+      paintRow,
+      pulseLabel,
       doneSoundLabel,
       volumeRow,
     );
