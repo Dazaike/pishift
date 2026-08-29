@@ -137,8 +137,8 @@ export class TermView {
 
     const openExternalLink = async (uri: string): Promise<void> => {
       try {
-        if (window.omphif?.openExternal) {
-          if (await window.omphif.openExternal(uri)) return;
+        if (window.pishift?.openExternal) {
+          if (await window.pishift.openExternal(uri)) return;
         } else if (/^https?:\/\//i.test(uri)) {
           window.open(uri, "_blank", "noopener,noreferrer");
           return;
@@ -165,7 +165,7 @@ export class TermView {
       scrollSensitivity: DEFAULT_SCROLL_STEPS,
       fastScrollSensitivity: 10,
       macOptionIsMeta: false,
-      windowsPty: window.omphif.windowsPty,
+      windowsPty: window.pishift.windowsPty,
       theme: themePreset ? buildXtermTheme(themePreset) : undefined,
       linkHandler: {
         allowNonHttpProtocols: true,

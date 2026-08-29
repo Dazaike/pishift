@@ -8,7 +8,7 @@
 export function filePaths(files: readonly File[]): string[] {
   const out: string[] = [];
   for (const file of files) {
-    const path = window.omphif.getPathForFile(file);
+    const path = window.pishift.getPathForFile(file);
     if (path) out.push(path);
   }
   return out;

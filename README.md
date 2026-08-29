@@ -55,8 +55,11 @@ No fake web-view wrappers pretending to be terminals. Just a genuine hardware-ac
 
 ### 🎛️ A Dock That Doesn’t Get In Your Way
 - **Interactive Slash Autocomplete:** Stop memorizing 60+ slash commands. Type `/` and let the UI do the thinking.
-- **Multi-Line Expanded Sheet:** Hit `Ctrl+Shift+E` (or `⤢`) when you need to write a thesis prompt instead of squinting at a single-line input.
-- **Long-Paste Attachments:** Large text pastes collapse into a readable marker and can be attached as a wrapped block, local file, or inline content—without turning the composer into a scrollback buffer.
+- **Multi-Line Expanded Sheet:** Hit `Ctrl+Shift+Enter` again once the composer is focused (or click `⤢`) when you need to write a thesis prompt instead of squinting at a single-line input.
+- **Long-Paste Attachments:** Anything past 10 lines or 1,000 characters collapses into a readable marker and can be attached as a wrapped block, a local file, or inline content—without turning the composer into a scrollback buffer.
+- **Paste Markers, Your Way:** Five marker styles (Content Tag, Footnote, Brackets, Local File, Dot) times five paints (Accent Pill, Document Fold + Glow, Highlighter Knockout, Underline Rail, Plain Accent Text), plus an optional flash when a paste lands. Yes, that is 25 combinations for pasting text. No, we will not apologize.
+- **Terminal & Tools Popover:** Copy, Paste, Clear, Find, Zoom In/Out/Reset, Expand Composer, Restart Session — one click each, no chord archaeology.
+- **Ask Sheets Answered In-App:** When omp asks you a question, it renders as a real modal and gets answered with synthesized keystrokes, instead of you counting arrow-downs in a TUI list.
 - **Drag-and-Drop Image Chips + Lightbox:** Drag an image in, get a nice thumbnail chip. Click it to zoom in full resolution. Shocking, right?
 - **Real-Time Markdown Highlighting:** Code blocks, bolding, URLs, and paths highlight as you type.
 - **Clickable Workspace Path:** Click the current folder path in the dock to open it in File Explorer. Because copying paths into Explorer like it's 2008 was always a bad plan.
@@ -70,18 +73,37 @@ No fake web-view wrappers pretending to be terminals. Just a genuine hardware-ac
 - **Right-Click Power Context Menu:**
   - *Open in File Explorer* (because searching folders in terminal navigation gets old fast).
   - *Copy Directory Path* (one click, in your clipboard).
-  - *Duplicate Session* (spawn identical workspace instantly).
+  - *Duplicate Tab in Directory* (spawn identical workspace instantly).
   - *Project Color Badges* (tag your tabs with colors so you stop mixing up repos).
-  - *Inline Rename & Close Others*.
+  - *Inline Rename*, *Close Other Tabs*, and *Close Tabs to the Right*.
 - **Drag-to-Reorder:** Because the tab you opened 5 hours ago shouldn't be trapped on the left forever.
 
 ### 🔌 Zero-Config Telemetry Bridge
-- Uses an asynchronous UDP bridge (`127.0.0.1:37991`) to stream live agent activity (`idle`, `working`, `thinking`), token usage, and model states with **zero polling**.
+- Uses an asynchronous UDP bridge (`127.0.0.1:37991`) to stream live agent activity (`idle`, `working`, `thinking`), token usage, and model states with **zero polling**. A file-watch backstop covers dropped datagrams, so the UI never gets stuck claiming the agent is busy.
 - **Auto-installs** `control-bridge.ts` into your `~/.omp/agent/extensions/` on launch. You don't have to touch a config file. You're welcome.
+
+### 🛰️ Async Job Monitor
+- Every background subagent gets a row with live runtime, so you know which one has been "almost done" for nine minutes.
+- **Artifact / Report** and **Raw Logs** tabs per job, plus a thinking-process view when the model bothered to show its work.
+- **Copy Markdown** lifts a finished job's report straight to your clipboard.
+- Kill a runaway job from the same panel instead of hunting PIDs in Task Manager.
+
+### 📊 It Reads omp's Own Databases
+- **Installed models**, grouped by provider, pulled from omp's model database — not a hardcoded list that rots in a week.
+- **Token and cost usage** with provider limits, optionally pinned in the header so you can watch the money leave.
+- **Recent folders and recent chats** sourced from real session history, not a guess.
+- **Transcript backfill on resume:** reopen a past session and your earlier messages come back, instead of an empty scrollback pretending nothing happened.
 
 ### 🎨 28 Themes Because Aesthetics Matter
 - 28 built-in palettes (Tokyo Night, Catppuccin, Gruvbox, Nord, Cyberpunk, Rose Pine, Synthwave...).
 - Syncs the entire Windows titlebar overlay and frame colors so your dark mode doesn't get ruined by a blinding white caption bar.
+
+### ⚙️ Settings That Actually Have Settings
+- **Themes & Settings** in one modal: palette picker, **Terminal Font Family** override, and interface toggles that persist.
+- **Composer Glow Colors:** pick a glow per agent activity, optionally color the tab busy indicators to match, and **Reset to defaults** when your palette experiment goes badly.
+- **Interface Options:** pin token/cost usage in the header, go icons-only in the top bar or the dock, collapse the top bar into a burger menu (☰), set **Recent Menus Placement** (Top Right, Center Screen, Top Center, Bottom Center), and tune **Scroll Wheel Steps**.
+- **Long Paste behavior:** *Ask Each Time* by default, or lock it to always attach as a wrapped block, always attach as a local file, or always paste inline.
+- **Completion chime:** play a sound when the agent finishes working, with a volume slider and a **Test** button so you can pick something that won't make you hate your job.
 
 ### 🗃️ Quick-Switch Everything
 - **Recent Chats Popover:** Fuzzy-search and resume any past session by working directory without leaving the keyboard.
@@ -123,15 +145,17 @@ bun run dist
 
 | Shortcut | What it does |
 | :--- | :--- |
-| `Ctrl+Shift+T` | New tab in current working directory |
-| `Ctrl+Shift+W` | Close active tab |
-| `Ctrl+Tab` / `Ctrl+Shift+Tab` | Cycle tabs |
-| `Ctrl+1` – `Ctrl+9` | Jump directly to tab N |
-| `Ctrl+Shift+E` | Expand / collapse big prompt sheet |
-| `Ctrl+F` | Find text in terminal output |
+| `Ctrl+Shift+Enter` | Focus the composer — press again to expand the big prompt sheet |
+| `Ctrl+Shift+T` | New tab in the current working directory |
+| `Ctrl+Shift+W` | Close the active tab |
+| `Ctrl+Tab` / `Ctrl+Shift+Tab` | Cycle tabs forward / back |
+| `Ctrl+Shift+F` | Find text in terminal output |
 | `Ctrl+=` / `Ctrl+-` / `Ctrl+0` | Zoom in / Zoom out / Reset font size |
-| `Ctrl+Shift+R` | Restart the session (when your agent goes rogue) |
-| `Esc` | Cancel / dismiss overlay / stop thinking |
+| `Ctrl+C` | Copy the selection when there is one, otherwise send `^C` |
+| `Alt+↑ ↓ ← →` | Forward arrows straight to the agent without leaving the composer |
+| `Esc` | Cancel / dismiss overlay / stop the "working" chrome |
+
+Clear Terminal, Find, Expand Composer, and Restart Session also live as click actions in the dock's **Terminal & Tools** popover.
 
 ---
 

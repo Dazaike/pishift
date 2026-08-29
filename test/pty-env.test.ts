@@ -39,6 +39,8 @@ describe("buildPtyEnv", () => {
     expect(env.TERM).toBe("xterm-256color");
     expect(env.COLORTERM).toBe("truecolor");
     expect(env.ITERM_SESSION_ID).toBe("w0t0p0:session-1");
+    expect(env.PISHIFT_SESSION_ID).toBe("session-1");
+    expect(env).not.toHaveProperty(["OMP", "HIF_SESSION_ID"].join(""));
     expect(env.PATH).toBe("C:/Windows");
   });
 

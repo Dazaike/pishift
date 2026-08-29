@@ -1,9 +1,9 @@
 /// <reference types="vite/client" />
 
-import type { OmphifApi } from "../preload/index";
+import type { PiShiftApi } from "../preload/index";
 
 declare global {
   interface Window {
-    omphif: OmphifApi;
+    pishift: PiShiftApi;
   }
 }

@@ -182,7 +182,7 @@ export interface ControlBridgeState {
   jobs?: AsyncJob[];
   pid: number;
   cwd: string | null;
-  /** Host session key (`OMPHIF_SESSION_ID` / ITERM_SESSION_ID suffix). */
+  /** Host session key (`PISHIFT_SESSION_ID` / ITERM_SESSION_ID suffix). */
   sessionId?: string | null;
   updatedAt: string;
 }

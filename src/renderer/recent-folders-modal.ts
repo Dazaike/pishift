@@ -110,7 +110,7 @@ export class RecentFoldersModal {
   async refresh(): Promise<void> {
     this.loading = true;
     try {
-      this.folders = await window.omphif.getRecentFolders();
+      this.folders = await window.pishift.getRecentFolders();
     } catch {
       this.folders = [];
     } finally {
@@ -197,7 +197,7 @@ export class RecentFoldersModal {
 
   private async removeFolder(folder: string): Promise<void> {
     try {
-      this.folders = await window.omphif.removeRecentFolder(folder);
+      this.folders = await window.pishift.removeRecentFolder(folder);
       this.render();
     } catch {
       // Ignore
@@ -205,7 +205,7 @@ export class RecentFoldersModal {
   }
 
   private clearAll(): void {
-    window.omphif.clearRecentFolders();
+    window.pishift.clearRecentFolders();
     this.folders = [];
     this.render();
   }

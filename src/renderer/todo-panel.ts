@@ -105,7 +105,7 @@ export class TodoPanel {
     this.usageLoading = true;
     this.renderUsage();
     try {
-      this.usageReports = await window.omphif.getProviderUsage();
+      this.usageReports = await window.pishift.getProviderUsage();
     } catch {
       this.usageReports = [];
     } finally {

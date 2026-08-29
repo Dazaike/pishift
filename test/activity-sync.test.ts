@@ -29,3 +29,15 @@ describe("activity-core copy in the control-bridge extension", () => {
     expect(copy).toBe(source);
   });
 });
+
+describe("PiShift session environment contract", () => {
+  it("uses PISHIFT_SESSION_ID in both the PTY host and standalone extension", () => {
+    const host = readFileSync(new URL("../src/main/pty-env.ts", import.meta.url), "utf8");
+    const extension = readFileSync(new URL("../extensions/control-bridge.ts", import.meta.url), "utf8");
+
+    for (const text of [host, extension]) {
+      expect(text).toContain("PISHIFT_SESSION_ID");
+      expect(text).not.toContain(["OMP", "HIF_SESSION_ID"].join(""));
+    }
+  });
+});

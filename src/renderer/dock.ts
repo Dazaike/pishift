@@ -392,7 +392,7 @@ export class Dock {
   private async refreshSkillCommands(cwd: string): Promise<void> {
     this.skillCwd = cwd;
     try {
-      const commands = await window.omphif.getSkillCommands(cwd);
+      const commands = await window.pishift.getSkillCommands(cwd);
       if (this.skillCwd !== cwd) return; // superseded by a newer tab switch
       this.slashMenu.setExtraCommands(commands);
     } catch {
@@ -920,12 +920,12 @@ export class Dock {
     if (!files.some((file) => file.type.startsWith("image/"))) return;
 
     ev.preventDefault();
-    const saved = await window.omphif.saveClipboardImage();
+    const saved = await window.pishift.saveClipboardImage();
     if (saved) {
       this.addPaths([saved]);
       return;
     }
-    const text = await window.omphif.readClipboardText();
+    const text = await window.pishift.readClipboardText();
     if (text) this.insertText(text);
   }
 
@@ -1149,7 +1149,7 @@ export class Dock {
   private async attachPreview(chip: Attachment, thumb: HTMLImageElement): Promise<void> {
     let preview = this.previews.get(chip.path);
     if (!preview) {
-      const loaded = await window.omphif.imagePreview(chip.path, THUMB_SIZE);
+      const loaded = await window.pishift.imagePreview(chip.path, THUMB_SIZE);
       if (!loaded) {
         thumb.remove();
         return;
@@ -1161,7 +1161,7 @@ export class Dock {
   }
 
   private async showFullPreview(path: string): Promise<void> {
-    const preview = await window.omphif.imagePreview(path, FULL_PREVIEW_SIZE);
+    const preview = await window.pishift.imagePreview(path, FULL_PREVIEW_SIZE);
     if (!preview) return;
     const fileName = path.split(/[\\/]/).pop() || "Image Preview";
     this.lightbox.open(
