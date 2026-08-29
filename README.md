@@ -37,6 +37,7 @@ No fake web-view wrappers pretending to be terminals. Just a genuine hardware-ac
 ### 🎛️ A Dock That Doesn’t Get In Your Way
 - **Interactive Slash Autocomplete:** Stop memorizing 60+ slash commands. Type `/` and let the UI do the thinking.
 - **Multi-Line Expanded Sheet:** Hit `Ctrl+Shift+E` (or `⤢`) when you need to write a thesis prompt instead of squinting at a single-line input.
+- **Long-Paste Attachments:** Large text pastes collapse into a readable marker and can be attached as a wrapped block, local file, or inline content—without turning the composer into a scrollback buffer.
 - **Drag-and-Drop Image Chips + Lightbox:** Drag an image in, get a nice thumbnail chip. Click it to zoom in full resolution. Shocking, right?
 - **Real-Time Markdown Highlighting:** Code blocks, bolding, URLs, and paths highlight as you type.
 - **Clickable Workspace Path:** Click the current folder path in the dock to open it in File Explorer. Because copying paths into Explorer like it's 2008 was always a bad plan.

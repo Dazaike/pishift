@@ -135,6 +135,21 @@ export class TermView {
         : FONT_SIZE;
     this.currentFontSize = fontSize;
 
+    const openExternalLink = async (uri: string): Promise<void> => {
+      try {
+        if (window.omphif?.openExternal) {
+          if (await window.omphif.openExternal(uri)) return;
+        } else if (/^https?:\/\//i.test(uri)) {
+          window.open(uri, "_blank", "noopener,noreferrer");
+          return;
+        }
+      } catch {
+        // Show one actionable error below instead of leaving a rejected IPC
+        // promise invisible in the renderer.
+      }
+      window.alert(`PiShift could not open this link:\n\n${uri}`);
+    };
+
     this.term = new Terminal({
       allowProposedApi: true,
       cursorBlink: true,
@@ -152,18 +167,24 @@ export class TermView {
       macOptionIsMeta: false,
       windowsPty: window.omphif.windowsPty,
       theme: themePreset ? buildXtermTheme(themePreset) : undefined,
+      linkHandler: {
+        allowNonHttpProtocols: true,
+        activate: (_event, uri) => {
+          if (
+            window.confirm(
+              `Do you want to navigate to ${uri}?\n\nWARNING: This link could potentially be dangerous`,
+            )
+          ) {
+            void openExternalLink(uri);
+          }
+        },
+      },
     });
     this.term.loadAddon(this.fit);
     this.term.loadAddon(new Unicode11Addon());
     this.term.unicode.activeVersion = "11";
     this.term.loadAddon(
-      new WebLinksAddon((_event, uri) => {
-        if (window.omphif?.openExternal) {
-          void window.omphif.openExternal(uri);
-        } else if (/^https?:\/\//i.test(uri)) {
-          window.open(uri, "_blank", "noopener,noreferrer");
-        }
-      }),
+      new WebLinksAddon((_event, uri) => void openExternalLink(uri)),
     );
     this.term.loadAddon(this.search);
 
