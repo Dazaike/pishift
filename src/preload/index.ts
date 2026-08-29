@@ -103,6 +103,6 @@ const api = {
   getPathForFile: (file: File): string => webUtils.getPathForFile(file),
 };
 
-export type OmphifApi = typeof api;
+export type PiShiftApi = typeof api;
 
-contextBridge.exposeInMainWorld("omphif", api);
+contextBridge.exposeInMainWorld("pishift", api);

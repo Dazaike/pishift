@@ -295,6 +295,6 @@ export class ImageLightbox {
     cctx.drawImage(this.imgEl, 0, 0, composite.width, composite.height);
     cctx.drawImage(this.canvas, 0, 0, composite.width, composite.height);
     const dataUrl = composite.toDataURL("image/png");
-    await window.omphif.saveImageEdit(this.editPath, dataUrl);
+    await window.pishift.saveImageEdit(this.editPath, dataUrl);
   }
 }

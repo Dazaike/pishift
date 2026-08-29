@@ -4,7 +4,7 @@ import type {
   JobActivityEvent,
 } from "../shared/ipc";
 
-const api = window.omphif;
+const api = window.pishift;
 
 function formatAge(startTime: number, now: number): string {
   if (!startTime || startTime <= 0) return "";

@@ -69,7 +69,7 @@ export class UsageModal {
     this.loading = true;
     this.render();
     try {
-      this.reports = await window.omphif.getProviderUsage();
+      this.reports = await window.pishift.getProviderUsage();
       this.hasLoaded = true;
     } catch {
       this.reports = [];

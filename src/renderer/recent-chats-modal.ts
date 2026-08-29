@@ -118,7 +118,7 @@ export class RecentChatsModal {
   async refresh(): Promise<void> {
     this.loading = true;
     try {
-      this.chats = await window.omphif.getRecentChats(this.currentCwd);
+      this.chats = await window.pishift.getRecentChats(this.currentCwd);
     } catch {
       this.chats = [];
     } finally {

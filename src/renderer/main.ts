@@ -83,7 +83,7 @@ import { JobActivityModal } from "./job-activity-modal";
 import { RecentFoldersModal } from "./recent-folders-modal";
 import { RecentChatsModal } from "./recent-chats-modal";
 import { TopMenu } from "./top-menu";
-const api = window.omphif;
+const api = window.pishift;
 
 const tabsEl = document.getElementById("tabs") as HTMLDivElement;
 const viewsEl = document.getElementById("views") as HTMLDivElement;
@@ -110,7 +110,7 @@ type Tab = {
   colorTag?: string;
   view: TermView | null;
   sessionId: string | null;
-  /** Matches control-bridge `sessionId` / OMPHIF_SESSION_ID. */
+  /** Matches control-bridge `sessionId` / PISHIFT_SESSION_ID. */
   sessionKey: string | null;
   /** PTY process pid (best-effort match to control-bridge pid). */
   ompPid: number | null;
@@ -633,7 +633,7 @@ const basename = (p: string): string => p.split(/[\\/]/).filter(Boolean).pop() |
 
 /** Titles that are noise / not useful as a tab label. */
 const GENERIC_TITLES = new Set(
-  ["", "omp", "oh my pi", "oh-my-pi", "omphif", "terminal", "bash", "pwsh", "powershell", "cmd", "temp", "tmp"].map(
+  ["", "omp", "oh my pi", "oh-my-pi", "terminal", "bash", "pwsh", "powershell", "cmd", "temp", "tmp"].map(
     (s) => s.toLowerCase(),
   ),
 );
@@ -1470,7 +1470,7 @@ function resetActivityHistory(tab: Tab): void {
  */
 async function backfillSessionMessages(tab: Tab, sessionId: string): Promise<void> {
   tab.activityBackfilledKey = sessionId;
-  const messages = await window.omphif.getSessionMessages(sessionId);
+  const messages = await window.pishift.getSessionMessages(sessionId);
   const live = tab.sentMessages.filter((entry) => entry.marker !== null);
   const liveTexts = new Set(live.map((entry) => entry.text));
   const historical: SentMessageEntry[] = messages
@@ -1889,7 +1889,7 @@ function findTabForBridgeStatus(status: {
 
   const key = rawKey.includes(":") ? rawKey.slice(rawKey.lastIndexOf(":") + 1) : rawKey;
   const byKey = tabs.find((t) => t.sessionKey === key || t.sessionId === key);
-  // Background workers inherit OMPHIF_SESSION_ID. Only the hosted omp PID
+  // Background workers inherit PISHIFT_SESSION_ID. Only the hosted omp PID
   // owns terminal/session chrome for that session; workers publish through
   // the parent's job snapshot instead.
   if (

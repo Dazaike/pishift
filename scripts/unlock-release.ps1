@@ -12,7 +12,7 @@ $procs = Get-CimInstance Win32_Process | Where-Object {
   $_.Name -match '^(electron|PiShift|pishift|OpenConsole)\.exe$' -and
   $_.CommandLine -and (
     $_.CommandLine -like "*\release\win-unpacked*" -or
-    $_.CommandLine -like "*\omphif\out\*" -or
+    $_.CommandLine -like "*\PiShift\out\*" -or
     $_.CommandLine -like "*PiShift.exe*"
   )
 }

@@ -416,7 +416,7 @@ interface BridgeState {
   jobs: AsyncJob[];
   pid: number;
   cwd: string | null;
-  /** Matches host `OMPHIF_SESSION_ID` so multi-tab chrome can route activity. */
+  /** Matches host `PISHIFT_SESSION_ID` so multi-tab chrome can route activity. */
   sessionId: string | null;
   updatedAt: string;
 }
@@ -495,7 +495,7 @@ function normalizeAskQuestions(raw: unknown): PendingAskQuestion[] {
 }
 
 export default function controlBridge(pi: ExtensionAPI) {
-  const sessionId = process.env.OMPHIF_SESSION_ID?.trim() || null;
+  const sessionId = process.env.PISHIFT_SESSION_ID?.trim() || null;
   if (!sessionId) return;
 
   let activity: AgentActivity = "idle";

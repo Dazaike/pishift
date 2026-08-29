@@ -38,7 +38,7 @@ export function buildPtyEnv(
   env.TERM = "xterm-256color";
   env.COLORTERM = "truecolor";
   // Unique per hosted tab so control-bridge telemetry can target the right chrome.
-  env.OMPHIF_SESSION_ID = sessionId;
+  env.PISHIFT_SESSION_ID = sessionId;
   env.ITERM_SESSION_ID = `w0t0p0:${sessionId}`;
   return env;
 }
