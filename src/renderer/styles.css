@@ -10,6 +10,10 @@
   --accent: #7aa2f7;
   --accent-glow: rgba(122, 162, 247, 0.25);
   --chrome-h: 38px;
+  /* Stacked tab rows: height of one wrapped tab and how many rows may show. */
+  --tab-h: 28px;
+  --tab-row-h: 31px;
+  --tab-stack-rows: 3;
   /* Shared motion timing: dock send + tab switch stay in sync. */
   --anim-dock: 420ms;
   --anim-dock-ease: cubic-bezier(0.2, 0.85, 0.25, 1);
@@ -120,20 +124,146 @@ button:active {
   padding-right: 140px;
 }
 
+/* Stacked rows: the header is the only thing that may grow, and only to a cap
+   (--tab-stack-rows rows) before the rows scroll instead. */
+body[data-tab-layout="stack"] #chrome {
+  height: auto;
+  min-height: var(--chrome-h);
+  flex: 0 0 auto;
+  align-items: flex-start;
+}
+
+#tab-strip {
+  display: flex;
+  align-items: stretch;
+  gap: 3px;
+  min-width: 0;
+  flex: 0 1 auto;
+  padding: 4px 4px 0;
+  overflow: hidden;
+}
+
+body[data-tab-layout="stack"] #tab-strip {
+  align-items: flex-start;
+}
+
 #tabs {
   display: flex;
   align-items: stretch;
   gap: 3px;
-  padding: 4px 4px 0;
-  overflow-x: auto;
+  min-width: 0;
+  flex: 0 1 auto;
   scrollbar-width: none;
   -webkit-app-region: no-drag;
+}
+
+#tabs::-webkit-scrollbar {
+  display: none;
+}
+
+/* Scrolling strip: natural tab widths, the row travels instead of squashing. */
+body[data-tab-layout="scroll"] #tabs {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-behavior: smooth;
+}
+
+body[data-tab-layout="stack"] #tabs {
+  flex-wrap: wrap;
+  align-items: flex-start;
+  align-content: flex-start;
+  row-gap: 3px;
+  max-height: calc(var(--tab-stack-rows) * var(--tab-row-h));
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+/* Wrapped rows are free-standing pills — the "joined to the view" bottom edge
+   only reads correctly for the single row that touches it. */
+body[data-tab-layout="stack"] .tab {
+  height: var(--tab-h);
+  border-radius: 6px;
+  margin-bottom: 0;
+}
+
+body[data-tab-layout="stack"] .tab.active {
+  border-bottom-color: var(--border);
+}
+
+/* Header controls stay on the first row rather than floating mid-header. */
+body[data-tab-layout="stack"] #new-tab,
+body[data-tab-layout="stack"] #header-usage,
+body[data-tab-layout="stack"] #header-activity,
+body[data-tab-layout="stack"] #chrome-actions {
+  align-self: flex-start;
+  margin-top: 4px;
+}
+
+body[data-tab-layout="menu"] #tabs {
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+
+/* Tabs never squash below their natural width in any mode; overflow is the
+   strip's problem, not the label's. */
+.tab,
+.tab-nudge,
+#tab-overflow-chip {
+  flex: 0 0 auto;
+}
+
+.tab-condensed {
+  display: none !important;
+}
+
+.tab-nudge,
+#tab-overflow-chip {
+  align-self: center;
+  position: relative;
+  top: 2px;
+  height: 24px;
+  min-width: 22px;
+  padding: 0 6px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  cursor: default;
+  -webkit-app-region: no-drag;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tab-nudge:hover,
+#tab-overflow-chip:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: var(--border);
+  color: var(--fg);
+}
+
+.tab-nudge[hidden],
+#tab-overflow-chip[hidden] {
+  display: none;
+}
+
+#tab-overflow-chip {
+  font-size: 11px;
+  font-weight: 600;
+  font-family: var(--mono);
+  background: var(--bg-tab);
+  border-color: var(--border);
+  color: var(--fg-dim);
 }
 
 #drag-region {
   flex: 1;
   min-width: 24px;
-  height: 100%;
+  height: var(--chrome-h);
   -webkit-app-region: drag;
 }
 
@@ -219,8 +349,8 @@ button:active {
 }
 
 .tab-app-icon {
-  width: 14px;
-  height: 14px;
+  width: 17px;
+  height: 17px;
   flex: 0 0 auto;
   object-fit: contain;
   border-radius: 3px;
@@ -401,6 +531,20 @@ button:active {
   font-size: 12px;
 }
 
+#chrome-actions {
+  align-self: center;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: auto;
+}
+
+.chrome-actions-row {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
 #btn-recent-folders,
 #btn-recent-chats,
 #btn-settings,
@@ -409,8 +553,7 @@ button:active {
 #btn-quit {
   align-self: center;
   flex: 0 0 auto;
-  /* Match the tab strip's optical center (chrome has 4px top padding). */
-  margin-top: 4px;
+  margin-top: 0;
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -497,7 +640,7 @@ body.hide-top-button-labels .btn-chrome-glyph {
 #btn-top-menu {
   align-self: center;
   flex: 0 0 auto;
-  margin-top: 4px;
+  margin-top: 0;
   display: none;
   align-items: center;
   gap: 6px;
@@ -3048,6 +3191,11 @@ body.hide-bottom-button-labels #dock-change-dir .btn-icon {
 
 .settings-font-row {
   display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .settings-pos-row {
   display: flex;
   align-items: center;
@@ -3147,10 +3295,6 @@ body.hide-bottom-button-labels #dock-change-dir .btn-icon {
 
 .settings-slider:active::-webkit-slider-thumb {
   transform: scale(1.15);
-}
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
 }
 
 .settings-font-label {
@@ -4826,6 +4970,171 @@ body.hide-bottom-button-labels #dock-change-dir .btn-icon {
   margin: 4px 6px;
 }
 
+/* Tab switcher — the `+N` overflow menu for the condensed tab layout. */
+.tab-switcher-popover {
+  width: 340px;
+  max-width: 94vw;
+  max-height: 460px;
+}
+
+.tab-switcher-header {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.tab-switcher-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+}
+
+.tab-switcher-filter {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 5px 8px;
+  font: inherit;
+  font-size: 12px;
+  outline: none;
+}
+
+.tab-switcher-filter:focus {
+  border-color: var(--accent);
+}
+
+.tab-switcher-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  overflow-y: auto;
+}
+
+.tab-switcher-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+}
+
+.tab-switcher-row:hover {
+  background: var(--bg-tab);
+  border-color: var(--border);
+}
+
+.tab-switcher-row.active {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+}
+
+/* Tabs the strip had to hide read as secondary until you pick one. */
+.tab-switcher-row.condensed:not(.active) .tab-switcher-name {
+  color: var(--fg-dim);
+}
+
+.tab-switcher-open {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 7px 9px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tab-switcher-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--border);
+}
+
+.tab-switcher-dot.busy {
+  background: var(--accent);
+  animation: pulse 1.1s ease-in-out infinite;
+}
+
+.tab-switcher-dot.awaiting {
+  background: #ffd23f;
+}
+
+.tab-switcher-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.tab-switcher-name {
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tab-switcher-path {
+  font-size: 10px;
+  font-family: var(--mono);
+  color: var(--fg-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+}
+
+.tab-switcher-badge {
+  flex: 0 0 auto;
+  font-size: 9px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 1px 6px;
+}
+
+.tab-switcher-close {
+  flex: 0 0 auto;
+  border: none;
+  background: transparent;
+  color: var(--fg-dim);
+  font-size: 14px;
+  line-height: 1;
+  padding: 4px 8px;
+  margin-right: 4px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.tab-switcher-close:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--fg);
+}
+
+.tab-switcher-empty {
+  padding: 14px 12px;
+  font-size: 11px;
+  color: var(--fg-dim);
+  text-align: center;
+}
+
 .popover-header {
   display: flex;
   align-items: center;
@@ -5813,4 +6122,379 @@ body.dnd-hover #dock {
   white-space: pre-wrap;
   word-break: break-word;
   color: var(--fg);
+}
+
+/* Provider-backed quota tracker: positioned to the left of action buttons in header */
+#usage-tracker-anchor {
+  display: inline-flex;
+  align-items: center;
+}
+
+#usage-tracker {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  margin: 0;
+  color: var(--fg-dim);
+  -webkit-app-region: no-drag;
+}
+
+
+.usage-tracker-items {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.usage-tracker-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 9px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.usage-tracker-item:not(:last-child)::after {
+  content: "|";
+  margin-left: 2px;
+  color: var(--border);
+}
+
+.usage-tracker-percent {
+  color: var(--fg-dim);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.usage-tracker-percent.low {
+  color: #9ece6a;
+}
+
+.usage-tracker-percent.med {
+  color: #e0af68;
+}
+
+.usage-tracker-percent.high {
+  color: #f7768e;
+}
+/* Tracker labels intentionally stay out of compact chrome; titles/ARIA hold detail. */
+
+.usage-tracker-gauge {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 19px;
+  height: 22px;
+  overflow: hidden;
+  color: var(--accent);
+}
+
+.usage-tracker-gauge.low {
+  color: #9ece6a;
+}
+
+.usage-tracker-gauge.med {
+  color: #e0af68;
+}
+
+.usage-tracker-gauge.high {
+  color: #f7768e;
+}
+
+.usage-tracker-bar,
+.usage-tracker-battery {
+  border: 1px solid color-mix(in srgb, currentColor 65%, var(--border));
+  border-radius: 3px;
+  background: var(--bg);
+}
+
+.usage-tracker-bar {
+  width: 42px;
+  height: 12px;
+}
+
+.usage-tracker-battery::before {
+  content: "";
+  position: absolute;
+  top: -3px;
+  width: 8px;
+  height: 2px;
+  border-radius: 1px 1px 0 0;
+  background: currentColor;
+}
+
+.usage-tracker-fill {
+  position: absolute;
+  background: currentColor;
+}
+
+.usage-tracker-bar .usage-tracker-fill {
+  inset: 1px auto 1px 1px;
+  width: var(--usage-fill);
+  transition: width 180ms ease;
+}
+
+.usage-tracker-battery .usage-tracker-fill {
+  inset: auto 1px 1px;
+  height: var(--usage-remaining-fill);
+  transition: height 180ms ease;
+}
+
+.usage-tracker-icon {
+  position: relative;
+  z-index: 1;
+  width: 12px;
+  height: 12px;
+  object-fit: contain;
+  color: var(--fg);
+}
+
+.usage-tracker-icon svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.usage-tracker-circle {
+  width: 23px;
+  height: 23px;
+  overflow: visible;
+}
+
+.usage-tracker-ring {
+  position: absolute;
+  width: 23px;
+  height: 23px;
+  transform: rotate(-90deg);
+}
+
+.usage-tracker-ring-track,
+.usage-tracker-ring-progress {
+  fill: none;
+  stroke-width: 5;
+}
+
+.usage-tracker-ring-track {
+  stroke: var(--border);
+}
+
+.usage-tracker-ring-progress {
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-dasharray: 94.25;
+  stroke-dashoffset: var(--usage-ring-offset);
+  transition: stroke-dashoffset 180ms ease;
+}
+
+.usage-tracker-refresh {
+  width: 17px;
+  height: 17px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg-dim);
+  cursor: pointer;
+}
+
+.usage-tracker-refresh:hover:not(:disabled) {
+  background: var(--bg-tab);
+  color: var(--fg);
+}
+
+
+body.top-bar-as-menu #usage-tracker {
+  margin-right: 2px;
+}
+
+.settings-usage-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin: 4px 0 8px 0;
+}
+
+.settings-usage-preview-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--fg-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.settings-usage-preview-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-height: 32px;
+  padding: 4px 6px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.settings-usage-preview-empty {
+  font-size: 11px;
+  color: var(--fg-dim);
+  font-style: italic;
+  padding: 4px 6px;
+}
+
+.settings-usage-preview-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  background: var(--bg-tab);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 11px;
+  color: var(--fg);
+  user-select: none;
+}
+
+.settings-usage-preview-chip-title {
+  font-weight: 500;
+  font-size: 11px;
+}
+
+.settings-usage-preview-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.settings-usage-preview-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--bg);
+  color: var(--fg-dim);
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.settings-usage-preview-btn:hover:not(:disabled) {
+  background: var(--bg-raised);
+  color: var(--fg);
+  border-color: var(--accent);
+}
+
+.settings-usage-preview-btn:disabled {
+  opacity: 0.25;
+  cursor: default;
+}
+
+.settings-usage-quota {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: 12px;
+}
+
+.settings-usage-quota-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.settings-usage-reorder-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-tab);
+  color: var(--fg-dim);
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.settings-usage-reorder-btn:hover:not(:disabled) {
+  background: var(--bg-raised);
+  color: var(--fg);
+  border-color: var(--accent);
+}
+
+.settings-usage-reorder-btn:disabled {
+  opacity: 0.25;
+  cursor: default;
+}
+
+.settings-usage-add-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-tab);
+  color: var(--fg-dim);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.settings-usage-add-btn.active {
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.settings-usage-add-btn:hover {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+  color: var(--fg);
+}
+.settings-usage-provider {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.settings-usage-provider:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.settings-usage-icon-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.settings-inline-status {
+  margin: 0;
+  font-size: 11px;
+  color: var(--fg-dim);
 }

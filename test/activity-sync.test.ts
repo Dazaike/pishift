@@ -13,6 +13,7 @@ function activityCore(path: string): string {
   expect(to, `${path} is missing the activity-core end sentinel`).toBeGreaterThan(from);
   return text
     .slice(from, to)
+    .replace(/\r\n/g, "\n")
     .split("\n")
     .map((line) => (line.startsWith("export ") ? line.slice("export ".length) : line))
     .join("\n");

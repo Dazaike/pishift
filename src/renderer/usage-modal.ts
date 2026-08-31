@@ -5,11 +5,13 @@ export class UsageModal {
   readonly el: HTMLDivElement;
   private reports: ProviderUsageReport[] = [];
   private onOpenStatsCallback: () => void;
+  private readonly refreshReports: () => Promise<ProviderUsageReport[]>;
   private loading = false;
   private hasLoaded = false;
 
-  constructor(onOpenStats: () => void) {
+  constructor(onOpenStats: () => void, refreshReports: () => Promise<ProviderUsageReport[]>) {
     this.onOpenStatsCallback = onOpenStats;
+    this.refreshReports = refreshReports;
 
     this.el = document.createElement("div");
     this.el.id = "usage-popover";
@@ -69,10 +71,9 @@ export class UsageModal {
     this.loading = true;
     this.render();
     try {
-      this.reports = await window.pishift.getProviderUsage();
-      this.hasLoaded = true;
+      this.updateReports(await this.refreshReports());
     } catch {
-      this.reports = [];
+      // The tracker preserves its last successful reports for this modal.
     } finally {
       this.loading = false;
       this.render();

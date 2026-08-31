@@ -4,6 +4,8 @@ import {
   GLOW_ACTIVITY_LABELS,
   type GlowActivity,
   type PanelPosition,
+  type ProviderLimit,
+  type ProviderUsageReport,
 } from "../shared/ipc";
 import {
   DEFAULT_THEME_NAME,
@@ -26,6 +28,22 @@ import {
   type PasteMarkerStyle,
   type PasteModeSetting,
 } from "../shared/paste-attach";
+import {
+  DEFAULT_TAB_LAYOUT_MODE,
+  isTabLayoutMode,
+  TAB_LAYOUT_LABELS,
+  TAB_LAYOUT_MODES,
+  type TabLayoutMode,
+} from "../shared/tab-layout";
+import {
+  MIN_USAGE_TRACKER_REFRESH_MS,
+  USAGE_TRACKER_REFRESH_PRESETS,
+  type SettingsSectionId,
+  type UsageTrackerQuota,
+  type UsageTrackerSettings,
+  type UsageTrackerStyle,
+  usageTrackerQuotaKey,
+} from "../shared/usage-tracker";
 
 export class SettingsModal {
   readonly el: HTMLDivElement;
@@ -38,7 +56,11 @@ export class SettingsModal {
   private hideBottomButtonLabels: boolean;
   private collapseTopBarToMenu: boolean;
   private panelPosition: PanelPosition;
-  private themesCollapsed = false;
+  private tabLayoutMode: TabLayoutMode;
+  private usageTracker: UsageTrackerSettings;
+  private usageReports: ProviderUsageReport[];
+  private settingsSectionCollapsed: Partial<Record<SettingsSectionId, boolean>>;
+  private usageIconError = "";
   private onSelectCallback: (preset: ThemePreset) => void;
   private onToggleUsageHeader: (show: boolean) => void;
   private onFontChange: (family: string) => void;
@@ -49,6 +71,7 @@ export class SettingsModal {
   private onToggleHideBottomButtonLabels: (hide: boolean) => void;
   private onToggleCollapseTopBarToMenu: (collapse: boolean) => void;
   private onPanelPositionChange: (pos: PanelPosition) => void;
+  private onTabLayoutModeChange: (mode: TabLayoutMode) => void;
   private pasteMode: PasteModeSetting;
   private onPasteModeChange: (mode: PasteModeSetting) => void;
   private pasteMarkerStyle: PasteMarkerStyle;
@@ -64,6 +87,11 @@ export class SettingsModal {
   private onDoneSoundVolumeChange: (volume: number) => void;
   private onPreviewDoneSound: () => void;
   private onScrollStepsChange: (steps: number) => void;
+  private onUsageTrackerChange: (settings: UsageTrackerSettings) => void;
+  private onSettingsSectionCollapsedChange: (
+    collapsed: Partial<Record<SettingsSectionId, boolean>>,
+  ) => void;
+  private onRefreshUsage: () => Promise<void>;
 
   constructor(opts: {
     initialThemeName: string | undefined;
@@ -85,6 +113,8 @@ export class SettingsModal {
     onToggleHideBottomButtonLabels: (hide: boolean) => void;
     onToggleCollapseTopBarToMenu: (collapse: boolean) => void;
     onPanelPositionChange: (pos: PanelPosition) => void;
+    tabLayoutMode: TabLayoutMode | undefined;
+    onTabLayoutModeChange: (mode: TabLayoutMode) => void;
     initialScrollSteps: number | undefined;
     onScrollStepsChange: (steps: number) => void;
     pasteMode: PasteModeSetting | undefined;
@@ -100,6 +130,14 @@ export class SettingsModal {
     onPasteMarkerPaintChange: (paint: PasteMarkerPaint) => void;
     pasteMarkerPulse: boolean | undefined;
     onTogglePasteMarkerPulse: (enabled: boolean) => void;
+    usageTracker: UsageTrackerSettings;
+    usageReports: ProviderUsageReport[];
+    settingsSectionCollapsed: Partial<Record<SettingsSectionId, boolean>>;
+    onUsageTrackerChange: (settings: UsageTrackerSettings) => void;
+    onSettingsSectionCollapsedChange: (
+      collapsed: Partial<Record<SettingsSectionId, boolean>>,
+    ) => void;
+    onRefreshUsage: () => Promise<void>;
   }) {
     this.currentPreset = getThemeByName(opts.initialThemeName ?? DEFAULT_THEME_NAME);
     this.showUsageInHeader = opts.showUsageInHeader ?? true;
@@ -110,6 +148,10 @@ export class SettingsModal {
     this.hideBottomButtonLabels = opts.hideBottomButtonLabels ?? false;
     this.collapseTopBarToMenu = opts.collapseTopBarToMenu ?? false;
     this.panelPosition = opts.panelPosition ?? "top-right";
+    this.tabLayoutMode = opts.tabLayoutMode ?? DEFAULT_TAB_LAYOUT_MODE;
+    this.usageTracker = opts.usageTracker;
+    this.usageReports = opts.usageReports;
+    this.settingsSectionCollapsed = opts.settingsSectionCollapsed;
     this.onSelectCallback = opts.onSelect;
     this.onToggleUsageHeader = opts.onToggleUsageHeader;
     this.onFontChange = opts.onFontChange;
@@ -120,6 +162,7 @@ export class SettingsModal {
     this.onToggleHideBottomButtonLabels = opts.onToggleHideBottomButtonLabels;
     this.onToggleCollapseTopBarToMenu = opts.onToggleCollapseTopBarToMenu;
     this.onPanelPositionChange = opts.onPanelPositionChange;
+    this.onTabLayoutModeChange = opts.onTabLayoutModeChange;
     this.scrollSteps = clampScrollSteps(opts.initialScrollSteps ?? DEFAULT_SCROLL_STEPS);
     this.onScrollStepsChange = opts.onScrollStepsChange;
     this.pasteMode = opts.pasteMode ?? "ask";
@@ -136,6 +179,9 @@ export class SettingsModal {
     this.onPasteMarkerPaintChange = opts.onPasteMarkerPaintChange;
     this.pasteMarkerPulse = opts.pasteMarkerPulse ?? true;
     this.onTogglePasteMarkerPulse = opts.onTogglePasteMarkerPulse;
+    this.onUsageTrackerChange = opts.onUsageTrackerChange;
+    this.onSettingsSectionCollapsedChange = opts.onSettingsSectionCollapsedChange;
+    this.onRefreshUsage = opts.onRefreshUsage;
     this.el = document.createElement("div");
     this.el.id = "settings-backdrop";
     this.el.hidden = true;
@@ -168,6 +214,11 @@ export class SettingsModal {
     this.render();
   }
 
+  setUsageReports(reports: ProviderUsageReport[]): void {
+    this.usageReports = reports;
+    if (this.isOpen) this.render();
+  }
+
   syncState(state: {
     themeName?: string;
     showUsageInHeader?: boolean;
@@ -178,6 +229,7 @@ export class SettingsModal {
     hideBottomButtonLabels?: boolean;
     collapseTopBarToMenu?: boolean;
     panelPosition?: PanelPosition;
+    tabLayoutMode?: TabLayoutMode;
     scrollSteps?: number;
     pasteMode?: PasteModeSetting;
     pasteMarkerStyle?: PasteMarkerStyle;
@@ -185,6 +237,9 @@ export class SettingsModal {
     pasteMarkerPulse?: boolean;
     doneSoundEnabled?: boolean;
     doneSoundVolume?: number;
+    usageTracker?: UsageTrackerSettings;
+    usageReports?: ProviderUsageReport[];
+    settingsSectionCollapsed?: Partial<Record<SettingsSectionId, boolean>>;
   }): void {
     if (state.themeName) {
       this.currentPreset = getThemeByName(state.themeName);
@@ -213,6 +268,9 @@ export class SettingsModal {
     if (state.panelPosition) {
       this.panelPosition = state.panelPosition;
     }
+    if (isTabLayoutMode(state.tabLayoutMode)) {
+      this.tabLayoutMode = state.tabLayoutMode;
+    }
     if (typeof state.scrollSteps === "number") {
       this.scrollSteps = clampScrollSteps(state.scrollSteps);
     }
@@ -234,6 +292,57 @@ export class SettingsModal {
     if (typeof state.doneSoundVolume === "number") {
       this.doneSoundVolume = clampVolume(state.doneSoundVolume);
     }
+    if (state.usageTracker) {
+      this.usageTracker = state.usageTracker;
+    }
+    if (state.usageReports) {
+      this.usageReports = state.usageReports;
+    }
+    if (state.settingsSectionCollapsed) {
+      this.settingsSectionCollapsed = state.settingsSectionCollapsed;
+    }
+  }
+
+  private toggleSection(id: SettingsSectionId): void {
+    const collapsed = !this.settingsSectionCollapsed[id];
+    this.settingsSectionCollapsed = { ...this.settingsSectionCollapsed, [id]: collapsed };
+    this.onSettingsSectionCollapsedChange(this.settingsSectionCollapsed);
+    this.render();
+    if (id === "usage-tracker" && !collapsed) {
+      void this.onRefreshUsage().finally(() => this.render());
+    }
+  }
+
+  private sectionHeader(id: SettingsSectionId, title: string, description: string): HTMLDivElement {
+    const collapsed = this.settingsSectionCollapsed[id] === true;
+    const header = document.createElement("div");
+    header.className = "settings-section-header clickable-header";
+    header.setAttribute("role", "button");
+    header.tabIndex = 0;
+    header.setAttribute("aria-expanded", String(!collapsed));
+
+    const row = document.createElement("div");
+    row.className = "settings-title-row";
+    const chevron = document.createElement("span");
+    chevron.className = "settings-chevron";
+    chevron.textContent = collapsed ? "▶" : "▼";
+    const heading = document.createElement("h3");
+    heading.className = "settings-section-title";
+    heading.textContent = title;
+    row.append(chevron, heading);
+
+    const desc = document.createElement("span");
+    desc.className = "settings-desc";
+    desc.textContent = collapsed ? `${title} collapsed (click to expand)` : description;
+    header.append(row, desc);
+    header.addEventListener("click", () => this.toggleSection(id));
+    header.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        this.toggleSection(id);
+      }
+    });
+    return header;
   }
 
   private render(): void {
@@ -261,52 +370,14 @@ export class SettingsModal {
     const body = document.createElement("div");
     body.className = "settings-body";
 
-    // Section 1: Themes (Collapsible)
+    // Appearance keeps color themes and typography together.
     const themeSection = document.createElement("section");
     themeSection.className = "settings-section";
-
-    const themeHeader = document.createElement("div");
-    themeHeader.className = "settings-section-header clickable-header";
-    themeHeader.setAttribute("role", "button");
-    themeHeader.tabIndex = 0;
-
-    const themeTitleRow = document.createElement("div");
-    themeTitleRow.className = "settings-title-row";
-
-    const chevron = document.createElement("span");
-    chevron.className = "settings-chevron";
-    chevron.textContent = this.themesCollapsed ? "\u25B6" : "\u25BC";
-
-    const themeTitle = document.createElement("h3");
-    themeTitle.className = "settings-section-title";
-    themeTitle.textContent = "Color Themes";
-
-    const activeThemeBadge = document.createElement("span");
-    activeThemeBadge.className = "settings-active-theme-pill";
-    activeThemeBadge.textContent = this.currentPreset.name;
-
-    themeTitleRow.append(chevron, themeTitle, activeThemeBadge);
-
-    const themeDesc = document.createElement("span");
-    themeDesc.className = "settings-desc";
-    themeDesc.textContent = this.themesCollapsed
-      ? "Themes collapsed (click to expand)"
-      : "Click a theme to apply it instantly to the window and terminal.";
-
-    themeHeader.append(themeTitleRow, themeDesc);
-
-    themeHeader.addEventListener("click", () => {
-      this.themesCollapsed = !this.themesCollapsed;
-      this.render();
-    });
-
-    themeHeader.addEventListener("keydown", (ev) => {
-      if (ev.key === "Enter" || ev.key === " ") {
-        ev.preventDefault();
-        this.themesCollapsed = !this.themesCollapsed;
-        this.render();
-      }
-    });
+    const themeHeader = this.sectionHeader(
+      "appearance",
+      "Appearance / Themes",
+      "Choose the terminal palette and font family.",
+    );
 
     const themeList = document.createElement("div");
     themeList.className = "theme-list";
@@ -391,11 +462,7 @@ export class SettingsModal {
       themeList.appendChild(card);
     }
 
-    if (!this.themesCollapsed) {
-      themeSection.append(themeHeader, themeList);
-    } else {
-      themeSection.append(themeHeader);
-    }
+    themeSection.append(themeHeader);
 
     // Section 2: Typography
     const fontSection = document.createElement("section");
@@ -430,20 +497,21 @@ export class SettingsModal {
     fontInput.addEventListener("change", onFontUpdate);
     fontRow.append(fontLabel, fontInput);
     fontSection.append(fontHeader, fontRow);
+    if (!this.settingsSectionCollapsed.appearance) {
+      themeSection.append(themeList, fontSection);
+    }
 
     // Section 3: Composer Glow Colors
     const activitySection = this.renderActivityColors();
 
-    // Section 4: Interface Options
+    // Interface contains chrome, overflow, and completion behavior.
     const interfaceSection = document.createElement("section");
     interfaceSection.className = "settings-section";
-
-    const interfaceHeader = document.createElement("div");
-    interfaceHeader.className = "settings-section-header";
-    const interfaceTitle = document.createElement("h3");
-    interfaceTitle.className = "settings-section-title";
-    interfaceTitle.textContent = "Interface Options";
-    interfaceHeader.append(interfaceTitle);
+    const interfaceHeader = this.sectionHeader(
+      "interface",
+      "Interface",
+      "Configure chrome, menus, tab overflow, and completion feedback.",
+    );
 
     const optionsList = document.createElement("div");
     optionsList.className = "settings-options-list";
@@ -532,7 +600,30 @@ export class SettingsModal {
     });
     posRow.append(posLabel, posSelect);
 
-    // Option 6: Wheel scroll steps
+    // Option 6: How the tab strip copes with many open sessions
+    const tabLayoutRow = document.createElement("div");
+    tabLayoutRow.className = "settings-pos-row";
+    const tabLayoutLabel = document.createElement("label");
+    tabLayoutLabel.className = "settings-pos-label";
+    tabLayoutLabel.textContent = "Too Many Tabs";
+
+    const tabLayoutSelect = document.createElement("select");
+    tabLayoutSelect.className = "settings-select";
+    for (const mode of TAB_LAYOUT_MODES) {
+      const el = document.createElement("option");
+      el.value = mode;
+      el.textContent = TAB_LAYOUT_LABELS[mode];
+      if (mode === this.tabLayoutMode) el.selected = true;
+      tabLayoutSelect.appendChild(el);
+    }
+    tabLayoutSelect.addEventListener("change", () => {
+      if (!isTabLayoutMode(tabLayoutSelect.value)) return;
+      this.tabLayoutMode = tabLayoutSelect.value;
+      this.onTabLayoutModeChange(this.tabLayoutMode);
+    });
+    tabLayoutRow.append(tabLayoutLabel, tabLayoutSelect);
+
+    // Option 7: Wheel scroll steps
     const scrollRow = document.createElement("div");
     scrollRow.className = "settings-slider-row";
     const scrollLabel = document.createElement("label");
@@ -559,7 +650,7 @@ export class SettingsModal {
     scrollHead.append(scrollLabel, scrollValue);
     scrollRow.append(scrollHead, scrollInput);
 
-    // Option 7: How long pastes attach
+    // Option 8: How long pastes attach
     const pasteRow = document.createElement("div");
     pasteRow.className = "settings-pos-row";
     const pasteLabel = document.createElement("label");
@@ -588,7 +679,7 @@ export class SettingsModal {
     });
     pasteRow.append(pasteLabel, pasteSelect);
 
-    // Option 8: How the collapsed paste looks in the composer
+    // Option 9: How the collapsed paste looks in the composer
     const markerRow = document.createElement("div");
     markerRow.className = "settings-pos-row";
     const markerLabel = document.createElement("label");
@@ -618,7 +709,7 @@ export class SettingsModal {
     });
     markerRow.append(markerLabel, markerSelect);
 
-    // Option 9: How that marker is painted
+    // Option 10: How that marker is painted
     const paintRow = document.createElement("div");
     paintRow.className = "settings-pos-row";
     const paintLabel = document.createElement("label");
@@ -648,7 +739,7 @@ export class SettingsModal {
     });
     paintRow.append(paintLabel, paintSelect);
 
-    // Option 10: Flash the marker as it lands
+    // Option 11: Flash the marker as it lands
     const pulseLabel = document.createElement("label");
     pulseLabel.className = "settings-check-label";
     const pulseCheck = document.createElement("input");
@@ -662,7 +753,7 @@ export class SettingsModal {
     pulseText.textContent = "Flash the Marker When a Paste Lands";
     pulseLabel.append(pulseCheck, pulseText);
 
-    // Option 11: Completion chime + its volume
+    // Option 12: Completion chime + its volume
     const doneSoundLabel = document.createElement("label");
     doneSoundLabel.className = "settings-check-label";
     const doneSoundCheck = document.createElement("input");
@@ -716,17 +807,23 @@ export class SettingsModal {
       bottomLabelsLabel,
       burgerMenuLabel,
       posRow,
+      tabLayoutRow,
       scrollRow,
-      pasteRow,
-      markerRow,
-      paintRow,
-      pulseLabel,
       doneSoundLabel,
       volumeRow,
     );
-    interfaceSection.append(interfaceHeader, optionsList);
+    if (!this.settingsSectionCollapsed.composer) {
+      activitySection.append(pasteRow, markerRow, paintRow, pulseLabel);
+    }
+    interfaceSection.append(interfaceHeader);
+    if (!this.settingsSectionCollapsed.interface) interfaceSection.append(optionsList);
 
-    body.append(themeSection, fontSection, activitySection, interfaceSection);
+    body.append(
+      themeSection,
+      activitySection,
+      this.renderUsageTrackerSection(),
+      interfaceSection,
+    );
 
     // Fixed Footer
     const footer = document.createElement("footer");
@@ -748,23 +845,25 @@ export class SettingsModal {
     const section = document.createElement("section");
     section.className = "settings-section";
 
-    const heading = document.createElement("div");
-    heading.className = "settings-section-header with-action";
-    const headingTitle = document.createElement("h3");
-    headingTitle.className = "settings-section-title";
-    headingTitle.textContent = "Composer Glow Colors";
+    const heading = this.sectionHeader(
+      "composer",
+      "Composer",
+      "Customize composer glow and paste treatment.",
+    );
 
     const resetBtn = document.createElement("button");
     resetBtn.type = "button";
     resetBtn.className = "settings-activity-reset";
     resetBtn.textContent = "Reset to defaults";
-    resetBtn.addEventListener("click", () => {
+    resetBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
       this.activityColors = { ...DEFAULT_ACTIVITY_COLORS };
       this.onResetActivityColors();
       this.render();
     });
-    heading.append(headingTitle, resetBtn);
-
+    if (!this.settingsSectionCollapsed.composer) {
+      heading.append(resetBtn);
+    }
     const grid = document.createElement("div");
     grid.className = "settings-activity-grid";
     for (const key of GLOW_ACTIVITIES) {
@@ -800,7 +899,485 @@ export class SettingsModal {
     tabsText.textContent = "Also color tab busy indicators by activity";
     tabsToggle.append(tabsCheck, tabsText);
 
-    section.append(heading, grid, tabsToggle);
+    section.append(heading);
+    if (!this.settingsSectionCollapsed.composer) section.append(grid, tabsToggle);
     return section;
   }
+
+  private updateUsageTracker(next: UsageTrackerSettings): void {
+    this.usageTracker = next;
+    this.onUsageTrackerChange(next);
+  }
+
+  private renderUsageTrackerSection(): HTMLElement {
+    const section = document.createElement("section");
+    section.className = "settings-section";
+    section.append(
+      this.sectionHeader(
+        "usage-tracker",
+        "Usage Tracker",
+        "Select live provider quotas to show beside Recent Chats.",
+      ),
+    );
+    if (this.settingsSectionCollapsed["usage-tracker"]) return section;
+
+    const content = document.createElement("div");
+    content.className = "settings-options-list";
+    const enabledLabel = document.createElement("label");
+    enabledLabel.className = "settings-check-label";
+    const enabled = document.createElement("input");
+    enabled.type = "checkbox";
+    enabled.checked = this.usageTracker.enabled;
+    enabled.addEventListener("change", () => {
+      this.updateUsageTracker({ ...this.usageTracker, enabled: enabled.checked });
+    });
+    const enabledText = document.createElement("span");
+    enabledText.textContent = "Show provider quota trackers in the top bar";
+    enabledLabel.append(enabled, enabledText);
+    const iconPlacementRow = document.createElement("div");
+    iconPlacementRow.className = "settings-pos-row";
+    const iconPlacementLabel = document.createElement("label");
+    iconPlacementLabel.className = "settings-pos-label";
+    iconPlacementLabel.textContent = "Provider Icon";
+    const iconPlacement = document.createElement("select");
+    iconPlacement.className = "settings-select";
+    for (const [value, label] of [
+      ["inside", "Inside tracker"] as const,
+      ["beside", "Beside tracker"] as const,
+    ]) {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = label;
+      option.selected = this.usageTracker.iconPlacement === value;
+      iconPlacement.append(option);
+    }
+    iconPlacement.addEventListener("change", () => {
+      this.updateUsageTracker({
+        ...this.usageTracker,
+        iconPlacement: iconPlacement.value === "beside" ? "beside" : "inside",
+      });
+    });
+    iconPlacementRow.append(iconPlacementLabel, iconPlacement);
+    const percentLabel = document.createElement("label");
+    percentLabel.className = "settings-check-label";
+    const percent = document.createElement("input");
+    percent.type = "checkbox";
+    percent.checked = this.usageTracker.showPercent;
+    percent.addEventListener("change", () => {
+      this.updateUsageTracker({ ...this.usageTracker, showPercent: percent.checked });
+    });
+    const percentText = document.createElement("span");
+    percentText.textContent = "Show percentage beside each tracker";
+    percentLabel.append(percent, percentText);
+
+
+
+    const intervalRow = document.createElement("div");
+    intervalRow.className = "settings-pos-row";
+    const intervalLabel = document.createElement("label");
+    intervalLabel.className = "settings-pos-label";
+    intervalLabel.textContent = "Refresh";
+    const interval = document.createElement("select");
+    interval.className = "settings-select";
+    const custom = !(
+      this.usageTracker.refreshIntervalMs === null ||
+      USAGE_TRACKER_REFRESH_PRESETS.includes(
+        this.usageTracker.refreshIntervalMs as (typeof USAGE_TRACKER_REFRESH_PRESETS)[number],
+      )
+    );
+    for (const [value, label] of [
+      ...USAGE_TRACKER_REFRESH_PRESETS.map((value) => [String(value), `${value / 1000}s`] as const),
+      ["manual", "Manual"] as const,
+      ["custom", "Custom"] as const,
+    ]) {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = label;
+      option.selected =
+        (value === "manual" && this.usageTracker.refreshIntervalMs === null) ||
+        (value === "custom" && custom) ||
+        value === String(this.usageTracker.refreshIntervalMs);
+      interval.append(option);
+    }
+    interval.addEventListener("change", () => {
+      if (interval.value === "manual") {
+        this.updateUsageTracker({ ...this.usageTracker, refreshIntervalMs: null });
+      } else if (interval.value === "custom") {
+        this.updateUsageTracker({
+          ...this.usageTracker,
+          refreshIntervalMs: Math.max(MIN_USAGE_TRACKER_REFRESH_MS, 60_000),
+        });
+      } else {
+        this.updateUsageTracker({
+          ...this.usageTracker,
+          refreshIntervalMs: Math.max(MIN_USAGE_TRACKER_REFRESH_MS, Number(interval.value)),
+        });
+      }
+      this.render();
+    });
+    intervalRow.append(intervalLabel, interval);
+
+    const customRow = document.createElement("div");
+    customRow.className = "settings-pos-row";
+    customRow.hidden = !custom;
+    const customLabel = document.createElement("label");
+    customLabel.className = "settings-pos-label";
+    customLabel.textContent = `Custom seconds (minimum ${MIN_USAGE_TRACKER_REFRESH_MS / 1000})`;
+    const customInput = document.createElement("input");
+    customInput.type = "number";
+    customInput.className = "settings-font-input";
+    customInput.min = String(MIN_USAGE_TRACKER_REFRESH_MS / 1000);
+    customInput.step = "1";
+    customInput.value = String(Math.round((this.usageTracker.refreshIntervalMs ?? 60_000) / 1000));
+    customInput.addEventListener("change", () => {
+      const seconds = Math.max(MIN_USAGE_TRACKER_REFRESH_MS / 1000, Number(customInput.value) || 0);
+      this.updateUsageTracker({ ...this.usageTracker, refreshIntervalMs: seconds * 1000 });
+      customInput.value = String(seconds);
+    });
+    customRow.append(customLabel, customInput);
+
+    const refreshButton = document.createElement("button");
+    refreshButton.type = "button";
+    refreshButton.className = "settings-sound-preview";
+    refreshButton.textContent = "Refresh live quotas";
+    refreshButton.addEventListener("click", () => void this.onRefreshUsage().finally(() => this.render()));
+    content.append(
+      enabledLabel,
+      iconPlacementRow,
+      percentLabel,
+      intervalRow,
+      customRow,
+      refreshButton,
+    );
+
+    // Collect all available quotas from reports
+    const reportQuotas = new Map<string, { report: ProviderUsageReport; limit: ProviderLimit }>();
+    for (const report of this.usageReports) {
+      if (report.limits.length === 0) continue;
+      for (const limit of report.limits) {
+        const key = usageTrackerQuotaKey({
+          provider: report.provider,
+          account: report.account,
+          label: limit.label,
+        });
+        reportQuotas.set(key, { report, limit });
+      }
+    }
+
+    type QuotaItem = {
+      key: string;
+      quota: UsageTrackerQuota;
+      report: ProviderUsageReport;
+      limit: ProviderLimit;
+    };
+
+    const orderedItems: QuotaItem[] = [];
+    const seenKeys = new Set<string>();
+
+    for (const quota of this.usageTracker.quotas) {
+      const key = usageTrackerQuotaKey(quota);
+      const match = reportQuotas.get(key);
+      if (match) {
+        orderedItems.push({ key, quota: { ...quota }, report: match.report, limit: match.limit });
+        seenKeys.add(key);
+      }
+    }
+
+    for (const [key, match] of reportQuotas) {
+      if (!seenKeys.has(key)) {
+        orderedItems.push({
+          key,
+          quota: {
+            provider: match.report.provider,
+            ...(match.report.account ? { account: match.report.account } : {}),
+            label: match.limit.label,
+            enabled: false,
+            style: "bar",
+          },
+          report: match.report,
+          limit: match.limit,
+        });
+      }
+    }
+
+    const saveAll = (nextItems: QuotaItem[]): void => {
+      const quotas = nextItems.map((item) => item.quota);
+      this.updateUsageTracker({ ...this.usageTracker, quotas });
+      this.render();
+    };
+
+    const swapItems = (idxA: number, idxB: number): void => {
+      if (idxA < 0 || idxA >= orderedItems.length || idxB < 0 || idxB >= orderedItems.length) return;
+      const next = [...orderedItems];
+      const temp = next[idxA];
+      next[idxA] = next[idxB];
+      next[idxB] = temp;
+      saveAll(next);
+    };
+
+    // Live Preview Bar
+    const previewContainer = document.createElement("div");
+    previewContainer.className = "settings-usage-preview";
+
+    const previewHead = document.createElement("div");
+    previewHead.className = "settings-usage-preview-head";
+    previewHead.textContent = "Live Top Bar Preview";
+
+    const previewStrip = document.createElement("div");
+    previewStrip.className = "settings-usage-preview-strip";
+
+    const activeItems = orderedItems.filter((item) => item.quota.enabled);
+    if (activeItems.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "settings-usage-preview-empty";
+      empty.textContent = "No active providers in top bar — enable quotas below to show them.";
+      previewStrip.append(empty);
+    } else {
+      activeItems.forEach((item, activeIndex) => {
+        const chip = document.createElement("div");
+        chip.className = "settings-usage-preview-chip";
+
+        const leftBtn = document.createElement("button");
+        leftBtn.type = "button";
+        leftBtn.className = "settings-usage-preview-btn";
+        leftBtn.title = "Move earlier in top bar";
+        leftBtn.textContent = "◀";
+        leftBtn.disabled = activeIndex === 0;
+        leftBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const targetItem = activeItems[activeIndex - 1];
+          const currIdx = orderedItems.indexOf(item);
+          const targetIdx = orderedItems.indexOf(targetItem);
+          swapItems(currIdx, targetIdx);
+        });
+
+        if (this.usageTracker.iconPlacement === "beside") {
+          chip.append(this.renderMiniIcon(item.report.provider));
+        }
+
+        const usedPercent = Math.min(100, Math.max(0, item.limit.usedPercent));
+        const tier = usedPercent >= 80 ? "high" : usedPercent >= 50 ? "med" : "low";
+        if (this.usageTracker.showPercent) {
+          const percent = document.createElement("span");
+          percent.className = `usage-tracker-percent ${tier}`;
+          percent.textContent = `${Math.round(usedPercent)}%`;
+          chip.append(percent);
+        }
+
+        chip.append(this.renderPreviewGauge(item.quota, item.limit, item.report.provider));
+
+        const title = document.createElement("span");
+        title.className = "settings-usage-preview-chip-title";
+        title.textContent = `${item.report.providerName} ${item.limit.label}`;
+        chip.append(title);
+
+        const rightBtn = document.createElement("button");
+        rightBtn.type = "button";
+        rightBtn.className = "settings-usage-preview-btn";
+        rightBtn.title = "Move later in top bar";
+        rightBtn.textContent = "▶";
+        rightBtn.disabled = activeIndex === activeItems.length - 1;
+        rightBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const targetItem = activeItems[activeIndex + 1];
+          const currIdx = orderedItems.indexOf(item);
+          const targetIdx = orderedItems.indexOf(targetItem);
+          swapItems(currIdx, targetIdx);
+        });
+
+        const nav = document.createElement("div");
+        nav.className = "settings-usage-preview-nav";
+        nav.append(leftBtn, rightBtn);
+        chip.append(nav);
+
+        previewStrip.append(chip);
+      });
+    }
+
+    previewContainer.append(previewHead, previewStrip);
+    content.append(previewContainer);
+
+    const listHead = document.createElement("div");
+    listHead.className = "settings-usage-preview-head";
+    listHead.style.marginTop = "8px";
+    listHead.textContent = "Provider Quotas";
+    content.append(listHead);
+
+    orderedItems.forEach((item, index) => {
+      const row = document.createElement("div");
+      row.className = "settings-usage-quota";
+
+      const addBtn = document.createElement("button");
+      addBtn.type = "button";
+      addBtn.className = `settings-usage-add-btn ${item.quota.enabled ? "active" : ""}`;
+      addBtn.textContent = item.quota.enabled ? "✓" : "+";
+      addBtn.title = item.quota.enabled ? "Enabled — click to disable" : "Disabled — click '+' to add to top bar";
+      addBtn.addEventListener("click", () => {
+        item.quota.enabled = !item.quota.enabled;
+        saveAll(orderedItems);
+      });
+
+      const main = document.createElement("div");
+      main.className = "settings-usage-quota-main";
+      const text = document.createElement("span");
+      text.textContent = `${item.report.providerName}${item.report.account ? ` (${item.report.account})` : ""} · ${item.limit.label} (${Math.round(item.limit.usedPercent)}%)`;
+      main.append(addBtn, text);
+
+      const upBtn = document.createElement("button");
+      upBtn.type = "button";
+      upBtn.className = "settings-usage-reorder-btn";
+      upBtn.textContent = "▲";
+      upBtn.title = "Move up";
+      upBtn.disabled = index === 0;
+      upBtn.addEventListener("click", () => swapItems(index, index - 1));
+
+      const downBtn = document.createElement("button");
+      downBtn.type = "button";
+      downBtn.className = "settings-usage-reorder-btn";
+      downBtn.textContent = "▼";
+      downBtn.title = "Move down";
+      downBtn.disabled = index === orderedItems.length - 1;
+      downBtn.addEventListener("click", () => swapItems(index, index + 1));
+
+      const reorderGroup = document.createElement("div");
+      reorderGroup.className = "settings-usage-preview-nav";
+      reorderGroup.append(upBtn, downBtn);
+
+      const style = document.createElement("select");
+      style.className = "settings-select";
+      for (const value of ["bar", "circle", "battery"] as const) {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = value[0].toUpperCase() + value.slice(1);
+        option.selected = item.quota.style === value;
+        style.append(option);
+      }
+      style.addEventListener("change", () => {
+        item.quota.style = style.value as UsageTrackerStyle;
+        saveAll(orderedItems);
+      });
+
+      row.append(main, reorderGroup, style);
+      content.append(row);
+    });
+
+    const providerIds = new Set([
+      ...this.usageReports.map((report) => report.provider),
+      ...Object.keys(this.usageTracker.providerIconUrls),
+    ]);
+    for (const provider of providerIds) {
+      const providerRow = document.createElement("div");
+      providerRow.className = "settings-usage-provider";
+      const title = document.createElement("span");
+      title.textContent = `${provider} icon`;
+      const row = document.createElement("div");
+      row.className = "settings-usage-icon-row";
+      const url = document.createElement("input");
+      url.type = "url";
+      url.className = "settings-font-input";
+      url.placeholder = "https://… or choose an image";
+      url.value = this.usageTracker.providerIconUrls[provider] ?? "";
+      url.addEventListener("change", () => {
+        const providerIconUrls = { ...this.usageTracker.providerIconUrls };
+        if (url.value.trim()) providerIconUrls[provider] = url.value.trim();
+        else delete providerIconUrls[provider];
+        this.updateUsageTracker({ ...this.usageTracker, providerIconUrls });
+      });
+      const file = document.createElement("input");
+      file.type = "file";
+      file.accept = "image/*";
+      file.hidden = true;
+      file.addEventListener("change", () => {
+        const selected = file.files?.[0];
+        if (!selected) return;
+        const reader = new FileReader();
+        reader.addEventListener("load", () => {
+          if (typeof reader.result !== "string") return;
+          this.usageIconError = "";
+          this.updateUsageTracker({
+            ...this.usageTracker,
+            providerIconUrls: { ...this.usageTracker.providerIconUrls, [provider]: reader.result },
+          });
+          this.render();
+        });
+        reader.addEventListener("error", () => {
+          this.usageIconError = "Could not read icon image.";
+          this.render();
+        });
+        reader.readAsDataURL(selected);
+      });
+      const choose = document.createElement("button");
+      choose.type = "button";
+      choose.className = "settings-sound-preview";
+      choose.textContent = "Select Image";
+      choose.addEventListener("click", () => file.click());
+      const reset = document.createElement("button");
+      reset.type = "button";
+      reset.className = "settings-sound-preview";
+      reset.textContent = "Reset";
+      reset.addEventListener("click", () => {
+        const providerIconUrls = { ...this.usageTracker.providerIconUrls };
+        delete providerIconUrls[provider];
+        this.updateUsageTracker({ ...this.usageTracker, providerIconUrls });
+        this.render();
+      });
+      row.append(url, file, choose, reset);
+      providerRow.append(title, row);
+      content.append(providerRow);
+    }
+    if (this.usageIconError) {
+      const status = document.createElement("p");
+      status.className = "settings-inline-status";
+      status.textContent = this.usageIconError;
+      content.append(status);
+    }
+    section.append(content);
+    return section;
+  }
+
+  private renderMiniIcon(provider: string): HTMLElement {
+    const override = this.usageTracker.providerIconUrls[provider];
+    if (override) {
+      const img = document.createElement("img");
+      img.className = "usage-tracker-icon";
+      img.src = override;
+      img.alt = "";
+      return img;
+    }
+    const span = document.createElement("span");
+    span.className = "usage-tracker-icon";
+    span.textContent = provider.slice(0, 1).toUpperCase();
+    return span;
+  }
+
+  private renderPreviewGauge(
+    quota: UsageTrackerQuota,
+    limit: ProviderLimit,
+    provider: string,
+  ): HTMLElement {
+    const usedPercent = Math.min(100, Math.max(0, limit.usedPercent));
+    const tier = usedPercent >= 80 ? "high" : usedPercent >= 50 ? "med" : "low";
+    const gauge = document.createElement("span");
+    gauge.className = `usage-tracker-gauge usage-tracker-${quota.style} ${tier}`;
+    gauge.style.setProperty("--usage-fill", `${usedPercent}%`);
+    gauge.style.setProperty("--usage-remaining-fill", `${100 - usedPercent}%`);
+    gauge.style.setProperty("--usage-ring-offset", String(94.25 * (1 - usedPercent / 100)));
+
+    if (quota.style === "circle") {
+      const ring = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      ring.setAttribute("class", "usage-tracker-ring");
+      ring.setAttribute("viewBox", "0 0 36 36");
+      ring.innerHTML = '<circle class="usage-tracker-ring-track" cx="18" cy="18" r="15" /><circle class="usage-tracker-ring-progress" cx="18" cy="18" r="15" />';
+      gauge.append(ring);
+    } else {
+      const fill = document.createElement("span");
+      fill.className = "usage-tracker-fill";
+      gauge.append(fill);
+    }
+    if (this.usageTracker.iconPlacement === "inside") {
+      gauge.append(this.renderMiniIcon(provider));
+    }
+    return gauge;
+  }
+
 }

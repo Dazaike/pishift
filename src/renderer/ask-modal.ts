@@ -49,8 +49,8 @@ export class AskModal {
     this.pending = pending;
     this.onSubmitCallback = onSubmit;
     this.onDismissCallback = onDismiss;
-    this.answerState = pending.questions.map((q) => ({
-      selected: new Set<number>(q.multi ? [] : q.recommended != null ? [q.recommended] : []),
+    this.answerState = pending.questions.map(() => ({
+      selected: new Set<number>(),
       customText: undefined,
     }));
     this.focusOtherIndex = null;
@@ -94,8 +94,14 @@ export class AskModal {
     if (missing >= 0) {
       const progress = this.el.querySelector<HTMLSpanElement>(".ask-progress");
       if (progress) {
+        const remaining =
+          this.pending.questions.length -
+          this.answerState.filter((_, index) => this.isAnswered(index)).length;
         progress.hidden = false;
-        progress.textContent = "Answer all questions first.";
+        progress.textContent =
+          remaining === 1
+            ? "1 question remaining — answer all first."
+            : `${remaining} questions remaining — answer all first.`;
         progress.classList.add("ask-progress-error");
       }
       this.el.querySelectorAll(".ask-question-block.missing").forEach((block) => {
@@ -103,7 +109,7 @@ export class AskModal {
       });
       const block = this.el.querySelector<HTMLElement>(`.ask-question-block[data-index="${missing}"]`);
       block?.classList.add("missing");
-      block?.scrollIntoView({ block: "nearest" });
+      block?.scrollIntoView?.({ block: "nearest" });
       this.syncCurrentQuestion();
       return;
     }
@@ -177,12 +183,26 @@ export class AskModal {
     if (!target) return;
     // Resize first so the sheet is already the right height as the scroll runs.
     this.applyQuestion(clamped);
-    target.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    target.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
   }
 
   private titleText(currentIndex: number): string {
     const total = this.pending?.questions.length ?? 0;
     return total > 1 ? `Question ${currentIndex + 1} of ${total}` : "Question";
+  }
+  private progressText(): string {
+    if (!this.pending) return "";
+    const total = this.pending.questions.length;
+    const answered = this.answerState.filter((_, index) => this.isAnswered(index)).length;
+    const remaining = total - answered;
+    return `${answered} of ${total} answered (${remaining} remaining)`;
+  }
+
+  private updateProgress(): void {
+    const progress = this.el.querySelector<HTMLSpanElement>(".ask-progress");
+    if (!progress || !this.pending) return;
+    progress.classList.remove("ask-progress-error");
+    progress.textContent = this.progressText();
   }
 
   private renderOptions(q: PendingAskQuestion, index: number, host: HTMLElement): void {
@@ -265,6 +285,7 @@ export class AskModal {
       });
       otherInput.addEventListener("input", () => {
         state.customText = otherInput.value;
+        this.updateProgress();
       });
       otherRow.appendChild(otherInput);
       if (this.focusOtherIndex === index) {
@@ -374,8 +395,7 @@ export class AskModal {
 
     const progress = document.createElement("span");
     progress.className = "ask-progress";
-    progress.textContent = `${this.answerState.filter((_, index) => this.isAnswered(index)).length} of ${total} answered`;
-    progress.hidden = total === 1;
+    progress.textContent = this.progressText();
 
     const submitBtn = document.createElement("button");
     submitBtn.type = "button";

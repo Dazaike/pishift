@@ -2,6 +2,11 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import type { PersistedState, TabState } from "../shared/ipc";
+import {
+  normalizeSettingsSectionCollapsed,
+  normalizeUsageTrackerSettings,
+} from "../shared/usage-tracker";
+import { isTabLayoutMode } from "../shared/tab-layout";
 
 const DEBOUNCE_MS = 500;
 
@@ -74,6 +79,13 @@ export class StateStore {
           raw.panelPosition === "top-right"
             ? raw.panelPosition
             : undefined,
+        tabLayoutMode: isTabLayoutMode(raw.tabLayoutMode) ? raw.tabLayoutMode : undefined,
+        usageTracker: raw.usageTracker
+          ? normalizeUsageTrackerSettings(raw.usageTracker)
+          : undefined,
+        settingsSectionCollapsed: raw.settingsSectionCollapsed
+          ? normalizeSettingsSectionCollapsed(raw.settingsSectionCollapsed)
+          : undefined,
         tabs,
         activeIndex: Math.min(
           Math.max(raw.activeIndex ?? 0, 0),
