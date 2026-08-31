@@ -14,6 +14,7 @@ import {
   type InstalledModel,
   type PanelPosition,
   type PendingAsk,
+  type ProviderUsageReport,
   type TabState,
   type TodoPhase,
 } from "../shared/ipc";
@@ -83,9 +84,28 @@ import { JobActivityModal } from "./job-activity-modal";
 import { RecentFoldersModal } from "./recent-folders-modal";
 import { RecentChatsModal } from "./recent-chats-modal";
 import { TopMenu } from "./top-menu";
+import { TabStrip, type TabStripEntry } from "./tab-strip";
+import {
+  DEFAULT_TAB_LAYOUT_MODE,
+  isTabLayoutMode,
+  type TabLayoutMode,
+} from "../shared/tab-layout";
+import {
+  DEFAULT_SETTINGS_SECTION_COLLAPSED,
+  DEFAULT_USAGE_TRACKER_SETTINGS,
+  normalizeSettingsSectionCollapsed,
+  normalizeUsageTrackerSettings,
+  type SettingsSectionId,
+  type UsageTrackerSettings,
+} from "../shared/usage-tracker";
+import { UsageTracker } from "./usage-tracker";
 const api = window.pishift;
 
 const tabsEl = document.getElementById("tabs") as HTMLDivElement;
+const tabStripEl = document.getElementById("tab-strip") as HTMLDivElement;
+const tabNudgeLeft = document.getElementById("tab-nudge-left") as HTMLButtonElement;
+const tabNudgeRight = document.getElementById("tab-nudge-right") as HTMLButtonElement;
+const tabOverflowChip = document.getElementById("tab-overflow-chip") as HTMLButtonElement;
 const viewsEl = document.getElementById("views") as HTMLDivElement;
 const newTabButton = document.getElementById("new-tab") as HTMLButtonElement;
 const settingsBtn = document.getElementById("btn-settings") as HTMLButtonElement;
@@ -93,6 +113,7 @@ const settingsImg = settingsBtn.querySelector<HTMLImageElement>("img.btn-icon");
 if (settingsImg) settingsImg.src = settingsIcon;
 const todoBtn = document.getElementById("btn-todo") as HTMLButtonElement;
 const recentFoldersBtn = document.getElementById("btn-recent-folders") as HTMLButtonElement;
+const usageTrackerAnchor = document.getElementById("usage-tracker-anchor") as HTMLDivElement;
 const recentChatsBtn = document.getElementById("btn-recent-chats") as HTMLButtonElement;
 const topMenuBtn = document.getElementById("btn-top-menu") as HTMLButtonElement | null;
 const relaunchBtn = document.getElementById("btn-relaunch") as HTMLButtonElement | null;
@@ -198,19 +219,68 @@ let pasteMarkerPaint: PasteMarkerPaint = "pill";
 let pasteMarkerPulse = true;
 let doneSoundEnabled = true;
 let doneSoundVolume = DEFAULT_DONE_SOUND_VOLUME;
+let tabLayoutMode: TabLayoutMode = DEFAULT_TAB_LAYOUT_MODE;
+let usageTrackerSettings: UsageTrackerSettings = {
+  ...DEFAULT_USAGE_TRACKER_SETTINGS,
+  quotas: [],
+  providerIconUrls: {},
+  iconPlacement: "inside",
+  showPercent: false,
+};
+let settingsSectionCollapsed: Partial<Record<SettingsSectionId, boolean>> = {
+  ...DEFAULT_SETTINGS_SECTION_COLLAPSED,
+};
 const doneSound = new CompletionSound(doneSoundEnabled, doneSoundVolume);
 
 function applyScrollSteps(steps: number): void {
   terminalScrollSteps = clampScrollSteps(steps);
   for (const tab of tabs) tab.view?.setScrollSteps(terminalScrollSteps);
 }
+/** Header control width feeds the tab strip's overflow budget, so re-plan. */
 function applyButtonLabelVisibility(): void {
   document.body.classList.toggle("hide-top-button-labels", hideTopButtonLabels);
   document.body.classList.toggle("hide-bottom-button-labels", hideBottomButtonLabels);
   document.body.classList.toggle("top-bar-as-menu", collapseTopBarToMenu);
+  tabStrip.invalidate();
+  renderTabs();
 }
 function applyPasteMarkerPaint(): void {
   document.body.dataset.pastePaint = pasteMarkerPaint;
+}
+
+/** Tab overflow behaviour (scrolling strip / stacked rows / `+N` menu). */
+const tabStrip = new TabStrip({
+  strip: tabStripEl,
+  scroller: tabsEl,
+  nudgeLeft: tabNudgeLeft,
+  nudgeRight: tabNudgeRight,
+  chip: tabOverflowChip,
+  entries: (): TabStripEntry[] =>
+    tabs.map((tab) => ({
+      key: tab.sessionNumber,
+      label: tabDisplayName(tab),
+      cwd: tab.cwd,
+      element: tab.button,
+      active: tab === active,
+      busy: tab.busy,
+      awaiting: tab.awaitingAsk || tab.awaitingPlanReview,
+      glow:
+        activityColorsOnTabs && tab.activity !== "idle" ? activityColors[tab.activity] : null,
+    })),
+  onActivate: (key) => {
+    const tab = tabs.find((t) => t.sessionNumber === key);
+    if (tab) activate(tab);
+  },
+  onClose: (key) => {
+    const tab = tabs.find((t) => t.sessionNumber === key);
+    if (tab) void requestCloseTab(tab);
+  },
+});
+
+function applyTabLayoutMode(mode: TabLayoutMode): void {
+  tabLayoutMode = mode;
+  tabStrip.setMode(mode);
+  queueUsageTrackerLayout(true);
 }
 let settingsModal: SettingsModal | null = null;
 let modelModal: ModelModal | null = null;
@@ -242,6 +312,8 @@ async function killJob(job: AsyncJob): Promise<void> {
   }
 }
 
+let usageTracker: UsageTracker | null = null;
+
 const todoPanel = new TodoPanel(
   (visible) => {
     todoPanelVisible = visible;
@@ -251,6 +323,7 @@ const todoPanel = new TodoPanel(
     todoPanelMode = mode;
     persist();
   },
+  () => usageTracker!.refresh(),
   (job) => {
     if (!jobActivityModal) {
       jobActivityModal = new JobActivityModal();
@@ -264,6 +337,45 @@ const todoPanel = new TodoPanel(
     killJob(job);
   },
 );
+function updateProviderReports(reports: ProviderUsageReport[]): void {
+  usageModal?.updateReports(reports);
+  todoPanel.setUsageReports(reports);
+  settingsModal?.setUsageReports(reports);
+  const top = reports.find((report) => report.limits.length > 0);
+  if (!top || !top.limits[0]) {
+    headerUsageText.textContent = reports.length ? `${reports.length} Providers Active` : "Usage · $0.00";
+    return;
+  }
+  headerUsageText.textContent = `${top.providerName} · ${top.limits[0].label} ${top.limits[0].usedPercent}%`;
+}
+
+let usageTrackerLayoutFrame: number | null = null;
+let usageTrackerLayoutNeedsReplan = false;
+
+function queueUsageTrackerLayout(replan: boolean): void {
+  usageTrackerLayoutNeedsReplan ||= replan;
+  if (usageTrackerLayoutFrame !== null) return;
+  usageTrackerLayoutFrame = window.requestAnimationFrame(() => {
+    usageTrackerLayoutFrame = null;
+    const needsReplan = usageTrackerLayoutNeedsReplan;
+    usageTrackerLayoutNeedsReplan = false;
+    placeUsageTracker();
+    if (!needsReplan) return;
+    tabStrip.invalidate();
+    tabStrip.sync();
+    placeUsageTracker();
+  });
+}
+
+usageTracker = new UsageTracker({
+  getProviderUsage: () => api.getProviderUsage(),
+  settings: usageTrackerSettings,
+  onReports: updateProviderReports,
+  onRender: () => {
+    placeUsageTracker();
+  },
+});
+usageTrackerAnchor.appendChild(usageTracker.el);
 
 const activityTab = new ActivityTab();
 
@@ -610,22 +722,17 @@ function updateHeaderUsageVisibility(): void {
   if (headerUsage) {
     headerUsage.style.display = showUsageInHeader ? "inline-flex" : "none";
   }
+  tabStrip.invalidate();
+  renderTabs();
 }
 
 async function refreshHeaderUsage(): Promise<void> {
+  if (!usageTracker) return;
   try {
-    const stats = await api.getProviderUsage();
-    if (stats && stats.length > 0) {
-      usageModal?.updateReports(stats);
-      const top = stats.find((s) => s.limits && s.limits.length > 0);
-      if (top && top.limits[0]) {
-        const l = top.limits[0];
-        headerUsageText.textContent = `${top.providerName} \u00b7 ${l.label} ${l.usedPercent}%`;
-      } else {
-        headerUsageText.textContent = `${stats.length} Providers Active`;
-      }
-    }
-  } catch {}
+    await usageTracker.refresh();
+  } catch {
+    // Retain the last provider summary while the tracker backs off.
+  }
 }
 
 
@@ -694,6 +801,9 @@ function persist(): void {
     hideBottomButtonLabels,
     doneSoundEnabled,
     doneSoundVolume,
+    tabLayoutMode,
+    usageTracker: usageTrackerSettings,
+    settingsSectionCollapsed,
   });
 }
 
@@ -719,9 +829,8 @@ function renderTabs(): void {
     tab.appIcon.style.display = isPiShift ? "inline-block" : "none";
     tab.button.classList.toggle("has-app-icon", isPiShift);
 
-    // Color tag badge
     const colorPreset = tab.colorTag
-      ? TAB_COLOR_PRESETS.find((p) => p.id === tab.colorTag)
+      ? TAB_COLOR_PRESETS.find((preset) => preset.id === tab.colorTag)
       : undefined;
     if (colorPreset) {
       tab.colorDot.style.backgroundColor = colorPreset.color;
@@ -730,13 +839,16 @@ function renderTabs(): void {
       tab.colorDot.style.display = "none";
     }
 
-    const source = tab.customTitle
-      ? "manual"
-      : cleanAutoTitle(tab.title)
-        ? "auto"
-        : "folder";
+    const source = tab.customTitle ? "manual" : cleanAutoTitle(tab.title) ? "auto" : "folder";
     tab.button.title = `${name} (${tab.cwd}) — ${source} · right-click for options · double-click to rename`;
   }
+  tabStrip.sync();
+  queueUsageTrackerLayout(true);
+}
+
+function placeUsageTracker(): void {
+  if (!usageTracker || usageTracker.el.parentElement === usageTrackerAnchor) return;
+  usageTrackerAnchor.appendChild(usageTracker.el);
 }
 function updateHeaderActivity(tab: Tab | null = active): void {
   if (!headerActivity || !headerActivityDot || !headerActivityText) return;
@@ -946,7 +1058,10 @@ function closeTab(tab: Tab): void {
   }
   if (tabs.length === 0) {
     void addTab();
+    return;
   }
+  // Closing an inactive tab skips activate(); the strip still needs re-laying out.
+  renderTabs();
 }
 
 function isTabBusy(tab: Tab): boolean {
@@ -1366,6 +1481,7 @@ function makeTab(cwd: string, customTitle?: string, colorTag?: string): Tab {
     for (const t of tabs) {
       tabsEl.appendChild(t.button);
     }
+    renderTabs();
     persist();
   });
 
@@ -1661,42 +1777,15 @@ const dock = new Dock({
   wantsTerminalArrows: () => active?.view?.wantsArrowKeys() ?? false,
   writeTerminalArrow: (ev) => active?.view?.writeArrow(ev) ?? false,
   setPlanTarget: (target: PlanTarget) => active?.plan.request(target, Date.now()),
-  openModel: () => {
-    if (!modelModal) {
-      modelModal = new ModelModal(
-        customModels,
-        active?.modelName ?? "gemini-3.7-flash",
-        (modelId, provider) => {
-          if (active?.view) {
-            const cmdArg =
-              provider && provider !== "generic" ? `${provider}/${modelId}` : modelId;
-            active.view.runSlash(`/m ${cmdArg}`);
-            active.modelName = modelId;
-            applyModelToDock(modelId, active.thinkingLevel, active);
-            persist();
-          }
-        },
-        (customs) => {
-          customModels = customs;
-          persist();
-        },
-      );
-      const modelWrap = document.getElementById("dock-model-wrap");
-      if (modelWrap) {
-        modelWrap.appendChild(modelModal.el);
-      } else {
-        const dockControls = document.getElementById("dock-controls");
-        if (dockControls) dockControls.appendChild(modelModal.el);
-        else document.body.appendChild(modelModal.el);
-      }
-    }
-    modelModal.toggle(active?.modelName);
-  },
+  openModel: () => openModelSelector(),
   openUsage: () => {
     if (!usageModal) {
-      usageModal = new UsageModal(() => {
-        if (active?.view) active.view.runSlash("/stats");
-      });
+      usageModal = new UsageModal(
+        () => {
+          if (active?.view) active.view.runSlash("/stats");
+        },
+        () => usageTracker!.refresh(),
+      );
       const usageWrap = document.getElementById("dock-usage-wrap");
       if (usageWrap) {
         usageWrap.appendChild(usageModal.el);
@@ -1790,12 +1879,43 @@ const dock = new Dock({
   },
 });
 
+function openModelSelector(): void {
+  if (!modelModal) {
+    modelModal = new ModelModal(
+      customModels,
+      active?.modelName ?? "gemini-3.7-flash",
+      (modelId, provider) => {
+        if (!active?.view) return;
+        const cmdArg = provider && provider !== "generic" ? `${provider}/${modelId}` : modelId;
+        active.view.runSlash(`/m ${cmdArg}`);
+        active.modelName = modelId;
+        applyModelToDock(modelId, active.thinkingLevel, active);
+        persist();
+      },
+      (customs) => {
+        customModels = customs;
+        persist();
+      },
+    );
+    const modelWrap = document.getElementById("dock-model-wrap");
+    if (modelWrap) {
+      modelWrap.appendChild(modelModal.el);
+    } else {
+      const dockControls = document.getElementById("dock-controls");
+      if (dockControls) dockControls.appendChild(modelModal.el);
+      else document.body.appendChild(modelModal.el);
+    }
+  }
+  modelModal.toggle(active?.modelName);
+}
+
 // Floating dock: keep terminal bottom padding in sync with dock height, but
 // only when clearance changes enough that xterm may gain/lose a row.
 {
   const dockEl = document.getElementById("dock");
   if (dockEl) {
     let lastClearance = -1;
+    let clearanceFrame: number | null = null;
     const syncDockClearance = (): void => {
       const rect = dockEl.getBoundingClientRect();
       const clearance = Math.ceil(rect.height + 26);
@@ -1806,8 +1926,15 @@ const dock = new Dock({
         tab.view?.refit();
       }
     };
+    const queueDockClearance = (): void => {
+      if (clearanceFrame !== null) return;
+      clearanceFrame = window.requestAnimationFrame(() => {
+        clearanceFrame = null;
+        syncDockClearance();
+      });
+    };
     syncDockClearance();
-    new ResizeObserver(() => syncDockClearance()).observe(dockEl);
+    new ResizeObserver(queueDockClearance).observe(dockEl);
   }
 }
 
@@ -2061,9 +2188,12 @@ headerUsage.addEventListener("click", () => {
 
 function dockHooksUsage(): void {
   if (!usageModal) {
-    usageModal = new UsageModal(() => {
-      if (active?.view) active.view.runSlash("/stats");
-    });
+    usageModal = new UsageModal(
+      () => {
+        if (active?.view) active.view.runSlash("/stats");
+      },
+      () => usageTracker!.refresh(),
+    );
     const usageWrap = document.getElementById("dock-usage-wrap");
     if (usageWrap) {
       usageWrap.appendChild(usageModal.el);
@@ -2206,6 +2336,11 @@ function openSettingsModal(): void {
         recentChatsModal?.setPanelPosition(pos);
         persist();
       },
+      tabLayoutMode,
+      onTabLayoutModeChange: (mode) => {
+        applyTabLayoutMode(mode);
+        persist();
+      },
       initialScrollSteps: terminalScrollSteps,
       onScrollStepsChange: (steps) => {
         applyScrollSteps(steps);
@@ -2246,6 +2381,21 @@ function openSettingsModal(): void {
         persist();
       },
       onPreviewDoneSound: () => doneSound.play(true),
+      usageTracker: usageTrackerSettings,
+      usageReports: [...(usageTracker?.currentReports ?? [])],
+      settingsSectionCollapsed,
+      onUsageTrackerChange: (settings) => {
+        usageTrackerSettings = normalizeUsageTrackerSettings(settings);
+        usageTracker?.updateSettings(usageTrackerSettings);
+        persist();
+      },
+      onSettingsSectionCollapsedChange: (collapsed) => {
+        settingsSectionCollapsed = normalizeSettingsSectionCollapsed(collapsed);
+        persist();
+      },
+      onRefreshUsage: async () => {
+        await usageTracker?.refresh();
+      },
     });
     document.body.appendChild(settingsModal.el);
   }
@@ -2259,6 +2409,7 @@ function openSettingsModal(): void {
     hideBottomButtonLabels,
     collapseTopBarToMenu,
     panelPosition,
+    tabLayoutMode,
     scrollSteps: terminalScrollSteps,
     pasteMode,
     pasteMarkerStyle,
@@ -2266,6 +2417,9 @@ function openSettingsModal(): void {
     pasteMarkerPulse,
     doneSoundEnabled,
     doneSoundVolume,
+    usageTracker: usageTrackerSettings,
+    usageReports: [...(usageTracker?.currentReports ?? [])],
+    settingsSectionCollapsed,
   });
   settingsModal.open();
 }
@@ -2481,6 +2635,15 @@ async function boot(): Promise<void> {
   if (state.panelPosition) {
     panelPosition = state.panelPosition;
   }
+  applyTabLayoutMode(
+    isTabLayoutMode(state.tabLayoutMode) ? state.tabLayoutMode : DEFAULT_TAB_LAYOUT_MODE,
+  );
+  usageTrackerSettings = normalizeUsageTrackerSettings(state.usageTracker);
+  settingsSectionCollapsed = {
+    ...DEFAULT_SETTINGS_SECTION_COLLAPSED,
+    ...normalizeSettingsSectionCollapsed(state.settingsSectionCollapsed),
+  };
+  usageTracker?.updateSettings(usageTrackerSettings);
   updateHeaderUsageVisibility();
   void refreshHeaderUsage();
 

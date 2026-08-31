@@ -52,6 +52,7 @@ export class TodoPanel {
   constructor(
     private readonly onVisibilityChange: (visible: boolean) => void,
     private readonly onModeChange: (mode: TodoPanelMode) => void,
+    private readonly refreshUsageReports: () => Promise<ProviderUsageReport[]>,
     private readonly onJobClick?: (job: AsyncJob) => void,
     private readonly onKillJob?: (job: AsyncJob) => void,
   ) {
@@ -100,14 +101,19 @@ export class TodoPanel {
     this.jobs = jobs;
     if (this.visible) this.renderJobs();
   }
+  setUsageReports(reports: ProviderUsageReport[]): void {
+    this.usageReports = reports;
+    if (this.visible) this.renderUsage();
+  }
+
 
   public async refreshUsage(): Promise<void> {
     this.usageLoading = true;
     this.renderUsage();
     try {
-      this.usageReports = await window.pishift.getProviderUsage();
+      this.usageReports = await this.refreshUsageReports();
     } catch {
-      this.usageReports = [];
+      // Keep the last successful reports while the shared tracker retries.
     } finally {
       this.usageLoading = false;
       this.renderUsage();

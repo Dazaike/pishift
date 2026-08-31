@@ -261,6 +261,8 @@ export type TabState = { cwd: string; customTitle?: string; colorTag?: string };
 export type WindowBounds = { x: number; y: number; width: number; height: number };
 
 import type { ThemeSettings } from "./theme";
+import type { TabLayoutMode } from "./tab-layout";
+import type { SettingsSectionId, UsageTrackerSettings } from "./usage-tracker";
 
 export type CustomModelConfig = {
   id: string;
@@ -318,10 +320,16 @@ export type PersistedState = {
   hideBottomButtonLabels?: boolean;
   collapseTopBarToMenu?: boolean;
   panelPosition?: PanelPosition;
+  /** How the tab strip copes with more tabs than the header can show. */
+  tabLayoutMode?: TabLayoutMode;
   /** Chime when a session goes from working back to waiting for input. */
   doneSoundEnabled?: boolean;
   /** 0–1 playback volume for the completion chime. */
   doneSoundVolume?: number;
+  /** Provider-backed compact quota tracker preferences. */
+  usageTracker?: UsageTrackerSettings;
+  /** Persisted state of Settings accordion groups. */
+  settingsSectionCollapsed?: Partial<Record<SettingsSectionId, boolean>>;
   tabs: TabState[];
   activeIndex: number;
 };
