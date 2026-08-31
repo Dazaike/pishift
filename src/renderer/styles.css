@@ -2021,8 +2021,8 @@ body.hide-bottom-button-labels #dock-change-dir .btn-icon {
   flex: 0 0 auto;
   position: relative;
   top: 2px;
-  margin: 0 6px 0 4px;
-  padding: 0;
+  margin: 0 10px 0 4px;
+  padding: 0 10px 0 0;
   height: 26px;
   border: none;
   background: transparent;
@@ -2035,10 +2035,16 @@ body.hide-bottom-button-labels #dock-change-dir .btn-icon {
   gap: 6px;
   z-index: 2;
   -webkit-app-region: no-drag;
-  max-width: 160px;
-  overflow: hidden;
+  overflow: visible;
   white-space: nowrap;
   transition: color 140ms ease, opacity 140ms ease;
+}
+
+#header-activity:not([hidden])::after {
+  content: "|";
+  color: var(--border);
+  font-weight: 500;
+  margin-left: 4px;
 }
 
 #header-activity[hidden] {
@@ -2058,6 +2064,7 @@ body.hide-bottom-button-labels #dock-change-dir .btn-icon {
 #header-activity-text {
   overflow: hidden;
   text-overflow: ellipsis;
+  max-width: 148px;
 }
 
 @keyframes header-activity-pulse {
