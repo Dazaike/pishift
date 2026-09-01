@@ -8,6 +8,15 @@ import type {
   PasteModeSetting,
 } from "./paste-attach";
 
+/** Transcript payloads travel over `CH.transcript*`; the model lives in `./transcript`. */
+export type {
+  TranscriptEntry,
+  TranscriptMarker,
+  TranscriptPart,
+  TranscriptRow,
+  TranscriptSnapshot,
+} from "./transcript";
+
 export const CH = {
   ptySpawn: "pty:spawn",
   ptyWrite: "pty:write",
@@ -50,6 +59,10 @@ export const CH = {
   getJobActivity: "app:get-job-activity",
   killJob: "app:kill-job",
   openExternal: "app:open-external",
+  subscribeTranscript: "transcript:subscribe",
+  unsubscribeTranscript: "transcript:unsubscribe",
+  transcriptUpdate: "transcript:update",
+  transcriptBlob: "transcript:blob",
 } as const;
 
 export type ControlBridgeActivity = AgentActivity;
@@ -157,6 +170,8 @@ export interface GetJobActivityRequest {
   startTime?: number;
   cwd?: string | null;
 }
+export type ControlBridgeStream = { kind: "text" | "thinking"; text: string };
+
 export interface KillJobRequest {
   jobId: string;
   sessionId?: string | null;
@@ -184,6 +199,17 @@ export interface ControlBridgeState {
   cwd: string | null;
   /** Host session key (`PISHIFT_SESSION_ID` / ITERM_SESSION_ID suffix). */
   sessionId?: string | null;
+  /**
+   * omp's own session id, naming the on-disk JSONL transcript.
+   * Absent when the running bridge predates transcript publishing.
+   */
+  ompSessionId?: string | null;
+  /**
+   * Assistant output still being written, rebuilt from omp's `message_update`
+   * deltas. UDP-only and never persisted, so it is absent whenever the renderer
+   * falls back to polling the status file, and on a bridge predating streaming.
+   */
+  stream?: ControlBridgeStream | null;
   updatedAt: string;
 }
 
@@ -287,6 +313,9 @@ export interface SessionMessage {
 
 export type PanelPosition = "top-right" | "center" | "top-center" | "bottom-center";
 
+/** Which renderer a tab shows. The PTY runs in both modes. */
+export type ViewMode = "terminal" | "chat";
+
 export type PersistedState = {
   bounds?: WindowBounds;
   ompPath?: string;
@@ -320,6 +349,12 @@ export type PersistedState = {
   hideBottomButtonLabels?: boolean;
   collapseTopBarToMenu?: boolean;
   panelPosition?: PanelPosition;
+  /** View mode applied to newly created tabs. */
+  defaultViewMode?: ViewMode;
+  /** Expand grouped transcript tool activity in Chat View. */
+  autoExpandTools?: boolean;
+  /** Open persisted thinking blocks in Chat View. */
+  autoExpandReasoning?: boolean;
   /** How the tab strip copes with more tabs than the header can show. */
   tabLayoutMode?: TabLayoutMode;
   /** Chime when a session goes from working back to waiting for input. */

@@ -38,6 +38,7 @@ import { loadJobActivity } from "./job-activity";
 import { PtyManager } from "./pty-manager";
 import { StateStore } from "./state-store";
 import { ControlBridgeListener } from "./control-bridge-listener";
+import { TranscriptWatcher, readTranscriptBlob } from "./transcript";
 
 const DEFAULT_CHROME_BG = "#191b24";
 const DEFAULT_CHROME_FG = "#c8cbd9";
@@ -61,6 +62,7 @@ let win: BrowserWindow | null = null;
 let store: StateStore;
 let ptys: PtyManager;
 let bridgeListener: ControlBridgeListener | null = null;
+let transcripts: TranscriptWatcher | null = null;
 function send(
   channel: string,
   payload: PtyData | PtyExit | PtyStall | PtyStallCleared,
@@ -228,6 +230,13 @@ function registerIpc(): void {
   ipcMain.handle(CH.getSessionMessages, (_e, sessionId: string) => loadSessionMessages(sessionId));
   ipcMain.handle(CH.getSkillCommands, (_e, cwd?: string) => loadSkillCommands(cwd));
   ipcMain.handle(CH.getJobActivity, (_e, req) => loadJobActivity(req));
+  ipcMain.handle(
+    CH.subscribeTranscript,
+    (_e, ptySessionId: string, ompSessionId: string | null, cwd: string | null) =>
+      transcripts?.subscribe(ptySessionId, ompSessionId, cwd) ?? null,
+  );
+  ipcMain.on(CH.unsubscribeTranscript, (_e, ptySessionId: string) => transcripts?.unsubscribe(ptySessionId));
+  ipcMain.handle(CH.transcriptBlob, (_e, ref: string, mimeType: string) => readTranscriptBlob(ref, mimeType));
   ipcMain.handle(CH.killJob, async (_e, req: KillJobRequest) => {
     try {
       const cancelPath = join(app.getPath("home"), ".omp", "agent", "cancel-job.json");
@@ -297,6 +306,7 @@ function registerIpc(): void {
     store.flush();
     ptys.killAll();
     bridgeListener?.close();
+    transcripts?.dispose();
     if (!app.isPackaged) {
       app.relaunch({ args: process.argv.slice(1) });
     } else {
@@ -357,6 +367,9 @@ if (!hasLock) {
     bridgeListener = new ControlBridgeListener((channel, payload) => {
       if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
     });
+    transcripts = new TranscriptWatcher((snapshot) => {
+      if (win && !win.isDestroyed()) win.webContents.send(CH.transcriptUpdate, snapshot);
+    });
     registerIpc();
     win = createWindow();
 
@@ -373,6 +386,7 @@ if (!hasLock) {
     ptys.killAll();
     store.flush();
     bridgeListener?.close();
+    transcripts?.dispose();
   });
 
   app.on("will-quit", () => {

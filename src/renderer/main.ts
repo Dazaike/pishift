@@ -16,6 +16,7 @@ import {
   type PendingAsk,
   type ProviderUsageReport,
   type TabState,
+  type ViewMode,
   type TodoPhase,
 } from "../shared/ipc";
 import { parseModelSlashCommand } from "../shared/model-command";
@@ -83,6 +84,7 @@ import { PlanReviewModal, type PlanReviewAction } from "./plan-review-modal";
 import { JobActivityModal } from "./job-activity-modal";
 import { RecentFoldersModal } from "./recent-folders-modal";
 import { RecentChatsModal } from "./recent-chats-modal";
+import { ChatView } from "./chat-view";
 import { TopMenu } from "./top-menu";
 import { TabStrip, type TabStripEntry } from "./tab-strip";
 import {
@@ -133,6 +135,8 @@ type Tab = {
   sessionId: string | null;
   /** Matches control-bridge `sessionId` / PISHIFT_SESSION_ID. */
   sessionKey: string | null;
+  /** omp's own session id; names the on-disk transcript the chat view renders. */
+  ompSessionId: string | null;
   /** PTY process pid (best-effort match to control-bridge pid). */
   ompPid: number | null;
   /** Bytes produced before the PTY id is known. */
@@ -186,6 +190,12 @@ type Tab = {
   activityBackfilledKey: string | null;
   /** omp's large-paste selector is on screen, awaiting the mode we already chose. */
   pasteMenuSeen: boolean;
+  /** Which renderer this tab shows. The PTY runs in both modes. */
+  viewMode: ViewMode;
+  /** Built lazily on first switch into chat mode, then kept for instant toggling. */
+  chat: ChatView | null;
+  /** Whether main is tailing this tab's transcript. */
+  transcriptSubscribed: boolean;
 };
 
 const tabs: Tab[] = [];
@@ -212,6 +222,12 @@ let hideTopButtonLabels = false;
 let hideBottomButtonLabels = false;
 let collapseTopBarToMenu = false;
 let panelPosition: PanelPosition = "top-right";
+/** View mode new tabs open in; per-tab mode diverges freely from it. */
+let defaultViewMode: ViewMode = "terminal";
+/** Whether chat tool groups open automatically. */
+let autoExpandTools = false;
+/** Whether completed transcript reasoning rows open automatically. */
+let autoExpandReasoning = true;
 let terminalScrollSteps = DEFAULT_SCROLL_STEPS;
 let pasteMode: PasteModeSetting = "ask";
 let pasteMarkerStyle: PasteMarkerStyle = "content";
@@ -795,6 +811,9 @@ function persist(): void {
     activityColorsOnTabs,
     todoPanelVisible,
     panelPosition,
+    defaultViewMode,
+    autoExpandTools,
+    autoExpandReasoning,
     collapseTopBarToMenu,
     todoPanelMode,
     hideTopButtonLabels,
@@ -959,6 +978,7 @@ function setTabActivity(tab: Tab, activity: ControlBridgeActivity): void {
     }
     tab.progressBusy = false;
   }
+  tab.chat?.setActivity(activity, tab.activitySince);
   syncTabBusy(tab);
   syncElapsedTicker();
 }
@@ -983,6 +1003,64 @@ function playViewSwitch(tab: Tab, dir: "left" | "right"): void {
   el.addEventListener("animationend", done);
 }
 
+/** Build the tab's chat renderer on first use; the terminal keeps running below it. */
+function ensureChatView(tab: Tab): ChatView {
+  if (tab.chat) return tab.chat;
+
+  const chat = new ChatView({
+    copyText: (text) => api.copyText(text),
+    openExternal: (url) => {
+      void api.openExternal(url);
+    },
+    resolveBlob: (ref, mimeType) => api.transcriptBlob(ref, mimeType),
+    openImage: (src) => dock.showImage(src),
+    onRevertToTerminal: () => setViewMode(tab, "terminal"),
+  });
+  chat.setAutoExpandTools(autoExpandTools);
+  chat.setAutoExpandReasoning(autoExpandReasoning);
+  tab.chat = chat;
+  chat.mount(viewsEl);
+  return chat;
+}
+
+/** Start (or repoint) main's transcript tail for a tab and paint the first snapshot. */
+function subscribeTranscript(tab: Tab): void {
+  if (!tab.sessionId) return;
+  const sessionId = tab.sessionId;
+  tab.transcriptSubscribed = true;
+  void api.subscribeTranscript(sessionId, tab.ompSessionId, tab.cwd).then((snapshot) => {
+    // The tab may have been closed or restarted while the round trip was in flight.
+    if (!snapshot || !tab.chat || tab.sessionId !== sessionId) return;
+    tab.chat.apply(snapshot);
+  });
+}
+
+/**
+ * Swap which renderer a tab shows. Presentation only: the PTY, the composer and
+ * every overlay keep working in both modes, so this is always reversible.
+ */
+function setViewMode(tab: Tab, mode: ViewMode): void {
+  if (tab.viewMode === mode) return;
+  tab.viewMode = mode;
+
+  if (mode === "chat") {
+    const chat = ensureChatView(tab);
+    chat.setEmptyReason("loading");
+    if (!tab.transcriptSubscribed) subscribeTranscript(tab);
+  }
+
+  if (tab === active) syncViewMode(tab);
+  dock.focus();
+}
+
+/** Paint the active tab's mode onto the DOM; inactive tabs keep their chat mounted but hidden. */
+function syncViewMode(tab: Tab): void {
+  const chat = tab.viewMode === "chat";
+  document.body.dataset.viewMode = tab.viewMode;
+  tab.chat?.setActive(chat);
+  dock.setViewMode(tab.viewMode);
+}
+
 function activate(tab: Tab): void {
   if (active === tab) {
     dock.focus();
@@ -999,11 +1077,13 @@ function activate(tab: Tab): void {
     active.view?.deactivate();
     active.notice?.classList.remove("active");
     active.stallBanner?.classList.remove("active");
+    active.chat?.setActive(false);
   }
   active = tab;
   tab.view?.activate(viewsEl);
   tab.notice?.classList.add("active");
   tab.stallBanner?.classList.add("active");
+  syncViewMode(tab);
   playViewSwitch(tab, dir);
   dock.load(tab.dock);
   dock.setCwd(tab.cwd);
@@ -1040,8 +1120,12 @@ function closeTab(tab: Tab): void {
   tabs.splice(index, 1);
   if (tab.sessionId) {
     api.kill(tab.sessionId);
+    api.unsubscribeTranscript(tab.sessionId);
     bySession.delete(tab.sessionId);
   }
+  tab.transcriptSubscribed = false;
+  tab.chat?.dispose();
+  tab.chat = null;
   tab.view?.dispose();
   tab.notice?.remove();
   clearStallBanner(tab);
@@ -1106,11 +1190,14 @@ function closeTabsToRight(target: Tab): void {
 async function restartSession(tab: Tab): Promise<void> {
   if (tab.sessionId) {
     api.kill(tab.sessionId);
+    api.unsubscribeTranscript(tab.sessionId);
     bySession.delete(tab.sessionId);
     tab.sessionId = null;
     tab.sessionKey = null;
+    tab.ompSessionId = null;
     tab.ompPid = null;
   }
+  tab.transcriptSubscribed = false;
   tab.view?.dispose();
   tab.view = null;
   tab.notice?.remove();
@@ -1304,6 +1391,13 @@ async function startSession(tab: Tab): Promise<void> {
   bySession.set(result.id, tab);
   api.resize(result.id, view.cols, view.rows);
   for (const chunk of tab.pending.splice(0)) api.write(result.id, chunk);
+  // A tab that starts (or restarts) already in chat mode needs its feed opened;
+  // `setViewMode` could not do it before a PTY id existed.
+  if (tab.viewMode === "chat") {
+    ensureChatView(tab).setEmptyReason("loading");
+    subscribeTranscript(tab);
+    if (tab === active) syncViewMode(tab);
+  }
   if (tab === active) dock.focus();
 }
 
@@ -1350,6 +1444,7 @@ function makeTab(cwd: string, customTitle?: string, colorTag?: string): Tab {
     view: null,
     sessionId: null,
     sessionKey: null,
+    ompSessionId: null,
     ompPid: null,
     pending: [],
     title: "",
@@ -1383,6 +1478,9 @@ function makeTab(cwd: string, customTitle?: string, colorTag?: string): Tab {
     sentMessages: [],
     activityBackfilledKey: null,
     pasteMenuSeen: false,
+    viewMode: defaultViewMode,
+    chat: null,
+    transcriptSubscribed: false,
   };
   self = tab;
 
@@ -1877,6 +1975,9 @@ const dock = new Dock({
       recentChatsModal.setCurrentCwd(chosen);
     }
   },
+  toggleViewMode: () => {
+    if (active) setViewMode(active, active.viewMode === "chat" ? "terminal" : "chat");
+  },
 });
 
 function openModelSelector(): void {
@@ -2042,17 +2143,29 @@ function applyControlBridgeStatus(status: ControlBridgeState | null | undefined)
   if (rawKey) {
     const key = rawKey.includes(":") ? rawKey.slice(rawKey.lastIndexOf(":") + 1) : rawKey;
     tab.sessionKey = key;
-    // First sight of a session (startup, `/new`, or a `/resume` typed straight
-    // into the terminal) is the only reliable moment to load what that chat
-    // already contains — the modal's resume click is just one of those paths.
-    if (key !== tab.activityBackfilledKey) {
-      void backfillSessionMessages(tab, key);
-    }
+  }
+
+  // The transcript is keyed by omp's own session id, not PISHIFT_SESSION_ID.
+  // Backfill matched on the wrong id space before this and always found nothing.
+  const ompId = status.ompSessionId?.trim() || null;
+  if (ompId && ompId !== tab.ompSessionId) {
+    tab.ompSessionId = ompId;
+    // `/new` and `/resume` repoint the same tab at a different transcript.
+    if (tab.transcriptSubscribed) subscribeTranscript(tab);
+  }
+  // First sight of a session (startup, `/new`, or a `/resume` typed straight
+  // into the terminal) is the only reliable moment to load what that chat
+  // already contains — the modal's resume click is just one of those paths.
+  if (ompId && ompId !== tab.activityBackfilledKey) {
+    void backfillSessionMessages(tab, ompId);
   }
   if (typeof status.pid === "number" && status.pid > 0) {
     tab.ompPid = status.pid;
   }
 
+  // Stream text is UDP-only, so it is absent on the 2 s status-file poll; only
+  // apply it when the publication actually carried the field.
+  if ("stream" in status) tab.chat?.setStream(status.stream);
   // The job registry is independent from the terminal session lifecycle. Its
   // polling updates must not reset activity chrome or overwrite model/thinking
   // selections with the background worker's context.
@@ -2114,6 +2227,11 @@ api.onControlBridgeStatus((status) => {
   applyControlBridgeStatus(status);
 });
 
+api.onTranscriptUpdate((snapshot) => {
+  const tab = bySession.get(snapshot.ptySessionId);
+  tab?.chat?.apply(snapshot);
+});
+
 // Periodically verify terminal model, thinking level, and plan state stay 100% synced with UI
 setInterval(async () => {
   try {
@@ -2133,8 +2251,11 @@ api.onExit(({ id, exitCode }) => {
   const tab = bySession.get(id);
   if (!tab) return;
   bySession.delete(id);
+  api.unsubscribeTranscript(id);
+  tab.transcriptSubscribed = false;
   tab.sessionId = null;
   tab.sessionKey = null;
+  tab.ompSessionId = null;
   tab.ompPid = null;
   tab.suppressDoneSound = true;
   setTabActivity(tab, "idle");
@@ -2299,6 +2420,9 @@ function openSettingsModal(): void {
       hideBottomButtonLabels,
       collapseTopBarToMenu,
       panelPosition,
+      defaultViewMode,
+      autoExpandTools,
+      autoExpandReasoning,
       onSelect: (preset) => {
         applyTheme(preset);
         persist();
@@ -2334,6 +2458,20 @@ function openSettingsModal(): void {
         panelPosition = pos;
         recentFoldersModal?.setPanelPosition(pos);
         recentChatsModal?.setPanelPosition(pos);
+        persist();
+      },
+      onDefaultViewModeChange: (mode) => {
+        defaultViewMode = mode;
+        persist();
+      },
+      onToggleAutoExpandTools: (enabled) => {
+        autoExpandTools = enabled;
+        for (const tab of tabs) tab.chat?.setAutoExpandTools(enabled);
+        persist();
+      },
+      onToggleAutoExpandReasoning: (enabled) => {
+        autoExpandReasoning = enabled;
+        for (const tab of tabs) tab.chat?.setAutoExpandReasoning(enabled);
         persist();
       },
       tabLayoutMode,
@@ -2409,6 +2547,9 @@ function openSettingsModal(): void {
     hideBottomButtonLabels,
     collapseTopBarToMenu,
     panelPosition,
+    defaultViewMode,
+    autoExpandTools,
+    autoExpandReasoning,
     tabLayoutMode,
     scrollSteps: terminalScrollSteps,
     pasteMode,
@@ -2521,7 +2662,14 @@ window.addEventListener(
           return;
         case "f":
           claim();
+          // Find is a terminal capability; reverting is exactly the escape hatch
+          // the chat view promises, and beats a second, divergent find UI.
+          setViewMode(active, "terminal");
           active.view?.toggleSearch();
+          return;
+        case "u":
+          claim();
+          setViewMode(active, active.viewMode === "chat" ? "terminal" : "chat");
           return;
         case "tab":
           claim();
@@ -2588,6 +2736,15 @@ async function boot(): Promise<void> {
     pasteMarkerPulse = state.pasteMarkerPulse;
   }
   applyPasteMarkerPaint();
+  if (state.defaultViewMode === "chat" || state.defaultViewMode === "terminal") {
+    defaultViewMode = state.defaultViewMode;
+  }
+  if (typeof state.autoExpandTools === "boolean") {
+    autoExpandTools = state.autoExpandTools;
+  }
+  if (typeof state.autoExpandReasoning === "boolean") {
+    autoExpandReasoning = state.autoExpandReasoning;
+  }
   if (typeof state.doneSoundEnabled === "boolean") {
     doneSoundEnabled = state.doneSoundEnabled;
     doneSound.setEnabled(doneSoundEnabled);

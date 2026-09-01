@@ -85,6 +85,9 @@ export class ControlBridgeListener {
       state.ask?.toolCallId ?? "",
       state.todo ? JSON.stringify(state.todo) : "",
       state.jobs ? state.jobs.map((j) => `${j.id}:${j.status}`).join(",") : "",
+      // Stream deltas leave all durable status unchanged, but must still reach
+      // the renderer while a reply is being written.
+      state.stream ? `${state.stream.kind}:${state.stream.text}` : "",
       // Intentionally omit updatedAt — heartbeats must not spam identical activity.
     ].join("|");
   }

@@ -52,6 +52,14 @@ export class StateStore {
           typeof raw.scrollSteps === "number" && Number.isFinite(raw.scrollSteps)
             ? raw.scrollSteps
             : undefined,
+        defaultViewMode:
+          raw.defaultViewMode === "chat" || raw.defaultViewMode === "terminal"
+            ? raw.defaultViewMode
+            : undefined,
+        autoExpandTools:
+          typeof raw.autoExpandTools === "boolean" ? raw.autoExpandTools : undefined,
+        autoExpandReasoning:
+          typeof raw.autoExpandReasoning === "boolean" ? raw.autoExpandReasoning : undefined,
         doneSoundEnabled:
           typeof raw.doneSoundEnabled === "boolean" ? raw.doneSoundEnabled : undefined,
         doneSoundVolume:

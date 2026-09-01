@@ -273,6 +273,71 @@ class ActivityTracker {
 }
 // ---8<--- end activity-core ---8<---
 
+/**
+ * Live assistant output, rebuilt from `message_update` deltas.
+ *
+ * omp only persists a message to the session JSONL once it is complete, so the
+ * transcript can never show a reply as it is written. These deltas are the only
+ * source of in-progress text. Verified event shapes (omp 18.0.11):
+ * `{text,thinking,toolcall}_start` carry `contentIndex`; `*_delta` carry
+ * `delta`; `text_end`/`thinking_end` carry the finished `content`.
+ *
+ * Tool-call argument deltas are ignored: the activity pill already names the
+ * running tool, and streaming raw JSON is noise.
+ */
+const MAX_STREAM_CHARS = 4000;
+
+type StreamKind = "text" | "thinking";
+
+class StreamBuffer {
+  private kind: StreamKind | null = null;
+  private text = "";
+
+  clear(): void {
+    this.kind = null;
+    this.text = "";
+  }
+
+  read(): { kind: StreamKind; text: string } | null {
+    return this.kind && this.text ? { kind: this.kind, text: this.text } : null;
+  }
+
+  /** Apply one `assistantMessageEvent`; returns true when the visible text changed. */
+  apply(type: string | undefined, event: unknown): boolean {
+    const ev = event && typeof event === "object" ? (event as Record<string, unknown>) : null;
+
+    switch (type) {
+      case "text_start":
+      case "thinking_start":
+        this.kind = type === "text_start" ? "text" : "thinking";
+        this.text = "";
+        return true;
+
+      case "text_delta":
+      case "thinking_delta": {
+        const delta = ev && typeof ev.delta === "string" ? ev.delta : "";
+        if (!delta) return false;
+        // A delta can arrive before its `_start` if the bridge loaded mid-turn.
+        if (this.kind === null) this.kind = type === "text_delta" ? "text" : "thinking";
+        this.text += delta;
+        if (this.text.length > MAX_STREAM_CHARS) this.text = this.text.slice(-MAX_STREAM_CHARS);
+        return true;
+      }
+
+      case "text_end":
+      case "thinking_end": {
+        // Authoritative full block; deltas can have been dropped or truncated.
+        const content = ev && typeof ev.content === "string" ? ev.content : null;
+        if (content === null) return false;
+        this.kind = type === "text_end" ? "text" : "thinking";
+        this.text = content.length > MAX_STREAM_CHARS ? content.slice(-MAX_STREAM_CHARS) : content;
+        return true;
+      }
+    }
+    return false;
+  }
+}
+
 interface PendingAskOption {
   label: string;
   description?: string;
@@ -392,10 +457,11 @@ function readAvailableJobs(ctx: ExtensionContext): AsyncJob[] | null {
  */
 type PlanMode = "off" | "on" | "paused";
 
-/** Subset of omp's session manager used to derive plan mode. */
+/** Subset of omp's session manager used to derive plan mode and locate the transcript. */
 interface SessionManagerLike {
   getLeafId?: () => string | undefined;
   getBranch?: () => unknown[] | undefined;
+  getSessionId?: () => string | undefined;
 }
 
 type BridgeUpdateKind = "session" | "jobs";
@@ -418,6 +484,17 @@ interface BridgeState {
   cwd: string | null;
   /** Matches host `PISHIFT_SESSION_ID` so multi-tab chrome can route activity. */
   sessionId: string | null;
+  /**
+   * omp's own session id — locates the on-disk JSONL transcript under
+   * `~/.omp/agent/sessions/`. Null on hosts without `getSessionId()`.
+   */
+  ompSessionId: string | null;
+  /**
+   * Assistant output still being written. UDP-only and never persisted to the
+   * status file: it is worthless a moment later, and a stale copy on disk would
+   * be read back as live.
+   */
+  stream: { kind: StreamKind; text: string } | null;
   updatedAt: string;
 }
 
@@ -500,8 +577,10 @@ export default function controlBridge(pi: ExtensionAPI) {
 
   let activity: AgentActivity = "idle";
   const tracker = new ActivityTracker();
+  const stream = new StreamBuffer();
   const jobSnapshots = new AuthoritativeSnapshotCache<AsyncJob>();
   let lastActivityPublish = 0;
+  let pendingDurable = false;
   let activityPublishPending = false;
   let running = false;
   let planMode: PlanMode = "off";
@@ -593,6 +672,17 @@ export default function controlBridge(pi: ExtensionAPI) {
     return next;
   }
 
+  /** omp's session id, or null when the host predates `sessionManager.getSessionId()`. */
+  function readOmpSessionId(ctx: ExtensionContext): string | null {
+    try {
+      const sm = (ctx as ExtensionContext & { sessionManager?: SessionManagerLike }).sessionManager;
+      const id = sm && typeof sm.getSessionId === "function" ? sm.getSessionId() : undefined;
+      return typeof id === "string" && id.trim() ? id.trim() : null;
+    } catch {
+      return null;
+    }
+  }
+
   function makeState(ctx: ExtensionContext, updateKind: BridgeUpdateKind): BridgeState {
     const model = ctx.models.current();
     const thinking = pi.getThinkingLevel();
@@ -616,6 +706,8 @@ export default function controlBridge(pi: ExtensionAPI) {
       pid: process.pid,
       cwd: ctx.cwd ?? null,
       sessionId: currentSessionId,
+      ompSessionId: readOmpSessionId(ctx),
+      stream: stream.read(),
       updatedAt: new Date().toISOString(),
     };
   }
@@ -624,6 +716,7 @@ export default function controlBridge(pi: ExtensionAPI) {
     ctx: ExtensionContext,
     sendUdp = true,
     updateKind: BridgeUpdateKind = "session",
+    writeFile = true,
   ) {
     if (!ctx || !ctx.hasUI) return;
     const state = makeState(ctx, updateKind);
@@ -631,16 +724,20 @@ export default function controlBridge(pi: ExtensionAPI) {
     publishedJobsSig = state.jobs.map((j) => `${j.id}:${j.status}`).join("|");
     const json = JSON.stringify(state);
 
-    mkdirSync(dirname(STATUS_FILE), {
-      recursive: true,
-    });
+    if (writeFile) {
+      mkdirSync(dirname(STATUS_FILE), {
+        recursive: true,
+      });
 
-    // Pretty JSON makes manual inspection less miserable.
-    writeFileSync(
-      STATUS_FILE,
-      JSON.stringify(state, null, 2),
-      "utf8",
-    );
+      // Pretty JSON makes manual inspection less miserable. `stream` is omitted:
+      // the file is the backstop for durable state, not for in-flight text.
+      const { stream: _stream, ...durableState } = state;
+      writeFileSync(
+        STATUS_FILE,
+        JSON.stringify(durableState, null, 2),
+        "utf8",
+      );
+    }
 
 
     if (sendUdp) {
@@ -661,17 +758,30 @@ export default function controlBridge(pi: ExtensionAPI) {
   /** Coalesced activity publish: never faster than 120 ms, never drops the last state. */
   const ACTIVITY_MIN_INTERVAL_MS = 120;
 
-  function syncActivity(ctx: ExtensionContext) {
+  /**
+   * Publish when the activity classification *or* the live stream text moved.
+   * Streaming alone skips the status-file write: nothing durable changed, and a
+   * response emits one of these every 120 ms.
+   */
+  function syncActivity(ctx: ExtensionContext, streamOnly = false) {
     if (!ctx || !ctx.hasUI) return;
     const next = tracker.activity;
-    if (next === activity) return;
+    const durable = next !== activity;
+    if (!durable && !streamOnly) return;
     activity = next;
+    if (durable) pendingDurable = true;
+
+    const flush = (): void => {
+      const writeFile = pendingDurable;
+      pendingDurable = false;
+      publish(ctx, true, "session", writeFile);
+    };
 
     const now = Date.now();
     // Idle ends the turn; publish it immediately so the glow stops on time.
     if (next === "idle" || now - lastActivityPublish >= ACTIVITY_MIN_INTERVAL_MS) {
       lastActivityPublish = now;
-      publish(ctx, true);
+      flush();
       return;
     }
     if (activityPublishPending) return;
@@ -680,7 +790,7 @@ export default function controlBridge(pi: ExtensionAPI) {
       () => {
         activityPublishPending = false;
         lastActivityPublish = Date.now();
-        publish(ctx, true);
+        flush();
       },
       ACTIVITY_MIN_INTERVAL_MS - (now - lastActivityPublish),
     );
@@ -836,6 +946,7 @@ export default function controlBridge(pi: ExtensionAPI) {
     running = true;
     activity = "idle";
     tracker.reset();
+    stream.clear();
     jobSnapshots.reset();
 
     planLeafId = null;
@@ -873,6 +984,7 @@ export default function controlBridge(pi: ExtensionAPI) {
     if (!ctx || !ctx.hasUI) return;
     activity = "idle";
     tracker.reset();
+    stream.clear();
     jobSnapshots.reset();
     pendingAsk = null;
     todoState = null;
@@ -885,6 +997,7 @@ export default function controlBridge(pi: ExtensionAPI) {
     async (_event, ctx) => {
       if (!ctx || !ctx.hasUI) return;
       tracker.agentStart();
+      stream.clear();
       syncActivity(ctx);
     },
   );
@@ -892,13 +1005,26 @@ export default function controlBridge(pi: ExtensionAPI) {
   pi.on("agent_start", async (_event, ctx) => {
     if (!ctx || !ctx.hasUI) return;
     tracker.agentStart();
+    // Last turn's text is now in the transcript; the live row must not repeat it.
+    stream.clear();
     syncActivity(ctx);
   });
 
   pi.on("message_update", async (event, ctx) => {
     if (!ctx || !ctx.hasUI) return;
-    tracker.stream(extractStreamEventType(event), extractToolName(event));
+    const type = extractStreamEventType(event);
+    tracker.stream(type, extractToolName(event));
+    const inner =
+      event && typeof event === "object" && "assistantMessageEvent" in event
+        ? event.assistantMessageEvent
+        : event;
+    const streamChanged = stream.apply(type, inner);
+    // `ctx.setTimeout` does not run until an agent turn yields. Deferring
+    // deltas through it therefore turns streaming into an end-of-turn update.
+    // Each changed local UDP packet is cheap and is the only truthful way to
+    // paint reasoning and text as they are produced.
     syncActivity(ctx);
+    if (streamChanged && stream.read()) publish(ctx, true, "session", false);
   });
 
   pi.on(
@@ -985,7 +1111,9 @@ export default function controlBridge(pi: ExtensionAPI) {
     const willContinue =
       Boolean(event) && typeof event === "object" && "willContinue" in event && event.willContinue === true;
     tracker.agentEnd(willContinue);
-    syncActivity(ctx);
+    // omp has persisted the message by now; the transcript owns it from here.
+    stream.clear();
+    syncActivity(ctx, true);
   });
 
   pi.on(
@@ -996,6 +1124,7 @@ export default function controlBridge(pi: ExtensionAPI) {
       running = false;
       activity = "idle";
       tracker.reset();
+      stream.clear();
 
       publish(ctx);
 

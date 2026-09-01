@@ -6,6 +6,7 @@ import {
   type PanelPosition,
   type ProviderLimit,
   type ProviderUsageReport,
+  type ViewMode,
 } from "../shared/ipc";
 import {
   DEFAULT_THEME_NAME,
@@ -56,6 +57,9 @@ export class SettingsModal {
   private hideBottomButtonLabels: boolean;
   private collapseTopBarToMenu: boolean;
   private panelPosition: PanelPosition;
+  private defaultViewMode: ViewMode;
+  private autoExpandTools: boolean;
+  private autoExpandReasoning: boolean;
   private tabLayoutMode: TabLayoutMode;
   private usageTracker: UsageTrackerSettings;
   private usageReports: ProviderUsageReport[];
@@ -71,6 +75,9 @@ export class SettingsModal {
   private onToggleHideBottomButtonLabels: (hide: boolean) => void;
   private onToggleCollapseTopBarToMenu: (collapse: boolean) => void;
   private onPanelPositionChange: (pos: PanelPosition) => void;
+  private onDefaultViewModeChange: (mode: ViewMode) => void;
+  private onToggleAutoExpandTools: (enabled: boolean) => void;
+  private onToggleAutoExpandReasoning: (enabled: boolean) => void;
   private onTabLayoutModeChange: (mode: TabLayoutMode) => void;
   private pasteMode: PasteModeSetting;
   private onPasteModeChange: (mode: PasteModeSetting) => void;
@@ -103,6 +110,9 @@ export class SettingsModal {
     hideBottomButtonLabels: boolean | undefined;
     collapseTopBarToMenu: boolean | undefined;
     panelPosition: PanelPosition | undefined;
+    defaultViewMode: ViewMode | undefined;
+    autoExpandTools: boolean | undefined;
+    autoExpandReasoning: boolean | undefined;
     onSelect: (preset: ThemePreset) => void;
     onToggleUsageHeader: (show: boolean) => void;
     onFontChange: (family: string) => void;
@@ -113,6 +123,9 @@ export class SettingsModal {
     onToggleHideBottomButtonLabels: (hide: boolean) => void;
     onToggleCollapseTopBarToMenu: (collapse: boolean) => void;
     onPanelPositionChange: (pos: PanelPosition) => void;
+    onDefaultViewModeChange: (mode: ViewMode) => void;
+    onToggleAutoExpandTools: (enabled: boolean) => void;
+    onToggleAutoExpandReasoning: (enabled: boolean) => void;
     tabLayoutMode: TabLayoutMode | undefined;
     onTabLayoutModeChange: (mode: TabLayoutMode) => void;
     initialScrollSteps: number | undefined;
@@ -148,6 +161,9 @@ export class SettingsModal {
     this.hideBottomButtonLabels = opts.hideBottomButtonLabels ?? false;
     this.collapseTopBarToMenu = opts.collapseTopBarToMenu ?? false;
     this.panelPosition = opts.panelPosition ?? "top-right";
+    this.defaultViewMode = opts.defaultViewMode ?? "terminal";
+    this.autoExpandTools = opts.autoExpandTools ?? false;
+    this.autoExpandReasoning = opts.autoExpandReasoning ?? true;
     this.tabLayoutMode = opts.tabLayoutMode ?? DEFAULT_TAB_LAYOUT_MODE;
     this.usageTracker = opts.usageTracker;
     this.usageReports = opts.usageReports;
@@ -162,6 +178,9 @@ export class SettingsModal {
     this.onToggleHideBottomButtonLabels = opts.onToggleHideBottomButtonLabels;
     this.onToggleCollapseTopBarToMenu = opts.onToggleCollapseTopBarToMenu;
     this.onPanelPositionChange = opts.onPanelPositionChange;
+    this.onDefaultViewModeChange = opts.onDefaultViewModeChange;
+    this.onToggleAutoExpandTools = opts.onToggleAutoExpandTools;
+    this.onToggleAutoExpandReasoning = opts.onToggleAutoExpandReasoning;
     this.onTabLayoutModeChange = opts.onTabLayoutModeChange;
     this.scrollSteps = clampScrollSteps(opts.initialScrollSteps ?? DEFAULT_SCROLL_STEPS);
     this.onScrollStepsChange = opts.onScrollStepsChange;
@@ -229,6 +248,9 @@ export class SettingsModal {
     hideBottomButtonLabels?: boolean;
     collapseTopBarToMenu?: boolean;
     panelPosition?: PanelPosition;
+    defaultViewMode?: ViewMode;
+    autoExpandTools?: boolean;
+    autoExpandReasoning?: boolean;
     tabLayoutMode?: TabLayoutMode;
     scrollSteps?: number;
     pasteMode?: PasteModeSetting;
@@ -267,6 +289,15 @@ export class SettingsModal {
     }
     if (state.panelPosition) {
       this.panelPosition = state.panelPosition;
+    }
+    if (state.defaultViewMode) {
+      this.defaultViewMode = state.defaultViewMode;
+    }
+    if (typeof state.autoExpandTools === "boolean") {
+      this.autoExpandTools = state.autoExpandTools;
+    }
+    if (typeof state.autoExpandReasoning === "boolean") {
+      this.autoExpandReasoning = state.autoExpandReasoning;
     }
     if (isTabLayoutMode(state.tabLayoutMode)) {
       this.tabLayoutMode = state.tabLayoutMode;
@@ -600,6 +631,58 @@ export class SettingsModal {
     });
     posRow.append(posLabel, posSelect);
 
+    // Option 5b: Which renderer new tabs open in (per-tab mode still toggles freely)
+    const viewModeRow = document.createElement("div");
+    viewModeRow.className = "settings-pos-row";
+    const viewModeLabel = document.createElement("label");
+    viewModeLabel.className = "settings-pos-label";
+    viewModeLabel.textContent = "Default View for New Tabs";
+
+    const viewModeSelect = document.createElement("select");
+    viewModeSelect.className = "settings-select";
+    const viewModeOptions: { id: ViewMode; label: string }[] = [
+      { id: "terminal", label: "Terminal (Raw omp TUI)" },
+      { id: "chat", label: "Chat View (Stylized Transcript)" },
+    ];
+    for (const opt of viewModeOptions) {
+      const el = document.createElement("option");
+      el.value = opt.id;
+      el.textContent = opt.label;
+      if (opt.id === this.defaultViewMode) el.selected = true;
+      viewModeSelect.appendChild(el);
+    }
+    viewModeSelect.addEventListener("change", () => {
+      this.defaultViewMode = viewModeSelect.value === "chat" ? "chat" : "terminal";
+      this.onDefaultViewModeChange(this.defaultViewMode);
+    });
+    viewModeRow.append(viewModeLabel, viewModeSelect);
+
+    const autoExpandToolsLabel = document.createElement("label");
+    autoExpandToolsLabel.className = "settings-check-label";
+    const autoExpandToolsCheck = document.createElement("input");
+    autoExpandToolsCheck.type = "checkbox";
+    autoExpandToolsCheck.checked = this.autoExpandTools;
+    autoExpandToolsCheck.addEventListener("change", () => {
+      this.autoExpandTools = autoExpandToolsCheck.checked;
+      this.onToggleAutoExpandTools(this.autoExpandTools);
+    });
+    const autoExpandToolsText = document.createElement("span");
+    autoExpandToolsText.textContent = "Auto-expand Tool Groups in Chat View";
+    autoExpandToolsLabel.append(autoExpandToolsCheck, autoExpandToolsText);
+
+    const autoExpandReasoningLabel = document.createElement("label");
+    autoExpandReasoningLabel.className = "settings-check-label";
+    const autoExpandReasoningCheck = document.createElement("input");
+    autoExpandReasoningCheck.type = "checkbox";
+    autoExpandReasoningCheck.checked = this.autoExpandReasoning;
+    autoExpandReasoningCheck.addEventListener("change", () => {
+      this.autoExpandReasoning = autoExpandReasoningCheck.checked;
+      this.onToggleAutoExpandReasoning(this.autoExpandReasoning);
+    });
+    const autoExpandReasoningText = document.createElement("span");
+    autoExpandReasoningText.textContent = "Auto-expand Reasoning in Chat View";
+    autoExpandReasoningLabel.append(autoExpandReasoningCheck, autoExpandReasoningText);
+
     // Option 6: How the tab strip copes with many open sessions
     const tabLayoutRow = document.createElement("div");
     tabLayoutRow.className = "settings-pos-row";
@@ -807,6 +890,9 @@ export class SettingsModal {
       bottomLabelsLabel,
       burgerMenuLabel,
       posRow,
+      viewModeRow,
+      autoExpandToolsLabel,
+      autoExpandReasoningLabel,
       tabLayoutRow,
       scrollRow,
       doneSoundLabel,

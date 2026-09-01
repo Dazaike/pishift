@@ -93,6 +93,7 @@ No fake web-view wrappers pretending to be terminals. Just a genuine hardware-ac
 - **Token and cost usage** with provider limits, optionally pinned in the header so you can watch the money leave.
 - **Recent folders and recent chats** sourced from real session history, not a guess.
 - **Transcript backfill on resume:** reopen a past session and your earlier messages come back, instead of an empty scrollback pretending nothing happened.
+- **Chat View:** Toggle each tab between raw xterm and a structured conversation view with live reasoning/text, grouped tool activity, transcript backfill, and per-view expansion controls. Because terminal scrollback is a terrible chat client.
 
 ### 🎨 28 Themes Because Aesthetics Matter
 - 28 built-in palettes (Tokyo Night, Catppuccin, Gruvbox, Nord, Cyberpunk, Rose Pine, Synthwave...).
@@ -151,6 +152,7 @@ bun run dist
 | `Ctrl+Shift+W` | Close the active tab |
 | `Ctrl+Tab` / `Ctrl+Shift+Tab` | Cycle tabs forward / back |
 | `Ctrl+Shift+F` | Find text in terminal output |
+| `Ctrl+Shift+U` | Toggle Chat View / terminal for the active tab |
 | `Ctrl+=` / `Ctrl+-` / `Ctrl+0` | Zoom in / Zoom out / Reset font size |
 | `Ctrl+C` | Copy the selection when there is one, otherwise send `^C` |
 | `Alt+↑ ↓ ← →` | Forward arrows straight to the agent without leaving the composer |
