@@ -19,6 +19,7 @@ import {
   type SessionMessage,
   type SpawnRequest,
   type SpawnResult,
+  type TranscriptSnapshot,
 } from "../shared/ipc";
 import type { SlashCommand } from "../shared/slash-commands";
 
@@ -59,6 +60,20 @@ const api = {
   },
   readControlBridgeStatus: (): Promise<ControlBridgeState | null> =>
     ipcRenderer.invoke(CH.readControlBridgeStatus),
+
+  subscribeTranscript: (
+    ptySessionId: string,
+    ompSessionId: string | null,
+    cwd: string | null,
+  ): Promise<TranscriptSnapshot | null> =>
+    ipcRenderer.invoke(CH.subscribeTranscript, ptySessionId, ompSessionId, cwd),
+  unsubscribeTranscript: (ptySessionId: string): void =>
+    ipcRenderer.send(CH.unsubscribeTranscript, ptySessionId),
+  onTranscriptUpdate: (fn: (snapshot: TranscriptSnapshot) => void): void => {
+    ipcRenderer.on(CH.transcriptUpdate, (_e, snapshot: TranscriptSnapshot) => fn(snapshot));
+  },
+  transcriptBlob: (ref: string, mimeType: string): Promise<string | null> =>
+    ipcRenderer.invoke(CH.transcriptBlob, ref, mimeType),
 
   pickDirectory: (): Promise<string | null> => ipcRenderer.invoke(CH.pickDirectory),
   notify: (title: string, body: string): void => ipcRenderer.send(CH.notify, title, body),

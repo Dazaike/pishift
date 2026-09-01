@@ -1,4 +1,4 @@
-import { IMAGE_EXT, type ControlBridgeActivity, type ImagePreview } from "../shared/ipc";
+import { IMAGE_EXT, type ControlBridgeActivity, type ImagePreview, type ViewMode } from "../shared/ipc";
 import type { KeyLike } from "../shared/kitty-keys";
 import { DockGlow } from "./dock-glow";
 import { filePaths } from "./dnd";
@@ -232,6 +232,7 @@ export interface DockHooks {
   selectThinking(level: string): void;
   openCwd(): void;
   changeCwd(): void;
+  toggleViewMode(): void;
 }
 
 const EDITOR_CHORDS: Record<string, true> = {
@@ -267,6 +268,7 @@ export class Dock {
   private readonly expandBtn = document.getElementById("dock-expand-btn") as HTMLButtonElement | null;
   private readonly modelBtn = document.getElementById("dock-model") as HTMLButtonElement;
   private readonly planBtn = document.getElementById("dock-plan") as HTMLButtonElement;
+  private readonly viewModeBtn = document.getElementById("dock-view-mode") as HTMLButtonElement;
   private readonly thinkingBtn = document.getElementById("dock-thinking-btn") as HTMLButtonElement;
   private readonly stopButton = document.getElementById("dock-stop") as HTMLButtonElement;
   private readonly sendButton = document.getElementById("dock-send") as HTMLButtonElement;
@@ -339,6 +341,7 @@ export class Dock {
       const target: PlanTarget = this.planMode === "off" ? "on" : "off";
       this.hooks.setPlanTarget(target);
     });
+    this.viewModeBtn.addEventListener("click", () => this.hooks.toggleViewMode());
 
     this.thinkingMenu = new ThinkingMenu(this.thinkingBtn, (level) => {
       this.hooks.selectThinking(level);
@@ -454,6 +457,22 @@ export class Dock {
     this.planMode = mode;
     this.planPending = pending;
     this.updatePlanButton();
+  }
+
+  /** Paint the toggle with the *current* mode; its title names the action it performs. */
+  setViewMode(mode: ViewMode): void {
+    const chat = mode === "chat";
+    this.viewModeBtn.classList.toggle("view-chat", chat);
+    this.viewModeBtn.title = chat
+      ? "Back to Terminal (Ctrl+Shift+U)"
+      : "Switch to Chat View (Ctrl+Shift+U)";
+    const label = this.viewModeBtn.querySelector(".dock-view-label");
+    if (label) label.textContent = chat ? "Chat" : "Terminal";
+  }
+
+  /** Open an already-decoded image (chat attachment) in the shared lightbox. */
+  showImage(src: string): void {
+    this.lightbox.open(src, "Attachment");
   }
 
   /** Update supported thinking ladder for the active model (used by cycle). */
