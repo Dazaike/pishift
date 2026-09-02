@@ -46,6 +46,15 @@ export class ModelModal {
         this.close();
       }
     });
+
+    document.addEventListener("keydown", (ev) => {
+      if (this.el.hidden) return;
+      if (ev.key === "Escape") {
+        ev.preventDefault();
+        ev.stopPropagation();
+        this.close();
+      }
+    });
   }
 
   get isOpen(): boolean {
@@ -75,7 +84,10 @@ export class ModelModal {
 
   setCurrentModel(model: string): void {
     this.currentModel = model;
-    if (this.isOpen) this.render();
+    // Do not wipe inputs while user is adding or editing models
+    if (this.isOpen && !this.showAddForm) {
+      this.render();
+    }
   }
 
   private addModel(model: CustomModelConfig): void {
@@ -212,6 +224,16 @@ export class ModelModal {
     desc.className = "model-custom-form-desc";
     desc.textContent = "Add a model to your switcher:";
 
+    const submitForm = (): void => {
+      const id = idInput.value.trim();
+      const name = nameInput.value.trim() || id;
+      const provider = providerInput.value.trim() || "generic";
+      const iconUrl = iconInput.value.trim() || undefined;
+
+      if (!id) return;
+      this.addModel({ provider, id, name, iconUrl });
+    };
+
     const nameInput = document.createElement("input");
     nameInput.type = "text";
     nameInput.className = "model-form-input";
@@ -236,19 +258,22 @@ export class ModelModal {
     iconInput.placeholder = "Icon Image URL (optional)";
     iconInput.spellcheck = false;
 
+    const inputs = [nameInput, idInput, providerInput, iconInput];
+    for (const inp of inputs) {
+      inp.addEventListener("keydown", (ev) => {
+        ev.stopPropagation();
+        if (ev.key === "Enter") {
+          ev.preventDefault();
+          submitForm();
+        }
+      });
+    }
+
     const saveBtn = document.createElement("button");
     saveBtn.type = "button";
     saveBtn.className = "model-form-save";
     saveBtn.textContent = "Save Model";
-    saveBtn.addEventListener("click", () => {
-      const id = idInput.value.trim();
-      const name = nameInput.value.trim() || id;
-      const provider = providerInput.value.trim() || "generic";
-      const iconUrl = iconInput.value.trim() || undefined;
-
-      if (!id) return;
-      this.addModel({ provider, id, name, iconUrl });
-    });
+    saveBtn.addEventListener("click", submitForm);
 
     wrap.append(desc, nameInput, idInput, providerInput, iconInput, saveBtn);
 

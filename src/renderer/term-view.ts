@@ -69,6 +69,14 @@ export interface TermViewHooks {
   onCopyFromTerminal?(text: string): void;
 }
 const PTY_RESIZE_DEBOUNCE_MS = 80;
+/**
+ * Ceiling on how long a chunk may sit unacked. xterm.js only invokes the write
+ * callback once its parser has consumed the chunk, and an async parser handler
+ * (the image addon decodes off-thread) can hold that indefinitely — which would
+ * leave the PTY paused, and a paused omp cannot read input either. Acking early
+ * only relaxes backpressure; xterm still discards past its own 50 MB watermark.
+ */
+const ACK_DEADLINE_MS = 1500;
 const MIN_FONT = 8;
 const MAX_FONT = 32;
 
@@ -102,6 +110,8 @@ export class TermView {
   private opened = false;
   private disposed = false;
   private lastFeedAt = 0;
+  /** Armed while a fed chunk is still unacked. */
+  private ackTimer: number | undefined;
   private lastCols = 0;
   private lastRows = 0;
   /** DECCKM — when true, interactive TUI menus want arrow keys as SS3. */
@@ -253,7 +263,11 @@ export class TermView {
     this.atBottom = true;
   }
 
-  /** PTY data in, with the flow-control ack fired once the parser has consumed it. */
+  /**
+   * PTY data in. The ack fires as soon as xterm's parser has consumed the
+   * chunk, or on `ACK_DEADLINE_MS`, whichever comes first — never later.
+   * `ack()` is idempotent on the main side, so both firing is harmless.
+   */
   feed(data: string, ack: () => void): void {
     if (this.disposed) {
       // The PTY stays paused until someone acks; dropping this wedges omp.
@@ -261,13 +275,24 @@ export class TermView {
       return;
     }
     this.lastFeedAt = Date.now();
+    if (this.ackTimer !== undefined) window.clearTimeout(this.ackTimer);
+    let acked = false;
+    const ackOnce = (): void => {
+      if (acked) return;
+      acked = true;
+      if (this.ackTimer !== undefined) {
+        window.clearTimeout(this.ackTimer);
+        this.ackTimer = undefined;
+      }
+      ack();
+    };
+    this.ackTimer = window.setTimeout(ackOnce, ACK_DEADLINE_MS);
     try {
-      this.term.write(data, ack);
+      this.term.write(data, ackOnce);
     } catch {
       // xterm throws past its 50 MB DISCARD_WATERMARK and on parser faults.
-      // write() throws before queueing the callback, so ack here. pty.resume()
-      // is idempotent, so a late queued callback acking again is harmless.
-      ack();
+      // write() throws before queueing the callback, so ack here.
+      ackOnce();
     }
   }
 
@@ -515,6 +540,7 @@ export class TermView {
     this.disposed = true;
     if (this.rafHandle) cancelAnimationFrame(this.rafHandle);
     clearTimeout(this.ptyResizeTimer);
+    clearTimeout(this.ackTimer);
     this.observer?.disconnect();
     this.observer = null;
     this.webgl?.dispose();

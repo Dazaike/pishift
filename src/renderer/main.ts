@@ -1270,15 +1270,20 @@ function showNotice(tab: Tab, message: string): void {
   tab.notice = notice;
 }
 
-/** Overlay offering manual recovery when the PTY has been paused awaiting an
- * ack. Unlike showNotice(), this never replaces the terminal view. */
+/** How long the stall report stays up once flow has been restored. */
+const STALL_BANNER_TTL_MS = 6000;
+const stallBannerTimers = new WeakMap<HTMLDivElement, number>();
+
+/** Overlay shown when the PTY sat paused past the watchdog. Main resumes the
+ * child itself, so this reports and offers a hard escape; it never replaces the
+ * terminal view. */
 function showStallBanner(tab: Tab): void {
   if (tab.stallBanner) return;
   const banner = document.createElement("div");
   banner.className = tab === active ? "stall-banner active" : "stall-banner";
 
   const text = document.createElement("span");
-  text.textContent = "Terminal output stalled.";
+  text.textContent = "Output stalled — flow resumed automatically.";
 
   const resumeBtn = document.createElement("button");
   resumeBtn.type = "button";
@@ -1300,10 +1305,21 @@ function showStallBanner(tab: Tab): void {
   banner.append(text, resumeBtn, killBtn);
   viewsEl.appendChild(banner);
   tab.stallBanner = banner;
+  // Flow is already restored by the time this shows; a permanent banner would
+  // outlive the condition it reports (the stall-cleared event only arrives if
+  // the renderer's own ack eventually lands).
+  stallBannerTimers.set(banner, window.setTimeout(() => clearStallBanner(tab), STALL_BANNER_TTL_MS));
 }
 
 function clearStallBanner(tab: Tab): void {
-  tab.stallBanner?.remove();
+  const banner = tab.stallBanner;
+  if (!banner) return;
+  const timer = stallBannerTimers.get(banner);
+  if (timer !== undefined) {
+    window.clearTimeout(timer);
+    stallBannerTimers.delete(banner);
+  }
+  banner.remove();
   tab.stallBanner = null;
 }
 
@@ -1786,15 +1802,27 @@ async function submitDock(payload: DockPayload): Promise<void> {
   view.submit();
 }
 
+/**
+ * Cap on how much of a chunk is scanned for statusline state. omp's statusline
+ * is the tail of a frame and a full screen of ANSI is well under this, so the
+ * only chunks big enough to be trimmed are image payloads — which must never
+ * cost the UI thread a multi-megabyte regex pass while the PTY waits on an ack.
+ */
+const STATUS_SCAN_LIMIT = 262_144;
+
 /** Parse omp's terminal stream to extract active model, thinking level, plan state and usage metrics. */
 function parseStatusStream(tab: Tab, rawData: string): void {
-  // Strip inline image sequences (OSC 1337 ; File= ... BEL/ST) so large base64 image
-  // payloads never stall the UI thread with heavy regex scans.
+  // Drop inline image sequences (OSC 1337 ; File= ... BEL/ST) before any heavy
+  // regex sees them. An unterminated one runs to the end of the chunk: the
+  // stream transformer releases a stuck sequence raw, so that case is real.
   let text = rawData;
   if (text.includes("\x1b]1337;File=")) {
     text = text.replace(/\x1b\]1337;File=[^\x07\x1b]*(?:\x07|\x1b\\)/g, "");
+    const open = text.indexOf("\x1b]1337;File=");
+    if (open >= 0) text = text.slice(0, open);
     if (!text.trim()) return;
   }
+  if (text.length > STATUS_SCAN_LIMIT) text = text.slice(text.length - STATUS_SCAN_LIMIT);
   const plain = text.replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, "");
   if (!plain) return;
   // Ahead of the statusline gate: omp's large-paste selector replaces the
