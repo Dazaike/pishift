@@ -190,17 +190,33 @@ function registerIpc(): void {
   // filesystem access and keeps the data URL small enough for a chip.
   ipcMain.handle(
     CH.imagePreview,
-    (_e, path: string, maxSize: number): ImagePreview | null => {
-      const image = nativeImage.createFromPath(path);
-      if (image.isEmpty()) return null;
-      const { width, height } = image.getSize();
-      const scale = maxSize / Math.max(width, height);
-      const scaled = image.resize({
-        width: Math.max(1, Math.round(width * scale)),
-        height: Math.max(1, Math.round(height * scale)),
-        quality: "good",
-      });
-      return { dataUrl: scaled.toDataURL(), width, height };
+    async (_e, path: string, maxSize: number): Promise<ImagePreview | null> => {
+      try {
+        if (!path) return null;
+        let image: Electron.NativeImage | null = null;
+        try {
+          image = await nativeImage.createThumbnailFromPath(path, {
+            width: maxSize,
+            height: maxSize,
+          });
+        } catch {
+          image = nativeImage.createFromPath(path);
+        }
+        if (!image || image.isEmpty()) return null;
+        const { width, height } = image.getSize();
+        const scale = maxSize / Math.max(width, height);
+        const scaled =
+          scale < 1
+            ? image.resize({
+                width: Math.max(1, Math.round(width * scale)),
+                height: Math.max(1, Math.round(height * scale)),
+                quality: "good",
+              })
+            : image;
+        return { dataUrl: scaled.toDataURL(), width, height };
+      } catch {
+        return null;
+      }
     },
   );
 

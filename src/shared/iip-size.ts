@@ -51,8 +51,13 @@ function terminatorEnd(data: string, from: number): number {
 
 /** Decoded byte length of a base64 payload, padded or not. */
 export function base64ByteLength(payload: string): number {
-  const b64 = payload.replace(/\s+/g, "").replace(/=+$/, "");
-  return Math.floor((b64.length * 3) / 4);
+  let unpadded = 0;
+  for (let i = 0; i < payload.length; i++) {
+    const code = payload.charCodeAt(i);
+    if (code <= 0x20 || code === 0x3d /* '=' */) continue;
+    unpadded++;
+  }
+  return Math.floor((unpadded * 3) / 4);
 }
 
 /** Rewrite one complete `File=` sequence (terminator included). */
