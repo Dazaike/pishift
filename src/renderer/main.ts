@@ -1788,7 +1788,15 @@ async function submitDock(payload: DockPayload): Promise<void> {
 
 /** Parse omp's terminal stream to extract active model, thinking level, plan state and usage metrics. */
 function parseStatusStream(tab: Tab, rawData: string): void {
-  const plain = rawData.replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, "");
+  // Strip inline image sequences (OSC 1337 ; File= ... BEL/ST) so large base64 image
+  // payloads never stall the UI thread with heavy regex scans.
+  let text = rawData;
+  if (text.includes("\x1b]1337;File=")) {
+    text = text.replace(/\x1b\]1337;File=[^\x07\x1b]*(?:\x07|\x1b\\)/g, "");
+    if (!text.trim()) return;
+  }
+  const plain = text.replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, "");
+  if (!plain) return;
   // Ahead of the statusline gate: omp's large-paste selector replaces the
   // statusline entirely while it is up.
   if (detectPasteMenu(plain)) tab.pasteMenuSeen = true;

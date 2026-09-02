@@ -79,6 +79,23 @@ describe("injectIipSize", () => {
     );
   });
 
+  it("handles base64 payloads with internal whitespace and newlines", () => {
+    const state = createIipState();
+    const input = `\x1b]1337;File=inline=1:aGVs\r\nbG8=\n${BEL}`;
+    expect(injectIipSize(state, input)).toBe(
+      `\x1b]1337;File=size=5;inline=1:aGVs\r\nbG8=\n${BEL}`,
+    );
+  });
+
+  it("returns empty string while buffering partial sequence chunks", () => {
+    const state = createIipState();
+    expect(injectIipSize(state, "\x1b]1337;File=inline=1:aGVs")).toBe("");
+    expect(state.buf).toBe("\x1b]1337;File=inline=1:aGVs");
+    expect(injectIipSize(state, `bG8=${BEL}`)).toBe(
+      `\x1b]1337;File=size=5;inline=1:aGVsbG8=${BEL}`,
+    );
+  });
+
   it("passes a malformed sequence with no payload separator through unchanged", () => {
     const state = createIipState();
     const input = `\x1b]1337;File=inline=1${BEL}`;

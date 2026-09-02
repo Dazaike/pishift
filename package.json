@@ -1,7 +1,7 @@
 {
   "name": "pishift",
   "productName": "PiShift",
-  "version": "1.7.6",
+  "version": "1.7.7",
   "author": "Dazaike",
   "private": true,
   "description": "PiShift — Desktop terminal shell for Oh My Pi (omp)",

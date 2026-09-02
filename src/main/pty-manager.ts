@@ -80,9 +80,15 @@ export class PtyManager {
     this.sessions.set(id, session);
 
     child.onData((data) => {
+      const transformed = injectIipSize(session.iip, data);
+      if (!transformed) {
+        // Buffering partial IIP image sequence. Keep streaming from ConPTY
+        // without triggering IPC round-trip stalls and watchdog timeouts.
+        return;
+      }
       child.pause();
       session.pausedAt = Date.now();
-      this.emit(CH.ptyData, { id, data: injectIipSize(session.iip, data) });
+      this.emit(CH.ptyData, { id, data: transformed });
     });
     child.onExit(({ exitCode }) => {
       session.exited = true;
