@@ -9,9 +9,17 @@
  * re-emits the sequence with `size=<n>;` prepended to the header.
  *
  * Stream-safe: sequences may be split across arbitrary chunk boundaries.
+ *
+ * Withholding is never open-ended: a sequence that never terminates (truncated
+ * image, a literal marker printed as text) would otherwise swallow every later
+ * byte. The owner of the state polls `takeIipBuffer` on a silence deadline and
+ * ships the raw bytes instead. xterm's parser collects OSC payloads across
+ * writes, so a mid-sequence flush only costs that one image (the addon aborts a
+ * header without `size=`); the terminal itself stays in sync.
  */
 
-const MARKER = "\x1b]1337;File=";
+/** `ESC ] 1337 ; File=` — the header prefix omp writes before every image. */
+export const MARKER = "\x1b]1337;File=";
 const BEL = "\x07";
 const ST = "\x1b\\";
 
@@ -22,6 +30,13 @@ export type IipState = { buf: string };
 
 export function createIipState(): IipState {
   return { buf: "" };
+}
+
+/** Hand back (and drop) the withheld bytes verbatim. */
+export function takeIipBuffer(state: IipState): string {
+  const buf = state.buf;
+  state.buf = "";
+  return buf;
 }
 
 /**

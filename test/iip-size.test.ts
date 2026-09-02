@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { createIipState, injectIipSize } from "../src/shared/iip-size";
+import { createIipState, injectIipSize, takeIipBuffer } from "../src/shared/iip-size";
 
 const BEL = "\x07";
 
@@ -100,5 +100,27 @@ describe("injectIipSize", () => {
     const state = createIipState();
     const input = `\x1b]1337;File=inline=1${BEL}`;
     expect(injectIipSize(state, input)).toBe(input);
+  });
+});
+
+describe("takeIipBuffer", () => {
+  it("releases withheld bytes verbatim and empties the state", () => {
+    const state = createIipState();
+    const partial = "\x1b]1337;File=inline=1:aGVs";
+    expect(injectIipSize(state, partial)).toBe("");
+    expect(takeIipBuffer(state)).toBe(partial);
+    expect(state.buf).toBe("");
+    expect(takeIipBuffer(state)).toBe("");
+  });
+
+  it("leaves the transformer usable for the next sequence after a flush", () => {
+    const state = createIipState();
+    injectIipSize(state, "\x1b]1337;File=inline=1:aGVs");
+    takeIipBuffer(state);
+    // The tail of the flushed sequence carries no marker, so it passes through.
+    expect(injectIipSize(state, `bG8=${BEL}`)).toBe(`bG8=${BEL}`);
+    expect(injectIipSize(state, `\x1b]1337;File=inline=1:aGVsbG8=${BEL}`)).toBe(
+      `\x1b]1337;File=size=5;inline=1:aGVsbG8=${BEL}`,
+    );
   });
 });

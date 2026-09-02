@@ -12,7 +12,13 @@ import {
   type PtyStallCleared,
   type SpawnRequest,
 } from "../shared/ipc";
-import { createIipState, injectIipSize, type IipState } from "../shared/iip-size";
+import {
+  createIipState,
+  injectIipSize,
+  MARKER,
+  takeIipBuffer,
+  type IipState,
+} from "../shared/iip-size";
 import { resolveOmpPath } from "./omp-locate";
 import { buildPtyEnv } from "./pty-env";
 
@@ -25,6 +31,8 @@ type Session = {
   pausedAt: number | null;
   /** Reported once per stall, so the renderer is not spammed each poll. */
   stallReported: boolean;
+  /** Deadline releasing withheld IIP bytes when the sequence never completes. */
+  iipFlushTimer: NodeJS.Timeout | null;
 };
 
 export type Emit = (
@@ -41,6 +49,19 @@ const STALL_AFTER_MS = (() => {
 })();
 
 const FORCE_REAP_AFTER_MS = 2000;
+
+/**
+ * Silence after which withheld image bytes are shipped raw. omp writes an image
+ * as one uninterrupted burst, so a gap this long means the sequence is never
+ * terminating and every later byte would be swallowed behind it.
+ */
+const IIP_FLUSH_MS = 500;
+/**
+ * A withheld partial marker is usually just an ordinary escape sequence split on
+ * a chunk boundary — the common case at the end of a burst — so it is released
+ * an order of magnitude sooner to keep the last frame from lagging.
+ */
+const IIP_PARTIAL_FLUSH_MS = 50;
 
 /**
  * Owns every hosted omp process. Data flows PTY -> renderer with the xterm.js
@@ -76,22 +97,24 @@ export class PtyManager {
       exited: false,
       pausedAt: null,
       stallReported: false,
+      iipFlushTimer: null,
     };
     this.sessions.set(id, session);
 
     child.onData((data) => {
       const transformed = injectIipSize(session.iip, data);
       if (!transformed) {
-        // Buffering partial IIP image sequence. Keep streaming from ConPTY
-        // without triggering IPC round-trip stalls and watchdog timeouts.
+        // Withholding a partial IIP sequence: keep draining ConPTY at native
+        // speed instead of paying an IPC round trip per image chunk. The flush
+        // deadline guarantees these bytes are never withheld indefinitely.
+        this.scheduleIipFlush(id, session);
         return;
       }
-      child.pause();
-      session.pausedAt = Date.now();
-      this.emit(CH.ptyData, { id, data: transformed });
+      this.pauseAndEmit(id, session, transformed);
     });
     child.onExit(({ exitCode }) => {
       session.exited = true;
+      this.clearIipFlush(session);
       this.sessions.delete(id);
       this.emit(CH.ptyExit, { id, exitCode });
     });
@@ -124,6 +147,45 @@ export class PtyManager {
       this.emit(CH.ptyStallCleared, { id });
     }
     session.pty.resume();
+    // Withheld bytes get no further onData while paused, so the deadline has to
+    // be re-armed here rather than left to the next chunk that may never come.
+    this.scheduleIipFlush(id, session);
+  }
+
+  /**
+   * Hand a chunk to the renderer and stop the child until it acks. The pause is
+   * the whole point of the handshake, so the withhold deadline is dropped for
+   * its duration: silence while paused says nothing about the sequence.
+   */
+  private pauseAndEmit(id: string, session: Session, data: string): void {
+    this.clearIipFlush(session);
+    session.pty.pause();
+    session.pausedAt = Date.now();
+    this.emit(CH.ptyData, { id, data });
+  }
+
+  private clearIipFlush(session: Session): void {
+    if (!session.iipFlushTimer) return;
+    clearTimeout(session.iipFlushTimer);
+    session.iipFlushTimer = null;
+  }
+
+  /**
+   * Arm the release deadline for withheld IIP bytes. Only meaningful while the
+   * child is flowing: a paused child is silent by design.
+   */
+  private scheduleIipFlush(id: string, session: Session): void {
+    this.clearIipFlush(session);
+    const pending = session.iip.buf.length;
+    if (!pending || session.exited || session.pausedAt !== null) return;
+    const delay = pending < MARKER.length ? IIP_PARTIAL_FLUSH_MS : IIP_FLUSH_MS;
+    session.iipFlushTimer = setTimeout(() => {
+      session.iipFlushTimer = null;
+      if (session.exited) return;
+      const raw = takeIipBuffer(session.iip);
+      if (raw) this.pauseAndEmit(id, session, raw);
+    }, delay);
+    session.iipFlushTimer.unref?.();
   }
 
   /** Manual recovery from the stall banner. */
@@ -134,6 +196,7 @@ export class PtyManager {
   kill(id: string): void {
     const session = this.sessions.get(id);
     if (!session) return;
+    this.clearIipFlush(session);
     this.sessions.delete(id);
     const pid = session.pty.pid;
     try {
@@ -187,20 +250,40 @@ export class PtyManager {
     this.stallTimer.unref?.();
   }
 
+  /**
+   * A paused child is blocked writing into a full ConPTY buffer, which also
+   * stops it reading input — so a lost or late ack freezes the whole session,
+   * typing included. Report it once, then resume regardless: xterm.js still
+   * protects itself (it discards past its 50 MB watermark and throws, which the
+   * renderer answers with an ack), so unmetered flow is strictly better than a
+   * dead session waiting on a click.
+   */
   private checkStalls(): void {
     const now = Date.now();
     for (const [id, session] of this.sessions) {
-      if (session.exited || session.pausedAt === null || session.stallReported) continue;
+      if (session.exited || session.pausedAt === null) continue;
       const pausedMs = now - session.pausedAt;
       if (pausedMs < STALL_AFTER_MS) continue;
-      session.stallReported = true;
-      this.emit(CH.ptyStalled, { id, pausedMs });
+      session.pausedAt = null;
+      // The banner is announced once per episode; the recovery below runs on
+      // every stall, so a renderer that never acks still gets served.
+      if (!session.stallReported) {
+        session.stallReported = true;
+        this.emit(CH.ptyStalled, { id, pausedMs });
+      }
+      try {
+        session.pty.resume();
+      } catch {
+        // Child exited between the poll and the resume.
+      }
+      this.scheduleIipFlush(id, session);
     }
     if (this.sessions.size === 0 && this.stallTimer) {
       clearInterval(this.stallTimer);
       this.stallTimer = null;
     }
   }
+
   /**
    * Kill every session. Required on quit: Windows ignores the signal argument and
    * an abandoned ConPTY leaks an `OpenConsole.exe` per session.
