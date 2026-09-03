@@ -158,15 +158,23 @@ export class UsageTracker {
     return icon;
   }
 
-  private renderGauge(entry: MatchedQuota): HTMLElement {
+  private renderGauge(entry: MatchedQuota, isVertical: boolean): HTMLElement {
     const usedPercent = clampPercent(entry.limit.usedPercent);
     const tier = usedPercent >= 80 ? "high" : usedPercent >= 50 ? "med" : "low";
     const gauge = document.createElement("span");
-    gauge.className = `usage-tracker-gauge usage-tracker-${entry.quota.style} ${tier}`;
     gauge.style.setProperty("--usage-fill", `${usedPercent}%`);
     gauge.style.setProperty("--usage-remaining-fill", `${100 - usedPercent}%`);
     gauge.style.setProperty("--usage-ring-offset", String(94.25 * (1 - usedPercent / 100)));
 
+    if (isVertical) {
+      gauge.className = `usage-tracker-gauge usage-tracker-vertical-meter ${tier}`;
+      const fill = document.createElement("span");
+      fill.className = "usage-tracker-fill";
+      gauge.append(fill);
+      return gauge;
+    }
+
+    gauge.className = `usage-tracker-gauge usage-tracker-${entry.quota.style} ${tier}`;
     if (entry.quota.style === "circle") {
       const ring = document.createElementNS("http://www.w3.org/2000/svg", "svg");
       ring.setAttribute("class", "usage-tracker-ring");
@@ -184,15 +192,23 @@ export class UsageTracker {
     return gauge;
   }
 
-  private render(): void {
+  render(): void {
     this.el.replaceChildren();
     const entries = this.matchingQuotas();
     const visible = this.settings.enabled && entries.length > 0;
     this.el.hidden = !visible;
     if (!visible) {
+      this.el.classList.remove("vertical");
       this.onRender?.();
       return;
     }
+
+    const isVertical =
+      this.settings.orientation === "vertical" ||
+      (this.settings.orientation === "auto" &&
+        typeof document !== "undefined" &&
+        document.body?.getAttribute("data-tab-layout") === "stack");
+    this.el.classList.toggle("vertical", isVertical);
 
     const items = document.createElement("div");
     items.className = "usage-tracker-items";
@@ -206,7 +222,7 @@ export class UsageTracker {
       );
       item.title = `${entry.report.providerName} · ${entry.limit.label} · ${usedPercent}% used`;
       const besideIcon =
-        this.settings.iconPlacement === "beside"
+        isVertical || this.settings.iconPlacement === "beside"
           ? this.renderIcon(entry.report.provider)
           : undefined;
       if (besideIcon) item.append(besideIcon);
@@ -220,7 +236,7 @@ export class UsageTracker {
         percent.setAttribute("aria-hidden", "true");
         item.append(percent);
       }
-      item.append(this.renderGauge(entry));
+      item.append(this.renderGauge(entry, isVertical));
       items.appendChild(item);
     }
 

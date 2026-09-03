@@ -16,7 +16,6 @@ import {
   isLargePaste,
   normalizePaste,
   pasteMarker,
-  triggersPasteMenu,
   type PasteMode,
   type PasteModeSetting,
   type PasteMarkerStyle,
@@ -929,10 +928,10 @@ export class Dock {
       ev.preventDefault();
       const lines = countPasteLines(pasted);
       const mode = this.hooks.pasteMode();
-      if (mode === "ask" && triggersPasteMenu(lines)) {
+      if (mode === "ask") {
         this.pasteMenu.open(lines, (chosen) => this.commitPaste(pasted, lines, chosen));
       } else {
-        this.commitPaste(pasted, lines, mode === "ask" ? "inline" : mode);
+        this.commitPaste(pasted, lines, mode);
       }
       return;
     }

@@ -1,6 +1,6 @@
 export type UsageTrackerStyle = "bar" | "circle" | "battery";
 export type UsageTrackerIconPlacement = "inside" | "beside";
-
+export type UsageTrackerOrientation = "auto" | "horizontal" | "vertical";
 export type UsageTrackerQuota = {
   provider: string;
   account?: string;
@@ -17,6 +17,7 @@ export type UsageTrackerSettings = {
   providerIconUrls: Record<string, string>;
   iconPlacement: UsageTrackerIconPlacement;
   showPercent: boolean;
+  orientation?: UsageTrackerOrientation;
 };
 
 export const USAGE_TRACKER_REFRESH_PRESETS = [
@@ -39,6 +40,7 @@ export const DEFAULT_USAGE_TRACKER_SETTINGS: UsageTrackerSettings = {
   providerIconUrls: {},
   iconPlacement: "inside",
   showPercent: false,
+  orientation: "auto",
 };
 
 export type SettingsSectionId =
@@ -135,6 +137,10 @@ export function normalizeUsageTrackerSettings(value: unknown): UsageTrackerSetti
       typeof candidate.showPercent === "boolean"
         ? candidate.showPercent
         : DEFAULT_USAGE_TRACKER_SETTINGS.showPercent,
+    orientation:
+      candidate.orientation === "horizontal" || candidate.orientation === "vertical"
+        ? candidate.orientation
+        : DEFAULT_USAGE_TRACKER_SETTINGS.orientation,
   };
 }
 

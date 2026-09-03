@@ -51,6 +51,13 @@ describe("usage tracker settings", () => {
     expect(usageTrackerDelay(10_000, 2)).toBe(40_000);
     expect(usageTrackerDelay(10_000, 100)).toBe(600_000);
   });
+  it("normalizes orientation setting", () => {
+    expect(normalizeUsageTrackerSettings({ orientation: "vertical" }).orientation).toBe("vertical");
+    expect(normalizeUsageTrackerSettings({ orientation: "horizontal" }).orientation).toBe("horizontal");
+    expect(normalizeUsageTrackerSettings({ orientation: "auto" }).orientation).toBe("auto");
+    expect(normalizeUsageTrackerSettings({ orientation: "invalid" as unknown as "auto" }).orientation).toBe("auto");
+    expect(normalizeUsageTrackerSettings({}).orientation).toBe("auto");
+  });
 });
 
 describe("settings accordion state", () => {
@@ -116,6 +123,7 @@ function createMockElement(tag: string) {
     },
     setAttribute: (k: string, v: string) => attrs.set(k, String(v)),
     getAttribute: (k: string) => attrs.get(k) ?? null,
+    removeAttribute: (k: string) => attrs.delete(k),
     replaceChildren: (...nodes: any[]) => {
       children.length = 0;
       children.push(...nodes);
@@ -143,6 +151,7 @@ function createMockElement(tag: string) {
       for (const child of children) walk(child);
       return results;
     },
+    querySelector: (selector: string): unknown => el.querySelectorAll(selector)[0] ?? null,
     children,
   };
   return el;
@@ -155,9 +164,11 @@ describe("usage tracker refresh scheduling", () => {
       configurable: true,
       value: { setTimeout, clearTimeout },
     });
+    const bodyEl = createMockElement("body");
     Object.defineProperty(globalThis, "document", {
       configurable: true,
       value: {
+        body: bodyEl,
         createElement: (tag: string) => createMockElement(tag),
         createElementNS: (_ns: string, tag: string) => createMockElement(tag),
       },
@@ -321,6 +332,84 @@ describe("usage tracker percent rendering", () => {
     items = tracker.el.querySelectorAll(".usage-tracker-item");
     expect(items[0].getAttribute("aria-label")).toContain("Anthropic");
     expect(items[1].getAttribute("aria-label")).toContain("OpenAI");
+    tracker.destroy();
+  });
+});
+
+describe("usage tracker vertical orientation", () => {
+  it("renders vertical meters and sets vertical class when orientation is vertical", async () => {
+    const sampleReports: ProviderUsageReport[] = [
+      {
+        provider: "openai",
+        providerName: "OpenAI",
+        limits: [{ label: "Rate", used: 65, limit: 100, remaining: 35, unit: "req", usedPercent: 65 }],
+      },
+    ];
+
+    const tracker = new UsageTracker({
+      getProviderUsage: async () => sampleReports,
+      settings: {
+        enabled: true,
+        refreshIntervalMs: null,
+        quotas: [{ provider: "openai", label: "Rate", enabled: true, style: "circle" }],
+        providerIconUrls: {},
+        iconPlacement: "inside",
+        showPercent: true,
+        orientation: "vertical",
+      },
+      onReports: vi.fn(),
+    });
+
+    await tracker.refresh();
+    expect(tracker.el.classList.contains("vertical")).toBe(true);
+
+    const meter = tracker.el.querySelector(".usage-tracker-vertical-meter");
+    expect(meter).not.toBeNull();
+    expect(tracker.el.querySelector(".usage-tracker-circle")).toBeNull();
+
+    const icon = tracker.el.querySelector(".usage-tracker-icon");
+    expect(icon).not.toBeNull();
+
+    tracker.destroy();
+  });
+
+  it("switches to vertical layout in auto mode when tabs are stacked", async () => {
+    const sampleReports: ProviderUsageReport[] = [
+      {
+        provider: "openai",
+        providerName: "OpenAI",
+        limits: [{ label: "Rate", used: 65, limit: 100, remaining: 35, unit: "req", usedPercent: 65 }],
+      },
+    ];
+
+    const tracker = new UsageTracker({
+      getProviderUsage: async () => sampleReports,
+      settings: {
+        enabled: true,
+        refreshIntervalMs: null,
+        quotas: [{ provider: "openai", label: "Rate", enabled: true, style: "circle" }],
+        providerIconUrls: {},
+        iconPlacement: "inside",
+        showPercent: true,
+        orientation: "auto",
+      },
+      onReports: vi.fn(),
+    });
+
+    await tracker.refresh();
+    expect(tracker.el.classList.contains("vertical")).toBe(false);
+
+    // Simulate stacked tab layout
+    document.body.setAttribute("data-tab-layout", "stack");
+    tracker.render();
+    expect(tracker.el.classList.contains("vertical")).toBe(true);
+    expect(tracker.el.querySelector(".usage-tracker-vertical-meter")).not.toBeNull();
+
+    // Revert
+    document.body.removeAttribute("data-tab-layout");
+    tracker.render();
+    expect(tracker.el.classList.contains("vertical")).toBe(false);
+
     tracker.destroy();
   });
 });

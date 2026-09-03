@@ -409,6 +409,7 @@ interface AsyncJob {
   status: string;
   label: string;
   startTime: number;
+  model?: string;
 }
 
 /** omp's ExtensionContext type may predate getAsyncJobSnapshot; access it structurally. */
@@ -422,14 +423,22 @@ function normalizeJobs(raw: unknown, cap: number): AsyncJob[] {
   const out: AsyncJob[] = [];
   for (const j of raw) {
     if (!j || typeof j !== "object") continue;
+    const type = "type" in j && typeof j.type === "string" ? j.type : "job";
+    // Filter out regular bash jobs: only show task / subagent jobs matching /jobs
+    if (type === "bash") continue;
     const id = "id" in j && typeof j.id === "string" ? j.id : "";
     if (!id) continue;
+    const rawModel =
+      ("model" in j && typeof j.model === "string" && j.model) ||
+      ("resolvedModel" in j && typeof j.resolvedModel === "string" && j.resolvedModel) ||
+      undefined;
     out.push({
       id,
-      type: "type" in j && typeof j.type === "string" ? j.type : "job",
+      type,
       status: "status" in j && typeof j.status === "string" ? j.status : "running",
       label: "label" in j && typeof j.label === "string" ? j.label : id,
       startTime: "startTime" in j && typeof j.startTime === "number" ? j.startTime : 0,
+      ...(rawModel ? { model: rawModel } : {}),
     });
     if (out.length >= cap) break;
   }

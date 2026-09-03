@@ -34,7 +34,8 @@ export class JobActivityModal {
   private onKillCallback: ((job: AsyncJob) => void) | null = null;
   private pollTimer: number | null = null;
   private isAutoRefresh = true;
-
+  private isUserScrolledUp = false;
+  private userScrollTop = 0;
   constructor() {
     this.el = document.createElement("div");
     this.el.id = "job-activity-modal";
@@ -79,6 +80,8 @@ export class JobActivityModal {
     this.el.hidden = true;
     this.currentJob = null;
     this.details = null;
+    this.isUserScrolledUp = false;
+    this.userScrollTop = 0;
   }
 
   private startPolling(): void {
@@ -153,6 +156,17 @@ export class JobActivityModal {
     const age = formatAge(job.startTime, now);
     const status = details?.status || job.status || "running";
 
+    // Save existing scroll position and user scroll state if body exists
+    const prevBody = this.el.querySelector<HTMLDivElement>(".job-modal-body");
+    if (prevBody) {
+      this.userScrollTop = prevBody.scrollTop;
+      const maxScroll = prevBody.scrollHeight - prevBody.clientHeight;
+      // Consider user scrolled away from bottom if > 40px from bottom
+      if (maxScroll > 0 && maxScroll - prevBody.scrollTop > 40) {
+        this.isUserScrolledUp = true;
+      }
+    }
+
     this.el.innerHTML = `
       <div class="job-modal-card" role="dialog" aria-label="Job Activity">
         <div class="job-modal-header">
@@ -162,6 +176,13 @@ export class JobActivityModal {
               ${status.toUpperCase()}
             </span>
             <span class="job-type-pill">${escapeHtml(job.type)}</span>
+            ${
+              (details?.model || job.model)
+                ? `<span class="job-model-pill" title="${escapeHtml(details?.model || job.model || "")}">
+                    ${escapeHtml((details?.model || job.model || "").split("/").pop() || "")}
+                  </span>`
+                : ""
+            }
             <h3 class="job-modal-title" title="${escapeHtml(job.label)}">${escapeHtml(job.label)}</h3>
             ${age ? `<span class="job-modal-age">Runtime: ${age}</span>` : ""}
           </div>
@@ -203,6 +224,21 @@ export class JobActivityModal {
         </div>
       </div>
     `;
+    // Restore scroll position
+    const newBody = this.el.querySelector<HTMLDivElement>(".job-modal-body");
+    if (newBody) {
+      if (this.isUserScrolledUp) {
+        newBody.scrollTop = this.userScrollTop;
+      } else {
+        newBody.scrollTop = newBody.scrollHeight;
+      }
+
+      newBody.addEventListener("scroll", () => {
+        this.userScrollTop = newBody.scrollTop;
+        const maxScroll = newBody.scrollHeight - newBody.clientHeight;
+        this.isUserScrolledUp = maxScroll > 0 && (maxScroll - newBody.scrollTop > 40);
+      });
+    }
 
     // Bind event listeners
     this.el.querySelector(".job-modal-close")?.addEventListener("click", () => this.close());

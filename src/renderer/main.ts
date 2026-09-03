@@ -296,6 +296,7 @@ const tabStrip = new TabStrip({
 function applyTabLayoutMode(mode: TabLayoutMode): void {
   tabLayoutMode = mode;
   tabStrip.setMode(mode);
+  usageTracker?.render();
   queueUsageTrackerLayout(true);
 }
 let settingsModal: SettingsModal | null = null;
@@ -1775,7 +1776,11 @@ async function submitDock(payload: DockPayload): Promise<void> {
         if (lead) view.type(lead);
         // Only a sighting produced by this paste may answer for it.
         tab.pasteMenuSeen = false;
-        view.paste(item.text);
+        const pasteContent =
+          item.mode === "wrapped" && !triggersPasteMenu(item.lines)
+            ? `<attachment>\n${item.text}\n</attachment>`
+            : item.text;
+        view.paste(pasteContent);
         await sleep(EDITOR_SETTLE_MS);
         await answerPasteMenu(tab, item.mode, triggersPasteMenu(item.lines));
         continue;

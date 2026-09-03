@@ -198,7 +198,9 @@ export class TodoPanel {
   }
 
   private renderJobs(): void {
-    if (this.jobs.length === 0) {
+    // Filter out regular bash jobs; show task / subagent jobs matching /jobs
+    const visibleJobs = this.jobs.filter((j) => j.type !== "bash");
+    if (visibleJobs.length === 0) {
       const empty = document.createElement("div");
       empty.className = "todo-panel-empty";
       empty.textContent = "No active jobs.";
@@ -207,7 +209,7 @@ export class TodoPanel {
     }
 
     const now = Date.now();
-    const rows = this.jobs.map((job) => {
+    const rows = visibleJobs.map((job) => {
       const row = document.createElement("div");
       row.className = `job-row ${JOB_STATUS_CLASS[job.status] ?? "job-completed"}`;
       row.title = `Click to view live activity for ${job.label}`;
@@ -230,11 +232,23 @@ export class TodoPanel {
       const type = document.createElement("span");
       type.className = "job-type";
       type.textContent = job.type;
+      meta.appendChild(type);
+
+      if (job.model) {
+        const modelEl = document.createElement("span");
+        modelEl.className = "job-model";
+        // Strip provider prefix for a concise badge (e.g. "anthropic/claude-opus-5" -> "claude-opus-5")
+        const cleanModel = job.model.split("/").pop() || job.model;
+        modelEl.textContent = cleanModel;
+        modelEl.title = job.model;
+        meta.appendChild(modelEl);
+      }
+
       const age = formatJobAge(job.startTime, now);
       const status = document.createElement("span");
       status.textContent =
         job.status === "running" ? (age ? `running \u00B7 ${age}` : "running") : job.status;
-      meta.append(type, status);
+      meta.appendChild(status);
 
       main.append(label, meta);
       row.append(dot, main);
