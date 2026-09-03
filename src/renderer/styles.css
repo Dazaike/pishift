@@ -122,6 +122,7 @@ button:active {
   padding: 0 4px;
   /* Leave room for Windows caption buttons (min/max/close). */
   padding-right: 140px;
+  -webkit-app-region: drag;
 }
 
 /* Stacked rows: the header is the only thing that may grow, and only to a cap
@@ -141,6 +142,7 @@ body[data-tab-layout="stack"] #chrome {
   flex: 0 1 auto;
   padding: 4px 4px 0;
   overflow: hidden;
+  -webkit-app-region: drag;
 }
 
 body[data-tab-layout="stack"] #tab-strip {
@@ -154,7 +156,7 @@ body[data-tab-layout="stack"] #tab-strip {
   min-width: 0;
   flex: 0 1 auto;
   scrollbar-width: none;
-  -webkit-app-region: no-drag;
+  -webkit-app-region: drag;
 }
 
 #tabs::-webkit-scrollbar {
@@ -262,7 +264,7 @@ body[data-tab-layout="menu"] #tabs {
 
 #drag-region {
   flex: 1;
-  min-width: 24px;
+  min-width: 0;
   height: var(--chrome-h);
   -webkit-app-region: drag;
 }
@@ -287,6 +289,7 @@ body[data-tab-layout="menu"] #tabs {
   margin-bottom: -1px;
   animation: tab-enter 160ms cubic-bezier(0.2, 0.9, 0.3, 1) forwards;
   transition: background-color 140ms ease, color 140ms ease, border-color 140ms ease;
+  -webkit-app-region: no-drag;
 }
 
 @keyframes tab-enter {
@@ -469,6 +472,7 @@ body[data-tab-layout="menu"] #tabs {
   cursor: default;
   opacity: 0.55;
   transition: opacity 120ms ease, background-color 120ms ease;
+  -webkit-app-region: no-drag;
 }
 
 .tab-close:hover {
@@ -537,12 +541,18 @@ body[data-tab-layout="menu"] #tabs {
   align-items: center;
   gap: 3px;
   margin-left: auto;
+  min-width: 0;
+  flex-shrink: 0;
+  -webkit-app-region: drag;
 }
 
 .chrome-actions-row {
   display: flex;
   align-items: center;
   gap: 3px;
+  min-width: 0;
+  flex-shrink: 0;
+  -webkit-app-region: drag;
 }
 
 #btn-recent-folders,
@@ -567,6 +577,7 @@ body[data-tab-layout="menu"] #tabs {
   font-size: 11px;
   font-weight: 500;
   cursor: pointer;
+  -webkit-app-region: no-drag;
 }
 
 #btn-recent-folders:hover,
@@ -640,6 +651,8 @@ body.hide-top-button-labels .btn-chrome-glyph {
 #btn-top-menu {
   align-self: center;
   flex: 0 0 auto;
+  flex-shrink: 0;
+  z-index: 2;
   margin-top: 0;
   display: none;
   align-items: center;
@@ -657,7 +670,6 @@ body.hide-top-button-labels .btn-chrome-glyph {
   -webkit-app-region: no-drag;
   transition: all 140ms ease;
 }
-
 #btn-top-menu:hover {
   background: rgba(255, 255, 255, 0.08);
   border-color: var(--border);
@@ -986,15 +998,26 @@ body.top-bar-as-menu #btn-top-menu {
   color: var(--fg-dim);
 }
 
-.job-type {
+.job-type,
+.job-model {
   padding: 1px 5px;
   border: 1px solid var(--border);
   border-radius: 4px;
   background: var(--bg-tab);
-  text-transform: uppercase;
   letter-spacing: 0.04em;
 }
 
+.job-type {
+  text-transform: uppercase;
+}
+
+.job-model {
+  color: var(--accent);
+  font-family: var(--mono, monospace);
+  font-size: 9px;
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-tab));
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
+}
 .view {
   position: absolute;
   top: 0;
@@ -5823,15 +5846,27 @@ body.dnd-hover #dock {
   border: 1px solid rgba(247, 118, 142, 0.35);
 }
 
-.job-type-pill {
+.job-type-pill,
+.job-model-pill {
   font-size: 10px;
   font-weight: 600;
-  text-transform: uppercase;
   padding: 2px 6px;
   border-radius: 4px;
+  border: 1px solid var(--border);
+}
+
+.job-type-pill {
+  text-transform: uppercase;
   background: var(--bg-tab);
   color: var(--fg-dim);
-  border: 1px solid var(--border);
+}
+
+.job-model-pill {
+  font-family: var(--mono, monospace);
+  font-size: 10px;
+  background: color-mix(in srgb, var(--accent) 15%, var(--bg-tab));
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
 }
 
 .job-modal-title {
@@ -6135,6 +6170,7 @@ body.dnd-hover #dock {
 #usage-tracker-anchor {
   display: inline-flex;
   align-items: center;
+  -webkit-app-region: drag;
 }
 
 #usage-tracker {
@@ -6144,7 +6180,7 @@ body.dnd-hover #dock {
   min-width: 0;
   margin: 0;
   color: var(--fg-dim);
-  -webkit-app-region: no-drag;
+  -webkit-app-region: drag;
 }
 
 
@@ -6152,6 +6188,7 @@ body.dnd-hover #dock {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  -webkit-app-region: drag;
 }
 
 .usage-tracker-item {
@@ -6161,6 +6198,7 @@ body.dnd-hover #dock {
   font-size: 9px;
   line-height: 1;
   white-space: nowrap;
+  -webkit-app-region: drag;
 }
 
 .usage-tracker-item:not(:last-child)::after {
@@ -6173,6 +6211,7 @@ body.dnd-hover #dock {
   color: var(--fg-dim);
   font-variant-numeric: tabular-nums;
   font-weight: 600;
+  -webkit-app-region: drag;
 }
 
 .usage-tracker-percent.low {
@@ -6196,6 +6235,7 @@ body.dnd-hover #dock {
   height: 22px;
   overflow: hidden;
   color: var(--accent);
+  -webkit-app-region: drag;
 }
 
 .usage-tracker-gauge.low {
@@ -6256,8 +6296,8 @@ body.dnd-hover #dock {
   height: 12px;
   object-fit: contain;
   color: var(--fg);
+  -webkit-app-region: drag;
 }
-
 .usage-tracker-icon svg {
   display: block;
   width: 100%;
@@ -6304,6 +6344,51 @@ body.dnd-hover #dock {
   background: transparent;
   color: var(--fg-dim);
   cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+
+#usage-tracker.vertical .usage-tracker-items,
+body[data-tab-layout="stack"] #usage-tracker.vertical .usage-tracker-items {
+  display: grid;
+  grid-template-rows: repeat(2, auto);
+  grid-auto-flow: column;
+  gap: 2px 6px;
+  align-items: center;
+}
+
+#usage-tracker.vertical .usage-tracker-item,
+body[data-tab-layout="stack"] #usage-tracker.vertical .usage-tracker-item {
+  gap: 2px;
+  align-items: center;
+}
+
+#usage-tracker.vertical .usage-tracker-item::after,
+body[data-tab-layout="stack"] #usage-tracker.vertical .usage-tracker-item::after {
+  display: none;
+}
+
+.usage-tracker-vertical-meter {
+  position: relative;
+  width: 8px;
+  height: 18px;
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, currentColor 65%, var(--border));
+  border-radius: 2px;
+  background: var(--bg);
+  overflow: hidden;
+  display: inline-block;
+  vertical-align: middle;
+}
+
+.usage-tracker-vertical-meter .usage-tracker-fill {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  width: 100%;
+  height: var(--usage-fill);
+  background: currentColor;
+  transition: height 180ms ease;
 }
 
 .usage-tracker-refresh:hover:not(:disabled) {

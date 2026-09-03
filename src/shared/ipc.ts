@@ -138,6 +138,8 @@ export interface AsyncJob {
   label: string;
   /** Epoch ms; 0 when omp did not report one. */
   startTime: number;
+  /** Model ID (e.g. `anthropic/claude-opus-5` or `gemini-3.7-flash`) if known. */
+  model?: string;
 }
 
 export interface JobActivityEvent {
@@ -157,6 +159,7 @@ export interface JobActivityDetails {
   type: string;
   status: string;
   startTime: number;
+  model?: string;
   artifactMarkdown?: string;
   events: JobActivityEvent[];
   rawLog?: string;

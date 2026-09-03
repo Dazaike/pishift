@@ -111,11 +111,10 @@ export async function loadJobActivity(
       if (matchedJsonl) break;
     } catch {}
   }
-
   const events: JobActivityEvent[] = [];
   let artifactMarkdown: string | undefined;
   let rawLog: string | undefined;
-
+  let detectedModel: string | undefined;
   if (matchedMd && existsSync(matchedMd)) {
     try {
       artifactMarkdown = readFileSync(matchedMd, "utf8");
@@ -136,6 +135,11 @@ export async function loadJobActivity(
       for (const line of lines) {
         try {
           const entry = JSON.parse(line);
+          if (entry.type === "model_change" && typeof entry.model === "string" && entry.model) {
+            detectedModel = entry.model;
+          } else if (entry.type === "session_init" && typeof entry.resolvedModel === "string" && entry.resolvedModel) {
+            detectedModel = entry.resolvedModel;
+          }
           const timestamp = typeof entry.timestamp === "string"
             ? new Date(entry.timestamp).getTime()
             : typeof entry.timestamp === "number"
@@ -160,6 +164,9 @@ export async function loadJobActivity(
                 });
               }
             } else if (role === "assistant" && Array.isArray(msg.content)) {
+              if (typeof msg.model === "string" && msg.model) {
+                detectedModel = msg.model;
+              }
               for (const c of msg.content) {
                 if (c.type === "thinking" && c.thinking) {
                   events.push({
@@ -229,6 +236,7 @@ export async function loadJobActivity(
     type: req.type || "job",
     status: req.status || "running",
     startTime: req.startTime || 0,
+    model: detectedModel,
     artifactMarkdown,
     events,
     rawLog,

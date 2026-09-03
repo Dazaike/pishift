@@ -1020,6 +1020,34 @@ export class SettingsModal {
     const enabledText = document.createElement("span");
     enabledText.textContent = "Show provider quota trackers in the top bar";
     enabledLabel.append(enabled, enabledText);
+    const orientationRow = document.createElement("div");
+    orientationRow.className = "settings-pos-row";
+    const orientationLabel = document.createElement("label");
+    orientationLabel.className = "settings-pos-label";
+    orientationLabel.textContent = "Orientation";
+    const orientationSelect = document.createElement("select");
+    orientationSelect.className = "settings-select";
+    for (const [value, label] of [
+      ["auto", "Auto (Vertical on Stacked Tabs)"] as const,
+      ["horizontal", "Horizontal"] as const,
+      ["vertical", "Vertical"] as const,
+    ]) {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = label;
+      option.selected = (this.usageTracker.orientation ?? "auto") === value;
+      orientationSelect.append(option);
+    }
+    orientationSelect.addEventListener("change", () => {
+      const val = orientationSelect.value;
+      const orientation = val === "horizontal" || val === "vertical" ? val : "auto";
+      this.updateUsageTracker({
+        ...this.usageTracker,
+        orientation,
+      });
+      this.render();
+    });
+    orientationRow.append(orientationLabel, orientationSelect);
     const iconPlacementRow = document.createElement("div");
     iconPlacementRow.className = "settings-pos-row";
     const iconPlacementLabel = document.createElement("label");
@@ -1129,6 +1157,7 @@ export class SettingsModal {
     refreshButton.addEventListener("click", () => void this.onRefreshUsage().finally(() => this.render()));
     content.append(
       enabledLabel,
+      orientationRow,
       iconPlacementRow,
       percentLabel,
       intervalRow,

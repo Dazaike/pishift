@@ -41,8 +41,15 @@ describe("triggersPasteMenu", () => {
     expect(triggersPasteMenu(99)).toBe(false);
     expect(triggersPasteMenu(100)).toBe(true);
   });
-});
 
+  it("isLargePaste correctly triggers for pastes over threshold", () => {
+    expect(isLargePaste("line1\nline2")).toBe(false);
+    const elevenLines = Array.from({ length: 11 }, (_, i) => `line ${i}`).join("\n");
+    expect(isLargePaste(elevenLines)).toBe(true);
+    const thousandChars = "a".repeat(1001);
+    expect(isLargePaste(thousandChars)).toBe(true);
+  });
+});
 describe("pasteMenuDownCount", () => {
   it("maps each mode to omp's selector row", () => {
     expect(pasteMenuDownCount("wrapped")).toBe(0);
