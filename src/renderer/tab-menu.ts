@@ -24,6 +24,7 @@ export interface TabMenuCallbacks {
   onDuplicate: (target: TabMenuTarget) => void;
   onRename: (target: TabMenuTarget) => void;
   onSetColor: (target: TabMenuTarget, colorId?: string) => void;
+  onSplit?: (target: TabMenuTarget) => void;
   onClose: (target: TabMenuTarget) => void;
   onCloseOthers: (target: TabMenuTarget) => void;
   onCloseRight: (target: TabMenuTarget) => void;
@@ -119,6 +120,10 @@ export class TabContextMenu {
         <span class="menu-icon">&#9998;</span>
         <span>Rename Tab</span>
       </div>
+      <div class="menu-item" data-action="split">
+        <span class="menu-icon">&#x25EB;</span>
+        <span>Split Screen (Dual View)</span>
+      </div>
       <div class="menu-separator"></div>
       <div class="menu-section-label">Tab Color Tag</div>
       <div class="menu-color-row">
@@ -156,6 +161,7 @@ export class TabContextMenu {
         else if (action === "copy-path") cb.onCopyPath(target);
         else if (action === "duplicate") cb.onDuplicate(target);
         else if (action === "rename") cb.onRename(target);
+        else if (action === "split") cb.onSplit?.(target);
         else if (action === "close") cb.onClose(target);
         else if (action === "close-others") cb.onCloseOthers(target);
         else if (action === "close-right") cb.onCloseRight(target);

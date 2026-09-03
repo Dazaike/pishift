@@ -557,6 +557,7 @@ body[data-tab-layout="menu"] #tabs {
 
 #btn-recent-folders,
 #btn-recent-chats,
+#btn-split,
 #btn-settings,
 #btn-todo,
 #btn-relaunch,
@@ -582,6 +583,7 @@ body[data-tab-layout="menu"] #tabs {
 
 #btn-recent-folders:hover,
 #btn-recent-chats:hover,
+#btn-split:hover,
 #btn-settings:hover,
 #btn-todo:hover,
 #btn-relaunch:hover,
@@ -589,6 +591,16 @@ body[data-tab-layout="menu"] #tabs {
   background: rgba(255, 255, 255, 0.08);
   border-color: var(--border);
   color: var(--fg);
+}
+
+#btn-split.active {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.btn-split-svg {
+  flex-shrink: 0;
 }
 
 .btn-chat-svg {
@@ -683,6 +695,7 @@ body.hide-top-button-labels .btn-chrome-glyph {
 
 body.top-bar-as-menu #btn-todo,
 body.top-bar-as-menu #btn-settings,
+body.top-bar-as-menu #btn-split,
 body.top-bar-as-menu #btn-relaunch,
 body.top-bar-as-menu #btn-quit {
   display: none !important;
@@ -726,6 +739,89 @@ body.top-bar-as-menu #btn-top-menu {
   min-width: 0;
   min-height: 0;
   background: var(--bg) !important;
+}
+
+#views.split-active {
+  display: flex;
+  flex-direction: row;
+}
+
+.split-pane {
+  position: relative;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg) !important;
+}
+
+#pane-primary {
+  flex: 1 1 100%;
+  width: 100%;
+}
+
+#views.split-active #pane-primary {
+  flex: 0 0 calc(var(--split-ratio, 50%) - 3px);
+  width: calc(var(--split-ratio, 50%) - 3px);
+}
+
+#views.split-active #pane-secondary {
+  flex: 1 1 auto;
+  width: auto;
+}
+
+.split-divider {
+  position: relative;
+  width: 6px;
+  height: 100%;
+  background: var(--border);
+  cursor: col-resize;
+  user-select: none;
+  flex: 0 0 6px;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 140ms ease;
+}
+
+.split-divider:hover,
+.split-divider.dragging {
+  background: var(--accent);
+}
+
+.split-divider-handle {
+  width: 2px;
+  height: 24px;
+  border-radius: 1px;
+  background: var(--fg-dim);
+  pointer-events: none;
+}
+
+.split-divider:hover .split-divider-handle,
+.split-divider.dragging .split-divider-handle {
+  background: var(--bg);
+}
+
+/* In split mode, give each pane a visual focus cue */
+#views.split-active .split-pane {
+  border: 1px solid transparent;
+  transition: border-color 140ms ease;
+}
+
+#views.split-active .split-pane.active {
+  border-top-color: var(--accent);
+}
+
+.tab.tab-split-secondary {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+}
+
+/* When dragging the split divider, disable iframe pointer events and text selection */
+body.resizing-split,
+body.resizing-split * {
+  cursor: col-resize !important;
+  user-select: none !important;
 }
 
 #todo-panel {

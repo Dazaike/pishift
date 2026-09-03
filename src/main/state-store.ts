@@ -88,6 +88,10 @@ export class StateStore {
             ? raw.panelPosition
             : undefined,
         tabLayoutMode: isTabLayoutMode(raw.tabLayoutMode) ? raw.tabLayoutMode : undefined,
+        splitRatio:
+          typeof raw.splitRatio === "number" && raw.splitRatio >= 0.1 && raw.splitRatio <= 0.9
+            ? raw.splitRatio
+            : undefined,
         usageTracker: raw.usageTracker
           ? normalizeUsageTrackerSettings(raw.usageTracker)
           : undefined,

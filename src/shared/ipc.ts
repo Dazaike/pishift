@@ -360,6 +360,7 @@ export type PersistedState = {
   autoExpandReasoning?: boolean;
   /** How the tab strip copes with more tabs than the header can show. */
   tabLayoutMode?: TabLayoutMode;
+  splitRatio?: number;
   /** Chime when a session goes from working back to waiting for input. */
   doneSoundEnabled?: boolean;
   /** 0–1 playback volume for the completion chime. */
