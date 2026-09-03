@@ -68,6 +68,13 @@
             <img src="./assets/icons/folder.png" alt="" class="btn-icon" />
             <span>Recent Folders</span>
           </button>
+          <button id="btn-split" title="Toggle Split Screen (Ctrl+\)">
+            <svg class="btn-split-svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+              <line x1="12" y1="3" x2="12" y2="21"></line>
+            </svg>
+            <span>Split</span>
+          </button>
           <button id="btn-settings" title="Themes and Settings">
             <img src="./assets/icons/settings.png" alt="" class="btn-icon" />
             <span>Settings</span>
@@ -88,7 +95,13 @@
       </div>
     </header>
     <div id="workspace">
-      <main id="views"></main>
+      <main id="views">
+        <div id="pane-primary" class="split-pane active"></div>
+        <div id="split-divider" class="split-divider" hidden>
+          <div class="split-divider-handle"></div>
+        </div>
+        <div id="pane-secondary" class="split-pane" hidden></div>
+      </main>
       <aside id="todo-panel" hidden>
         <header id="todo-panel-header">
           <span id="todo-panel-title">Session Overview</span>

@@ -3,6 +3,7 @@ import settingsIcon from "./assets/icons/settings.png";
 export interface TopMenuCallbacks {
   onOpenTodo: () => void;
   onOpenSettings: () => void;
+  onToggleSplit?: () => void;
   onRelaunch: () => void;
   onQuit: () => void;
 }
@@ -123,6 +124,15 @@ export class TopMenu {
           </span>
           <span class="top-menu-label">Settings</span>
         </button>
+        <button type="button" class="top-menu-item" data-action="split">
+          <span class="top-menu-icon-wrap">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+              <line x1="12" y1="3" x2="12" y2="21"></line>
+            </svg>
+          </span>
+          <span class="top-menu-label">Split Screen (Ctrl+\\)</span>
+        </button>
         <div class="top-menu-divider"></div>
         <button type="button" class="top-menu-item" data-action="relaunch">
           <span class="top-menu-icon-wrap"><span class="top-menu-glyph">&#x21BB;</span></span>
@@ -144,6 +154,10 @@ export class TopMenu {
     this.el.querySelector('[data-action="settings"]')?.addEventListener("click", () => {
       this.close();
       this.callbacks.onOpenSettings();
+    });
+    this.el.querySelector('[data-action="split"]')?.addEventListener("click", () => {
+      this.close();
+      this.callbacks.onToggleSplit?.();
     });
     this.el.querySelector('[data-action="relaunch"]')?.addEventListener("click", () => {
       this.close();

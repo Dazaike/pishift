@@ -76,7 +76,9 @@ No fake web-view wrappers pretending to be terminals. Just a genuine hardware-ac
   - *Duplicate Tab in Directory* (spawn identical workspace instantly).
   - *Project Color Badges* (tag your tabs with colors so you stop mixing up repos).
   - *Inline Rename*, *Close Other Tabs*, and *Close Tabs to the Right*.
+- **Split Screen Dual View:** Two sessions, one window, a drag-to-resize divider. Toggle from the top bar, the burger menu, a tab's right-click menu, or `Ctrl+\`. Double-click the divider when you want 50/50 without thinking. The split ratio survives restarts because of course it does.
 - **Drag-to-Reorder:** Because the tab you opened 5 hours ago shouldn't be trapped on the left forever.
+- **Drag the chrome, not the 8px caption lie:** The whole top bar is a window drag handle. Grab the tab strip, the usage gauges, whatever — it moves. Buttons stay clickable because we are not animals.
 
 ### 🔌 Zero-Config Telemetry Bridge
 - Uses an asynchronous UDP bridge (`127.0.0.1:37991`) to stream live agent activity (`idle`, `working`, `thinking`), token usage, and model states with **zero polling**. A file-watch backstop covers dropped datagrams, so the UI never gets stuck claiming the agent is busy.
@@ -110,7 +112,7 @@ No fake web-view wrappers pretending to be terminals. Just a genuine hardware-ac
 ### 🗃️ Quick-Switch Everything
 - **Recent Chats Popover:** Fuzzy-search and resume any past session by working directory without leaving the keyboard.
 - **Recent Folders Popover:** Jump straight to any workspace you've opened before.
-- **App Menu Popover:** The old "Usage" window is now a fast vertical popover (Todo, Settings, Relaunch, Quit) instead of a separate window — matches the Model/Thinking menu feel.
+- **App Menu Popover:** The old "Usage" window is now a fast vertical popover (Todo, Settings, Split Screen, Relaunch, Quit) instead of a separate window — matches the Model/Thinking menu feel.
 - **Native-Feeling Ask & Confirm Dialogs:** In-app modals replace blocking OS prompts for destructive actions and quick input.
 - **Live Activity Sync:** Tab titles and status reflect the agent's actual state (`idle`, `working`, `thinking`) in real time instead of the generic "Temp" default.
 - **Stall Recovery That Doesn’t Lie:** A frozen terminal output stream gets an explicit Resume or Kill action; long-running tools show elapsed time instead of pretending they vanished into the void.
@@ -121,8 +123,8 @@ No fake web-view wrappers pretending to be terminals. Just a genuine hardware-ac
 
 ### Download the binary (for people with places to be)
 Grab the latest release from the **[Releases](https://github.com/Dazaike/pishift/releases)** tab:
-- **`PiShift Setup <version>.exe`** — Standard installer.
-- **`PiShift-<version>-win.zip`** — Portable zip if you have installer commitment issues.
+- **`PiShift Setup 1.8.4.exe`** — Standard installer.
+- **`PiShift-1.8.4-win.zip`** — Portable zip if you have installer commitment issues.
 
 ### Build from source (for hackers & tinkerers)
 
@@ -151,6 +153,7 @@ bun run dist
 | `Ctrl+Shift+T` | New tab in the current working directory |
 | `Ctrl+Shift+W` | Close the active tab |
 | `Ctrl+Tab` / `Ctrl+Shift+Tab` | Cycle tabs forward / back |
+| `Ctrl+\` | Toggle split screen (two sessions, one window) |
 | `Ctrl+Shift+F` | Find text in terminal output |
 | `Ctrl+Shift+U` | Toggle Chat View / terminal for the active tab |
 | `Ctrl+=` / `Ctrl+-` / `Ctrl+0` | Zoom in / Zoom out / Reset font size |
