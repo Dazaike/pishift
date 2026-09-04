@@ -1,6 +1,7 @@
 import { DEFAULT_SLASH_ICON, SKILL_SLASH_ICON, SLASH_COMMAND_ICONS } from "./slash-command-icons";
 import { SLASH_COMMANDS, type SlashCommand } from "../shared/slash-commands";
 import { rankSlashCommands } from "../shared/slash-rank";
+import { popoverMotion } from "./motion-utils";
 
 const USAGE_STORAGE_KEY = "pishift.slashCommandUsage";
 
@@ -60,14 +61,23 @@ export class SlashMenu {
 
     this.selectedIndex = 0;
     this.render();
+    const wasHidden = this.el.hidden;
     this.el.hidden = false;
+    if (wasHidden) popoverMotion.animatePopoverOpen(this.el);
     return true;
   }
 
   close(): void {
-    this.el.hidden = true;
-    this.items = [];
-    this.selectedIndex = 0;
+    if (this.el.hidden) {
+      this.items = [];
+      this.selectedIndex = 0;
+      return;
+    }
+    popoverMotion.animatePopoverClose(this.el, () => {
+      this.el.hidden = true;
+      this.items = [];
+      this.selectedIndex = 0;
+    });
   }
 
   moveSelection(delta: number): void {

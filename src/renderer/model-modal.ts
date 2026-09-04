@@ -1,6 +1,7 @@
 import type { CustomModelConfig } from "../shared/ipc";
 import { INTERNAL_DRAG_TYPE } from "./dnd";
 import { getProviderIcon } from "./provider-icons";
+import { attachToolbarHoverPill, popoverMotion, SlidingPillIndicator } from "./motion-utils";
 
 export const DEFAULT_USER_MODELS: CustomModelConfig[] = [
   { id: "gemini-3.7-flash", name: "Gemini 3.7 Flash", provider: "google" },
@@ -18,6 +19,8 @@ export class ModelModal {
   private isEditMode = false;
   private isReordering = false;
   private viewMode: ModelViewMode = "list";
+  private kbIndex = -1;
+  private listPill: { dispose: () => void; sync: (immediate?: boolean) => void } | null = null;
   private draggedIndex: number | null = null;
   private onSelectCallback: (modelId: string, provider?: string) => void;
   private onModelsChange: (models: CustomModelConfig[]) => void;
@@ -53,6 +56,25 @@ export class ModelModal {
         ev.preventDefault();
         ev.stopPropagation();
         this.close();
+        return;
+      }
+      if (this.showAddForm || this.isReordering) return;
+      const rows = this.models;
+      if (rows.length === 0) return;
+      if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+        ev.preventDefault();
+        if (ev.key === "ArrowDown") {
+          this.kbIndex = this.kbIndex < rows.length - 1 ? this.kbIndex + 1 : 0;
+        } else {
+          this.kbIndex = this.kbIndex > 0 ? this.kbIndex - 1 : rows.length - 1;
+        }
+        this.paintKb();
+        this.listPill?.sync();
+        return;
+      }
+      if (ev.key === "Enter" && !this.isEditMode && this.kbIndex >= 0 && this.kbIndex < rows.length) {
+        ev.preventDefault();
+        this.selectModel(rows[this.kbIndex]!);
       }
     });
   }
@@ -66,15 +88,22 @@ export class ModelModal {
     this.showAddForm = false;
     this.isEditMode = false;
     this.isReordering = false;
+    this.kbIndex = -1;
+    this.setTriggerOpen(true);
     this.render();
-    this.el.hidden = false;
+    const controls = popoverMotion.animatePopoverOpen(this.el);
+    controls.then(() => this.listPill?.sync(true));
   }
 
   close(): void {
-    this.el.hidden = true;
-    this.showAddForm = false;
-    this.isEditMode = false;
-    this.isReordering = false;
+    if (this.el.hidden) return;
+    this.setTriggerOpen(false);
+    popoverMotion.animatePopoverClose(this.el, () => {
+      this.el.hidden = true;
+      this.showAddForm = false;
+      this.isEditMode = false;
+      this.isReordering = false;
+    });
   }
 
   toggle(currentModel?: string): void {
@@ -84,10 +113,7 @@ export class ModelModal {
 
   setCurrentModel(model: string): void {
     this.currentModel = model;
-    // Do not wipe inputs while user is adding or editing models
-    if (this.isOpen && !this.showAddForm) {
-      this.render();
-    }
+    if (this.isOpen && !this.showAddForm) this.paintActive();
   }
 
   private addModel(model: CustomModelConfig): void {
@@ -106,6 +132,8 @@ export class ModelModal {
   }
 
   private render(): void {
+    this.listPill?.dispose();
+    this.listPill = null;
     this.el.replaceChildren();
     this.el.classList.toggle("grid-view", this.viewMode === "grid");
 
@@ -145,24 +173,41 @@ export class ModelModal {
       });
       headerActions.appendChild(editBtn);
 
-      // Grid / List toggle icon
-      const viewToggleBtn = document.createElement("button");
-      viewToggleBtn.type = "button";
-      viewToggleBtn.className = "model-view-toggle";
-      viewToggleBtn.setAttribute(
-        "aria-label",
-        this.viewMode === "grid" ? "Switch to List View" : "Switch to Grid View",
-      );
-      viewToggleBtn.title = this.viewMode === "grid" ? "List view" : "Grid view";
-      viewToggleBtn.innerHTML =
-        this.viewMode === "grid"
-          ? `<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M2 3.5a.5.5 0 0 1 .5-.5h11a.5.5 0 0 1 0 1h-11a.5.5 0 0 1-.5-.5zm0 4.5a.5.5 0 0 1 .5-.5h11a.5.5 0 0 1 0 1h-11a.5.5 0 0 1-.5-.5zm0 4.5a.5.5 0 0 1 .5-.5h11a.5.5 0 0 1 0 1h-11a.5.5 0 0 1-.5-.5z"/></svg>`
-          : `<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M1 2.5A1.5 1.5 0 0 1 2.5 1h3A1.5 1.5 0 0 1 7 2.5v3A1.5 1.5 0 0 1 5.5 7h-3A1.5 1.5 0 0 1 1 5.5v-3zm8 0A1.5 1.5 0 0 1 10.5 1h3A1.5 1.5 0 0 1 15 2.5v3A1.5 1.5 0 0 1 13.5 7h-3A1.5 1.5 0 0 1 9 5.5v-3zm-8 8A1.5 1.5 0 0 1 2.5 9h3A1.5 1.5 0 0 1 7 10.5v3A1.5 1.5 0 0 1 5.5 15h-3A1.5 1.5 0 0 1 1 13.5v-3zm8 0A1.5 1.5 0 0 1 10.5 9h3a1.5 1.5 0 0 1 1.5 1.5v3a1.5 1.5 0 0 1-1.5 1.5h-3A1.5 1.5 0 0 1 9 13.5v-3z"/></svg>`;
-      viewToggleBtn.addEventListener("click", () => {
-        this.viewMode = this.viewMode === "grid" ? "list" : "grid";
+      // Grid / List toggle with sliding pill
+      const viewToggle = document.createElement("div");
+      viewToggle.className = "model-view-toggle";
+      viewToggle.setAttribute("role", "group");
+      viewToggle.setAttribute("aria-label", "Model list layout");
+
+      const listBtn = document.createElement("button");
+      listBtn.type = "button";
+      listBtn.className = "model-view-toggle-btn";
+      listBtn.classList.toggle("active", this.viewMode === "list");
+      listBtn.textContent = "List";
+      listBtn.addEventListener("click", () => {
+        if (this.viewMode === "list") return;
+        this.viewMode = "list";
         this.render();
       });
-      headerActions.appendChild(viewToggleBtn);
+
+      const gridBtn = document.createElement("button");
+      gridBtn.type = "button";
+      gridBtn.className = "model-view-toggle-btn";
+      gridBtn.classList.toggle("active", this.viewMode === "grid");
+      gridBtn.textContent = "Grid";
+      gridBtn.addEventListener("click", () => {
+        if (this.viewMode === "grid") return;
+        this.viewMode = "grid";
+        this.render();
+      });
+
+      viewToggle.append(listBtn, gridBtn);
+      headerActions.appendChild(viewToggle);
+      const indicator = new SlidingPillIndicator(viewToggle, {
+        pillClass: "model-view-indicator",
+      });
+      const activeToggle = this.viewMode === "grid" ? gridBtn : listBtn;
+      requestAnimationFrame(() => indicator.sync(activeToggle, true));
     }
 
     const closeBtn = document.createElement("button");
@@ -209,6 +254,7 @@ export class ModelModal {
       editBar.append(addBtn, reorderBtn);
       this.el.appendChild(editBar);
     }
+
 
     const listContainer = document.createElement("div");
     listContainer.className = "model-list";
@@ -306,6 +352,48 @@ export class ModelModal {
 
     return wrap;
   }
+
+  private selectModel(item: CustomModelConfig): void {
+    if (this.isReordering || this.isEditMode) return;
+    const providerArg =
+      item.provider && item.provider !== "generic" ? item.provider : undefined;
+    this.currentModel = item.id;
+    this.onSelectCallback(item.id, providerArg);
+    this.close();
+  }
+
+  private setTriggerOpen(open: boolean): void {
+    const btn = document.getElementById("dock-model");
+    if (!btn) return;
+    btn.classList.toggle("open", open);
+    btn.setAttribute("aria-expanded", open ? "true" : "false");
+  }
+
+  private paintKb(): void {
+    const rows = this.el.querySelectorAll(".model-row");
+    rows.forEach((row, i) => {
+      row.classList.toggle("kb-active", i === this.kbIndex);
+      if (i === this.kbIndex && typeof row.scrollIntoView === "function") {
+        row.scrollIntoView({ block: "nearest" });
+      }
+    });
+  }
+
+  private isCurrentModel(item: CustomModelConfig): boolean {
+    const cur = this.currentModel.toLowerCase();
+    return cur.includes(item.id.toLowerCase()) || cur.includes(item.name.toLowerCase());
+  }
+
+  private paintActive(): void {
+    for (const row of this.el.querySelectorAll<HTMLElement>(".model-row")) {
+      const id = row.dataset.modelId ?? "";
+      const name = row.querySelector(".model-row-name")?.textContent ?? "";
+      const cur = this.currentModel.toLowerCase();
+      row.classList.toggle("active", cur.includes(id.toLowerCase()) || cur.includes(name.toLowerCase()));
+    }
+    this.listPill?.sync();
+  }
+
   private renderList(container: HTMLElement): void {
     container.replaceChildren();
 
@@ -322,23 +410,23 @@ export class ModelModal {
 
     for (let i = 0; i < this.models.length; i++) {
       const item = this.models[i]!;
-      const isCurrent =
-        this.currentModel.toLowerCase().includes(item.id.toLowerCase()) ||
-        this.currentModel.toLowerCase().includes(item.name.toLowerCase());
+      const isCurrent = this.isCurrentModel(item);
 
       const card = document.createElement("div");
       let cardClass = "model-row";
       if (isCurrent) cardClass += " active";
+      if (i === this.kbIndex) cardClass += " kb-active";
       if (this.isEditMode) cardClass += " in-edit";
       if (this.isReordering) cardClass += " reorderable";
       card.className = cardClass;
       card.draggable = this.isReordering;
       card.dataset.index = String(i);
+      card.dataset.modelId = item.id;
+      card.setAttribute("role", "option");
       card.title = this.isReordering
         ? `Drag to reorder ${item.name}`
         : `Switch to ${item.name}`;
 
-      // Drag & Drop reorder handlers (only active during reorder mode)
       if (this.isReordering) {
         card.addEventListener("dragstart", (ev) => {
           this.draggedIndex = i;
@@ -385,10 +473,7 @@ export class ModelModal {
           }
           this.draggedIndex = null;
         });
-      }
 
-      // Move up / down helper buttons in Reorder mode
-      if (this.isReordering) {
         const reorderArrows = document.createElement("div");
         reorderArrows.className = "model-reorder-arrows";
 
@@ -446,21 +531,27 @@ export class ModelModal {
       nameSpan.className = "model-row-name";
       nameSpan.textContent = item.name;
 
+      const providerLabel = (item.provider || "model").replace(/-oauth$/i, "");
       const metaSpan = document.createElement("span");
       metaSpan.className = "model-row-meta";
-      const providerLabel = (item.provider || "model").replace(/-oauth$/i, "");
       metaSpan.textContent = providerLabel;
+      if (this.viewMode === "grid") {
+        textCol.append(nameSpan, metaSpan);
+        card.append(iconWrap, textCol);
+      } else {
+        textCol.append(nameSpan);
+        const shortcut = document.createElement("span");
+        shortcut.className = "model-row-shortcut";
+        shortcut.textContent = providerLabel;
+        card.append(iconWrap, textCol, shortcut);
+      }
 
-      textCol.append(nameSpan, metaSpan);
-      card.append(iconWrap, textCol);
-
-      // In edit mode (and not currently reordering): show delete button on every model card
       if (this.isEditMode && !this.isReordering) {
         const delBtn = document.createElement("button");
         delBtn.type = "button";
         delBtn.className = "model-row-del-btn";
-        delBtn.textContent = "\u00d7";
         delBtn.title = `Delete ${item.name}`;
+        delBtn.textContent = "\u00d7";
         delBtn.addEventListener("click", (ev) => {
           ev.stopPropagation();
           this.removeModel(item.id);
@@ -468,7 +559,6 @@ export class ModelModal {
         card.appendChild(delBtn);
       }
 
-      // Only show drag handle icon when Reorder mode is actively ON
       if (this.isReordering) {
         const dragHandle = document.createElement("span");
         dragHandle.className = "model-drag-handle";
@@ -477,19 +567,22 @@ export class ModelModal {
         card.appendChild(dragHandle);
       }
 
-      // Click to select model (disabled during reorder/edit)
       card.addEventListener("click", () => {
-        if (this.isReordering || this.isEditMode) return;
         if (card.classList.contains("dragging")) return;
-        const providerArg =
-          item.provider && item.provider !== "generic" ? item.provider : undefined;
-        this.onSelectCallback(item.id, providerArg);
-        this.close();
+        this.selectModel(item);
       });
 
       listEl.appendChild(card);
     }
 
+    listEl.style.position = "relative";
     container.appendChild(listEl);
+    this.listPill = attachToolbarHoverPill(listEl, {
+      itemSelector: ".model-row",
+      parkedSelector: ".model-row.active",
+      pillClass: "model-row-indicator",
+      box: true,
+    });
+    requestAnimationFrame(() => this.listPill?.sync(true));
   }
 }

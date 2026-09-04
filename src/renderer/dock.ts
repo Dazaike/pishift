@@ -20,6 +20,7 @@ import {
   type PasteModeSetting,
   type PasteMarkerStyle,
 } from "../shared/paste-attach";
+import { attachButtonSpring, attachDualToolbarPills, safeAnimate, springPresets, type MotionControls } from "./motion-utils";
 export type DockPayload = {
   text: string;
   imagePaths: string[];
@@ -279,6 +280,8 @@ export class Dock {
   private readonly glow: DockGlow;
   private isBusy = false;
   private isExpanded = false;
+  private stopButtonAnim: MotionControls | null = null;
+  private lastChipKeys = new Set<string>();
   private chips: Attachment[] = [];
   private snippets: Snippet[] = [];
   private snippetSeq = 0;
@@ -372,6 +375,42 @@ export class Dock {
       }, 150);
     });
 
+    for (const btn of [
+      this.changeDirBtn,
+      this.cwdLabel,
+      this.usageBtn,
+      this.modelBtn,
+      this.planBtn,
+      this.viewModeBtn,
+      this.thinkingBtn,
+      this.stopButton,
+      this.sendButton,
+      this.toolsBtn,
+      this.expandBtn,
+    ]) {
+      if (btn) attachButtonSpring(btn, { hoverScale: 1.02, pressScale: 0.95 });
+    }
+
+    const dockControls = document.getElementById("dock-controls");
+    if (dockControls) {
+      attachDualToolbarPills(dockControls, {
+        itemSelector: ".ctrl-btn, #dock-send, #dock-stop",
+        activeSelector: ".ctrl-btn.open, .ctrl-btn.active",
+        skipSelector: "#dock-plan.plan-on, #dock-plan.plan-paused",
+        activePillClass: "dock-active-indicator",
+        hoverPillClass: "dock-hover-indicator",
+      });
+    }
+    const cwdWrap = document.getElementById("dock-cwd-wrap");
+    if (cwdWrap) {
+      attachDualToolbarPills(cwdWrap, {
+        itemSelector: "#dock-change-dir",
+        activeSelector: "#dock-change-dir.active, #dock-change-dir.open",
+        activePillClass: "dock-active-indicator",
+        hoverPillClass: "dock-hover-indicator",
+      });
+    }
+
     this.render();
   }
 
@@ -404,9 +443,12 @@ export class Dock {
 
   /** Orbiting glow around the composer while the active session is busy. */
   setAgentBusy(busy: boolean, kind: ControlBridgeActivity = "idle"): void {
+    const busyChanged = this.isBusy !== busy;
     this.isBusy = busy;
     this.root.classList.toggle("agent-busy", busy);
-    this.updateSendButton();
+    if (busyChanged) {
+      this.updateSendButton();
+    }
     if (busy && kind !== "idle") {
       this.root.style.setProperty("--dock-active-color", `var(--glow-${kind})`);
       // Always (re)start so kind switches mid-turn recolor the comet immediately.
@@ -418,13 +460,38 @@ export class Dock {
   }
 
   private updateSendButton(): void {
+    if (this.stopButtonAnim) {
+      try {
+        this.stopButtonAnim.stop();
+      } catch {}
+      this.stopButtonAnim = null;
+    }
+
     if (this.isBusy) {
       this.stopButton.hidden = false;
+      this.stopButtonAnim = safeAnimate(
+        this.stopButton,
+        { opacity: [0, 1], scale: [0.9, 1] },
+        springPresets.snappy as unknown as Record<string, unknown>
+      );
       this.sendButton.classList.add("icon-only");
       this.sendButton.title = "Queue message (Enter)";
       if (this.sendLabel) this.sendLabel.style.display = "none";
     } else {
-      this.stopButton.hidden = true;
+      if (!this.stopButton.hidden) {
+        this.stopButtonAnim = safeAnimate(
+          this.stopButton,
+          { opacity: 0, scale: 0.9 },
+          { duration: 0.12, ease: "easeOut" }
+        );
+        this.stopButtonAnim.then(() => {
+          if (!this.isBusy) {
+            this.stopButton.hidden = true;
+          }
+        });
+      } else {
+        this.stopButton.hidden = true;
+      }
       this.sendButton.classList.remove("icon-only");
       this.sendButton.title = "Send message (Enter)";
       if (this.sendLabel) this.sendLabel.style.display = "";
@@ -462,6 +529,7 @@ export class Dock {
   setViewMode(mode: ViewMode): void {
     const chat = mode === "chat";
     this.viewModeBtn.classList.toggle("view-chat", chat);
+    this.viewModeBtn.classList.toggle("active", chat);
     this.viewModeBtn.title = chat
       ? "Back to Terminal (Ctrl+Shift+U)"
       : "Switch to Chat View (Ctrl+Shift+U)";
@@ -635,10 +703,16 @@ export class Dock {
     const label = this.planMode === "on" ? "Plan: ON" : "Plan: OFF";
     this.planBtn.innerHTML = `${icon}<span class="dock-plan-label">${label}</span>`;
     this.planBtn.classList.add(`plan-${this.planMode}`);
+    this.planBtn.classList.toggle("active", this.planMode === "on");
     this.planBtn.title =
       this.planMode === "on"
         ? "Plan mode ON — click to exit"
         : "Plan mode OFF — click to enter";
+    safeAnimate(
+      this.planBtn,
+      { scale: [0.96, 1.03, 1] },
+      springPresets.snappy as unknown as Record<string, unknown>
+    );
   }
 
   private checkSlashMenu(): void {
@@ -1007,12 +1081,17 @@ export class Dock {
     this.pastes = kept;
     return true;
   }
-
   private removePaste(item: PasteItem): void {
-    this.pastes = this.pastes.filter((p) => p !== item);
-    this.input.value = this.input.value.replace(`${item.marker} `, "").replace(item.marker, "");
-    this.renderChips();
-    this.render();
+    const el = this.tray.querySelector(`[data-paste-seq="${item.seq}"]`);
+    const match = el instanceof HTMLElement ? el : null;
+    const apply = () => {
+      this.pastes = this.pastes.filter((p) => p !== item);
+      this.input.value = this.input.value.replace(`${item.marker} `, "").replace(item.marker, "");
+      this.renderChips();
+      this.render();
+    };
+    if (match) this.dismissChip(match, apply);
+    else apply();
   }
 
   private render(): void {
@@ -1043,11 +1122,30 @@ export class Dock {
     this.focus();
   }
 
+  private animateChipIn(el: HTMLElement, key: string): void {
+    el.style.animation = "none";
+    if (this.lastChipKeys.has(key)) return;
+    safeAnimate(
+      el,
+      { scale: [0.75, 1.04, 1.0], opacity: [0, 1] },
+      springPresets.bouncy as unknown as Record<string, unknown>
+    );
+  }
+
+  private dismissChip(el: HTMLElement, then: () => void): void {
+    el.style.pointerEvents = "none";
+    safeAnimate(el, { scale: 0.82, opacity: 0, y: 8 }, { duration: 0.16, ease: "easeOut" }).then(
+      () => then()
+    );
+  }
+
   private renderChips(): void {
     this.tray.replaceChildren();
+    const nextKeys = new Set<string>();
     for (const item of this.pastes) {
       const card = document.createElement("div");
       card.className = "chip-paste";
+      card.dataset.pasteSeq = String(item.seq);
       card.title = item.text.length > 600 ? `${item.text.slice(0, 600)}…` : item.text;
 
       const preview = document.createElement("div");
@@ -1081,6 +1179,9 @@ export class Dock {
       card.appendChild(removeBtn);
 
       this.tray.appendChild(card);
+      const key = `paste:${item.seq}`;
+      nextKeys.add(key);
+      this.animateChipIn(card, key);
     }
     for (const snip of this.snippets) {
       const el = document.createElement("span");
@@ -1106,11 +1207,16 @@ export class Dock {
       remove.textContent = "\u00d7";
       remove.setAttribute("aria-label", `Remove reference ${snip.label}`);
       remove.addEventListener("click", () => {
-        this.snippets = this.snippets.filter((s) => s !== snip);
-        this.renderChips();
+        this.dismissChip(el, () => {
+          this.snippets = this.snippets.filter((s) => s !== snip);
+          this.renderChips();
+        });
       });
       el.appendChild(remove);
       this.tray.appendChild(el);
+      const key = `snip:${snip.id}`;
+      nextKeys.add(key);
+      this.animateChipIn(el, key);
     }
     for (const chip of this.chips) {
       if (chip.isImage) {
@@ -1132,12 +1238,17 @@ export class Dock {
         removeBtn.setAttribute("aria-label", "Remove image");
         removeBtn.addEventListener("click", (ev) => {
           ev.stopPropagation();
-          this.chips = this.chips.filter((c) => c !== chip);
-          this.renderChips();
+          this.dismissChip(card, () => {
+            this.chips = this.chips.filter((c) => c !== chip);
+            this.renderChips();
+          });
         });
         card.appendChild(removeBtn);
 
         this.tray.appendChild(card);
+        const key = `img:${chip.path}`;
+        nextKeys.add(key);
+        this.animateChipIn(card, key);
         continue;
       }
 
@@ -1156,12 +1267,18 @@ export class Dock {
       remove.textContent = "\u00d7";
       remove.setAttribute("aria-label", `Remove ${name.textContent}`);
       remove.addEventListener("click", () => {
-        this.chips = this.chips.filter((c) => c !== chip);
-        this.renderChips();
+        this.dismissChip(el, () => {
+          this.chips = this.chips.filter((c) => c !== chip);
+          this.renderChips();
+        });
       });
       el.appendChild(remove);
       this.tray.appendChild(el);
+      const key = `file:${chip.path}`;
+      nextKeys.add(key);
+      this.animateChipIn(el, key);
     }
+    this.lastChipKeys = nextKeys;
   }
 
   private async attachPreview(chip: Attachment, thumb: HTMLImageElement): Promise<void> {

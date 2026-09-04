@@ -6,6 +6,7 @@ import {
   usageTrackerQuotaKey,
 } from "../shared/usage-tracker";
 import { getProviderIcon } from "./provider-icons";
+import { attachButtonSpring } from "./motion-utils";
 
 export type UsageTrackerStatus = {
   loading: boolean;
@@ -158,22 +159,13 @@ export class UsageTracker {
     return icon;
   }
 
-  private renderGauge(entry: MatchedQuota, isVertical: boolean): HTMLElement {
+  private renderGauge(entry: MatchedQuota): HTMLElement {
     const usedPercent = clampPercent(entry.limit.usedPercent);
     const tier = usedPercent >= 80 ? "high" : usedPercent >= 50 ? "med" : "low";
     const gauge = document.createElement("span");
     gauge.style.setProperty("--usage-fill", `${usedPercent}%`);
     gauge.style.setProperty("--usage-remaining-fill", `${100 - usedPercent}%`);
     gauge.style.setProperty("--usage-ring-offset", String(94.25 * (1 - usedPercent / 100)));
-
-    if (isVertical) {
-      gauge.className = `usage-tracker-gauge usage-tracker-vertical-meter ${tier}`;
-      const fill = document.createElement("span");
-      fill.className = "usage-tracker-fill";
-      gauge.append(fill);
-      return gauge;
-    }
-
     gauge.className = `usage-tracker-gauge usage-tracker-${entry.quota.style} ${tier}`;
     if (entry.quota.style === "circle") {
       const ring = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -194,6 +186,7 @@ export class UsageTracker {
 
   render(): void {
     this.el.replaceChildren();
+    this.el.classList.toggle("loading", this.status.loading);
     const entries = this.matchingQuotas();
     const visible = this.settings.enabled && entries.length > 0;
     this.el.hidden = !visible;
@@ -216,27 +209,29 @@ export class UsageTracker {
       const usedPercent = Math.round(clampPercent(entry.limit.usedPercent));
       const item = document.createElement("div");
       item.className = "usage-tracker-item";
+      const tier = usedPercent >= 80 ? "high" : usedPercent >= 50 ? "med" : "low";
+      item.classList.add(tier);
+      item.style.setProperty("--usage-fill", `${usedPercent}%`);
+      item.style.setProperty("--usage-remaining-fill", `${100 - usedPercent}%`);
       item.setAttribute(
         "aria-label",
         `${entry.report.providerName} ${entry.limit.label}: ${usedPercent}% used`,
       );
       item.title = `${entry.report.providerName} · ${entry.limit.label} · ${usedPercent}% used`;
       const besideIcon =
-        isVertical || this.settings.iconPlacement === "beside"
+        this.settings.iconPlacement === "beside"
           ? this.renderIcon(entry.report.provider)
           : undefined;
       if (besideIcon) item.append(besideIcon);
       if (this.settings.showPercent) {
         const percent = document.createElement("span");
         percent.className = "usage-tracker-percent";
-        if (usedPercent >= 80) percent.classList.add("high");
-        else if (usedPercent >= 50) percent.classList.add("med");
-        else percent.classList.add("low");
+        percent.classList.add(tier);
         percent.textContent = `${usedPercent}%`;
         percent.setAttribute("aria-hidden", "true");
         item.append(percent);
       }
-      item.append(this.renderGauge(entry, isVertical));
+      item.append(this.renderGauge(entry));
       items.appendChild(item);
     }
 
@@ -246,8 +241,10 @@ export class UsageTracker {
     refresh.disabled = this.status.loading;
     refresh.title = this.status.error ?? "Refresh provider quotas";
     refresh.setAttribute("aria-label", this.status.loading ? "Refreshing provider quotas" : "Refresh provider quotas");
-    refresh.textContent = this.status.loading ? "…" : "↻";
+    refresh.innerHTML =
+      '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3.15-6.85"/><polyline points="21 3 21 9 15 9"/></svg>';
     refresh.addEventListener("click", () => void this.refresh().catch(() => undefined));
+    attachButtonSpring(refresh);
 
     this.el.append(items, refresh);
     this.onRender?.();

@@ -1,5 +1,6 @@
 import type { AskAnswer } from "../shared/ask-keys";
 import type { PendingAsk, PendingAskQuestion } from "../shared/ipc";
+import { popoverMotion, safeAnimate, springPresets } from "./motion-utils";
 const ASK_BODY_MAX_HEIGHT_PX = 640;
 
 interface QuestionAnswerState {
@@ -55,17 +56,28 @@ export class AskModal {
     }));
     this.focusOtherIndex = null;
     this.render();
-    this.el.hidden = false;
+    popoverMotion.animatePopoverOpen(this.el);
   }
 
   close(): void {
-    this.el.hidden = true;
-    this.pending = null;
-    this.answerState = [];
-    this.body = null;
-    this.focusOtherIndex = null;
-    this.onSubmitCallback = null;
-    this.onDismissCallback = null;
+    if (this.el.hidden) {
+      this.pending = null;
+      this.answerState = [];
+      this.body = null;
+      this.focusOtherIndex = null;
+      this.onSubmitCallback = null;
+      this.onDismissCallback = null;
+      return;
+    }
+    popoverMotion.animatePopoverClose(this.el, () => {
+      this.el.hidden = true;
+      this.pending = null;
+      this.answerState = [];
+      this.body = null;
+      this.focusOtherIndex = null;
+      this.onSubmitCallback = null;
+      this.onDismissCallback = null;
+    });
   }
 
   private dismiss(): void {
@@ -181,9 +193,13 @@ export class AskModal {
     const clamped = Math.min(Math.max(index, 0), blocks.length - 1);
     const target = blocks[clamped];
     if (!target) return;
-    // Resize first so the sheet is already the right height as the scroll runs.
     this.applyQuestion(clamped);
     target.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
+    safeAnimate(
+      target,
+      { x: [16, 0], opacity: [0.55, 1] },
+      springPresets.smooth as unknown as Record<string, unknown>
+    );
   }
 
   private titleText(currentIndex: number): string {
@@ -217,6 +233,7 @@ export class AskModal {
       const row = document.createElement("button");
       row.type = "button";
       row.className = "ask-option-row";
+      row.dataset.optionIndex = String(optionIndex);
       row.classList.toggle("selected", selected);
       row.setAttribute("aria-pressed", String(selected));
 
@@ -249,6 +266,16 @@ export class AskModal {
           state.customText = undefined;
         }
         this.render();
+        const next = this.el.querySelector<HTMLElement>(
+          `.ask-option-row[data-option-index="${optionIndex}"]`
+        );
+        if (next) {
+          safeAnimate(
+            next,
+            { scale: [0.98, 1.02, 1] },
+            springPresets.snappy as unknown as Record<string, unknown>
+          );
+        }
       });
       options.appendChild(row);
     });

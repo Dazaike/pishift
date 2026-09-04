@@ -37,6 +37,7 @@ import { loadSkillCommands } from "./omp-skills";
 import { loadJobActivity } from "./job-activity";
 import { PtyManager } from "./pty-manager";
 import { StateStore } from "./state-store";
+import { getThemeByName } from "../shared/themes";
 import { ControlBridgeListener } from "./control-bridge-listener";
 import { TranscriptWatcher, readTranscriptBlob } from "./transcript";
 
@@ -71,7 +72,9 @@ function send(
 }
 
 function createWindow(): BrowserWindow {
-  const { bounds } = store.get();
+  const state = store.get();
+  const { bounds, themeName } = state;
+  const theme = getThemeByName(themeName);
   const window = new BrowserWindow({
     title: "PiShift",
     width: bounds?.width ?? 1180,
@@ -84,20 +87,35 @@ function createWindow(): BrowserWindow {
     icon: join(__dirname, "../../src/renderer/assets/icons/icon.png"),
     titleBarStyle: "hidden",
     titleBarOverlay: {
-      color: DEFAULT_CHROME_BG,
-      symbolColor: DEFAULT_CHROME_FG,
-      height: 38,
+      color: theme.bgRaised,
+      symbolColor: theme.fg,
+      height: 48,
     },
+    backgroundColor: theme.bg,
     webPreferences: {
       preload: join(__dirname, "../preload/index.js"),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
       spellcheck: false,
+      // Appearance preferences normally arrive after `loadState()` round-trips
+      // over IPC. Pass the cached startup values to preload so the first
+      // visible frame already matches the user's saved chrome/layout settings.
+      additionalArguments: [
+        `--pishift-theme=${encodeURIComponent(theme.name)}`,
+        `--pishift-hide-top-labels=${state.hideTopButtonLabels ? "1" : "0"}`,
+        `--pishift-hide-bottom-labels=${state.hideBottomButtonLabels ? "1" : "0"}`,
+        `--pishift-collapse-top-bar=${state.collapseTopBarToMenu ? "1" : "0"}`,
+        `--pishift-show-header-usage=${state.showUsageInHeader ? "1" : "0"}`,
+        `--pishift-tab-layout=${encodeURIComponent(state.tabLayoutMode ?? "scroll")}`,
+      ],
     },
   });
 
-  window.once("ready-to-show", () => window.show());
+  // `ready-to-show` can fire after HTML/CSS paints but before the renderer
+  // module applies synchronous startup preferences. Waiting for the completed
+  // page load guarantees the first visible frame already has those settings.
+  window.webContents.once("did-finish-load", () => window.show());
 
   const persistBounds = (): void => {
     if (!window.isDestroyed() && !window.isMinimized() && !window.isFullScreen()) {
@@ -270,7 +288,7 @@ function registerIpc(): void {
       const background = colors?.background || DEFAULT_CHROME_BG;
       const symbol = colors?.symbol || DEFAULT_CHROME_FG;
       try {
-        win.setTitleBarOverlay({ color: background, symbolColor: symbol, height: 38 });
+        win.setTitleBarOverlay({ color: background, symbolColor: symbol, height: 48 });
         win.setBackgroundColor(background);
       } catch {
         // setTitleBarOverlay unavailable on some hosts

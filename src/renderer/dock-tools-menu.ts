@@ -1,3 +1,4 @@
+import { popoverMotion } from "./motion-utils";
 export interface DockToolsCallbacks {
   onCopy: () => void;
   onPaste: () => void;
@@ -47,12 +48,15 @@ export class DockToolsMenu {
   public open(): void {
     this.isOpen = true;
     this.el.removeAttribute("hidden");
+    popoverMotion.animatePopoverOpen(this.el);
   }
 
   public close(): void {
     if (!this.isOpen) return;
     this.isOpen = false;
-    this.el.setAttribute("hidden", "true");
+    popoverMotion.animatePopoverClose(this.el, () => {
+      this.el.setAttribute("hidden", "true");
+    });
   }
 
   private render(): void {

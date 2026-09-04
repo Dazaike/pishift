@@ -4,6 +4,7 @@ import {
   TAB_OVERFLOW_CHIP_RESERVE,
   type TabLayoutMode,
 } from "../shared/tab-layout";
+import { popoverMotion, safeAnimate, springPresets } from "./motion-utils";
 
 /** One tab as the strip needs to see it; the owner keeps the real Tab record. */
 export interface TabStripEntry {
@@ -34,7 +35,7 @@ export interface TabStripOptions {
 /** Class that removes a condensed tab from the strip without unmounting it. */
 const CONDENSED = "tab-condensed";
 /** Must match the `gap` the strip paints between tabs. */
-const TAB_GAP = 3;
+const TAB_GAP = 6;
 const NUDGE_STEP = 180;
 
 /**
@@ -57,7 +58,11 @@ export class TabStrip {
    */
   private lastSignature = "";
   private hiddenKeys = new Set<number>();
-
+  private readonly indicator: HTMLDivElement;
+  private readonly hoverIndicator: HTMLDivElement;
+  private indicatorMounted = false;
+  private hoverMounted = false;
+  private hoveredTab: HTMLElement | null = null;
   constructor(private readonly opts: TabStripOptions) {
     this.menu = document.createElement("div");
     this.menu.className = "tab-switcher-popover popover-sheet";
@@ -85,6 +90,40 @@ export class TabStrip {
     this.menu.append(header, this.menuList);
     document.body.appendChild(this.menu);
     document.body.dataset.tabLayout = this.mode;
+    this.hoverIndicator = document.createElement("div");
+    this.hoverIndicator.className = "tab-hover-indicator";
+    this.hoverIndicator.style.position = "absolute";
+    this.hoverIndicator.style.pointerEvents = "none";
+    this.hoverIndicator.style.opacity = "0";
+
+    this.indicator = document.createElement("div");
+    this.indicator.className = "tab-indicator";
+    this.indicator.style.position = "absolute";
+    this.indicator.style.pointerEvents = "none";
+    this.indicator.style.opacity = "0";
+    this.opts.scroller.prepend(this.hoverIndicator, this.indicator);
+
+    this.opts.scroller.addEventListener("pointerover", (ev) => {
+      const target = (ev.target as HTMLElement)?.closest(".tab:not(.tab-condensed)") as HTMLElement | null;
+      if (target && target !== this.hoveredTab) {
+        this.hoveredTab = target;
+        this.syncHoverIndicator();
+      }
+    });
+
+    this.opts.scroller.addEventListener("pointerout", (ev) => {
+      const related = ev.relatedTarget as Node | null;
+      if (!related || !this.opts.scroller.contains(related)) {
+        this.hoveredTab = null;
+        this.syncHoverIndicator();
+      } else {
+        const next = (related as HTMLElement)?.closest(".tab:not(.tab-condensed)") as HTMLElement | null;
+        if (next !== this.hoveredTab) {
+          this.hoveredTab = next;
+          this.syncHoverIndicator();
+        }
+      }
+    });
 
     opts.nudgeLeft.addEventListener("click", () => this.nudge(-1));
     opts.nudgeRight.addEventListener("click", () => this.nudge(1));
@@ -123,6 +162,7 @@ export class TabStrip {
     window.addEventListener("resize", () => {
       if (!this.menu.hidden) this.positionMenu();
       this.sync();
+      this.syncIndicator(true);
     });
   }
 
@@ -133,6 +173,7 @@ export class TabStrip {
     this.closeMenu();
     document.body.dataset.tabLayout = mode;
     this.sync();
+    this.syncIndicator(true);
   }
 
   /**
@@ -143,6 +184,97 @@ export class TabStrip {
   invalidate(): void {
     this.lastSignature = "";
   }
+  syncHoverIndicator(immediate = false): void {
+    if (this.hoverIndicator.parentElement !== this.opts.scroller) {
+      this.opts.scroller.prepend(this.hoverIndicator);
+    }
+    const target = this.hoveredTab;
+    const active = this.opts.scroller.querySelector(
+      ".tab.active:not(.tab-condensed)"
+    ) as HTMLElement | null;
+
+    // If hovering the already active tab, hide the hover indicator so active pill takes precedence.
+    if (!target || target === active || target.offsetWidth === 0) {
+      if (immediate || !this.hoverMounted) {
+        this.hoverIndicator.style.opacity = "0";
+      } else {
+        safeAnimate(this.hoverIndicator, { opacity: 0 }, { duration: 0.12 });
+      }
+      return;
+    }
+
+    const x = target.offsetLeft;
+    const y = target.offsetTop;
+    const width = target.offsetWidth;
+    const height = target.offsetHeight;
+    const transform = `translate(${x}px, ${y}px)`;
+
+    if (immediate || !this.hoverMounted) {
+      this.hoverIndicator.style.opacity = "1";
+      this.hoverIndicator.style.transform = transform;
+      this.hoverIndicator.style.width = `${width}px`;
+      this.hoverIndicator.style.height = `${height}px`;
+      this.hoverMounted = true;
+    } else {
+      this.hoverIndicator.style.opacity = "1";
+      safeAnimate(
+        this.hoverIndicator,
+        {
+          transform,
+          width: `${width}px`,
+          height: `${height}px`,
+          opacity: 1,
+        },
+        springPresets.smooth as unknown as Record<string, unknown>
+      );
+    }
+  }
+
+  syncIndicator(immediate = false): void {
+    if (this.indicator.parentElement !== this.opts.scroller) {
+      this.opts.scroller.prepend(this.indicator);
+    }
+    const active = this.opts.scroller.querySelector(
+      ".tab.active:not(.tab-condensed)"
+    ) as HTMLElement | null;
+
+    if (!active || active.offsetWidth === 0) {
+      if (immediate || !this.indicatorMounted) {
+        this.indicator.style.opacity = "0";
+      } else {
+        safeAnimate(this.indicator, { opacity: 0 }, { duration: 0.15 });
+      }
+      return;
+    }
+
+    const x = active.offsetLeft;
+    const y = active.offsetTop;
+    const width = active.offsetWidth;
+    const height = active.offsetHeight;
+    const transform = `translate(${x}px, ${y}px)`;
+
+    if (immediate || !this.indicatorMounted) {
+      this.indicator.style.opacity = "1";
+      this.indicator.style.transform = transform;
+      this.indicator.style.width = `${width}px`;
+      this.indicator.style.height = `${height}px`;
+      this.indicatorMounted = true;
+    } else {
+      this.indicator.style.opacity = "1";
+      safeAnimate(
+        this.indicator,
+        {
+          transform,
+          width: `${width}px`,
+          height: `${height}px`,
+          opacity: 1,
+        },
+        springPresets.smooth as unknown as Record<string, unknown>
+      );
+    }
+    this.syncHoverIndicator(immediate);
+  }
+
 
   /** Recompute overflow affordances. Cheap when nothing measurable changed. */
   sync(): void {
@@ -153,6 +285,7 @@ export class TabStrip {
 
     if (signature === this.lastSignature) {
       if (this.mode === "scroll") this.syncNudges();
+      this.syncIndicator();
       return;
     }
     this.lastSignature = signature;
@@ -169,6 +302,7 @@ export class TabStrip {
     }
 
     if (!this.menu.hidden) this.renderMenuList(entries);
+    this.syncIndicator();
   }
 
   private expandAll(entries: readonly TabStripEntry[]): void {
@@ -209,7 +343,7 @@ export class TabStrip {
 
   private scrollActiveIntoView(entries: readonly TabStripEntry[]): void {
     const activeEntry = entries.find((entry) => entry.active);
-    activeEntry?.element.scrollIntoView({ block: "nearest", inline: "nearest" });
+    activeEntry?.element.scrollIntoView({ inline: "nearest" });
   }
 
   private syncNudges(): void {
@@ -235,12 +369,16 @@ export class TabStrip {
     this.renderMenuList(this.opts.entries());
     this.menu.removeAttribute("hidden");
     this.positionMenu();
+    popoverMotion.animatePopoverOpen(this.menu);
     this.menuFilter.focus();
   }
 
   private closeMenu(): void {
-    this.menu.setAttribute("hidden", "true");
+    popoverMotion.animatePopoverClose(this.menu, () => {
+      this.menu.setAttribute("hidden", "true");
+    });
   }
+
 
   private positionMenu(): void {
     const anchor = this.opts.chip.getBoundingClientRect();

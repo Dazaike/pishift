@@ -43,7 +43,6 @@ import {
   type PasteMarkerStyle,
 } from "../shared/paste-attach";
 import {
-  DEFAULT_THEME_NAME,
   FONT_FAMILY,
   FONT_SIZE,
   getThemeByName,
@@ -81,6 +80,7 @@ import { DockToolsMenu } from "./dock-tools-menu";
 import { UsageModal } from "./usage-modal";
 import { AskModal } from "./ask-modal";
 import { PlanReviewModal, type PlanReviewAction } from "./plan-review-modal";
+import { attachButtonSpring, attachToolbarHoverPill, safeAnimate, springPresets, type MotionControls } from "./motion-utils";
 import { JobActivityModal } from "./job-activity-modal";
 import { RecentFoldersModal } from "./recent-folders-modal";
 import { RecentChatsModal } from "./recent-chats-modal";
@@ -102,6 +102,29 @@ import {
 } from "../shared/usage-tracker";
 import { UsageTracker } from "./usage-tracker";
 const api = window.pishift;
+const startupAppearance = api.startupAppearance;
+const startupTabLayout = isTabLayoutMode(startupAppearance.tabLayoutMode)
+  ? startupAppearance.tabLayoutMode
+  : DEFAULT_TAB_LAYOUT_MODE;
+document.body.classList.toggle(
+  "hide-top-button-labels",
+  startupAppearance.hideTopButtonLabels,
+);
+document.body.classList.toggle(
+  "hide-bottom-button-labels",
+  startupAppearance.hideBottomButtonLabels,
+);
+document.body.classList.toggle(
+  "top-bar-as-menu",
+  startupAppearance.collapseTopBarToMenu,
+);
+document.body.dataset.tabLayout = startupTabLayout;
+const startupHeaderUsage = document.getElementById("header-usage");
+if (startupHeaderUsage instanceof HTMLElement) {
+  startupHeaderUsage.style.display = startupAppearance.showUsageInHeader
+    ? "inline-flex"
+    : "none";
+}
 
 const tabsEl = document.getElementById("tabs") as HTMLDivElement;
 const tabStripEl = document.getElementById("tab-strip") as HTMLDivElement;
@@ -128,7 +151,8 @@ const headerUsage = document.getElementById("header-usage") as HTMLDivElement;
 const headerUsageText = document.getElementById("header-usage-text") as HTMLSpanElement;
 const headerActivity = document.getElementById("header-activity") as HTMLDivElement;
 const headerActivityDot = document.getElementById("header-activity-dot") as HTMLSpanElement;
-const headerActivityText = document.getElementById("header-activity-text") as HTMLSpanElement;
+const headerActivityLabel = document.getElementById("header-activity-label") as HTMLSpanElement;
+const headerActivityElapsed = document.getElementById("header-activity-elapsed") as HTMLSpanElement;
 const keyTargetIndicator = document.getElementById("key-target-indicator") as HTMLDivElement | null;
 
 type Tab = {
@@ -207,12 +231,12 @@ let sessionCounter = 0;
 const bySession = new Map<string, Tab>();
 let active: Tab | null = null;
 let draggedTab: Tab | null = null;
-let currentPreset: ThemePreset = getThemeByName(DEFAULT_THEME_NAME);
+let currentPreset: ThemePreset = getThemeByName(startupAppearance.themeName);
 let favoriteModels: string[] = ["gemini-3.7-flash", "claude-3-7-sonnet", "gpt-4o"];
 let customModels: CustomModelConfig[] = [];
 let installedModels: InstalledModel[] = [];
 let showFavoritesOnly = false;
-let showUsageInHeader = true;
+let showUsageInHeader = startupAppearance.showUsageInHeader;
 let customFontFamily = "";
 /** Terminal zoom (xterm font px); restored across app restarts. */
 let terminalFontSize = FONT_SIZE;
@@ -222,9 +246,9 @@ let activityColorsOnTabs = false;
 let todoPanelVisible = false;
 let todoPanelMode: TodoPanelMode = "overlay";
 const ELAPSED_MIN_MS = 5000;
-let hideTopButtonLabels = false;
-let hideBottomButtonLabels = false;
-let collapseTopBarToMenu = false;
+let hideTopButtonLabels = startupAppearance.hideTopButtonLabels;
+let hideBottomButtonLabels = startupAppearance.hideBottomButtonLabels;
+let collapseTopBarToMenu = startupAppearance.collapseTopBarToMenu;
 let panelPosition: PanelPosition = "top-right";
 /** View mode new tabs open in; per-tab mode diverges freely from it. */
 let defaultViewMode: ViewMode = "terminal";
@@ -239,7 +263,7 @@ let pasteMarkerPaint: PasteMarkerPaint = "pill";
 let pasteMarkerPulse = true;
 let doneSoundEnabled = true;
 let doneSoundVolume = DEFAULT_DONE_SOUND_VOLUME;
-let tabLayoutMode: TabLayoutMode = DEFAULT_TAB_LAYOUT_MODE;
+let tabLayoutMode: TabLayoutMode = startupTabLayout;
 let usageTrackerSettings: UsageTrackerSettings = {
   ...DEFAULT_USAGE_TRACKER_SETTINGS,
   quotas: [],
@@ -883,12 +907,9 @@ function placeUsageTracker(): void {
   usageTrackerAnchor.appendChild(usageTracker.el);
 }
 function updateHeaderActivity(tab: Tab | null = active): void {
-  if (!headerActivity || !headerActivityDot || !headerActivityText) return;
+  if (!headerActivity || !headerActivityDot || !headerActivityLabel || !headerActivityElapsed) return;
   if (!tab || (!tab.busy && tab.activity === "idle")) {
-    headerActivity.hidden = true;
-    headerActivity.dataset.activity = "idle";
-    headerActivityText.textContent = "Idle";
-    headerActivityDot.style.background = "var(--fg-dim)";
+    hideHeaderActivity();
     return;
   }
 
@@ -897,15 +918,75 @@ function updateHeaderActivity(tab: Tab | null = active): void {
   const color = activityColors[kind] ?? DEFAULT_ACTIVITY_COLORS[kind];
   const label = GLOW_ACTIVITY_LABELS[kind] ?? "Working";
   const elapsedMs = tab.activitySince === null ? 0 : Date.now() - tab.activitySince;
-  const elapsed = elapsedMs >= ELAPSED_MIN_MS ? ` · ${formatElapsed(elapsedMs)}` : "";
+  const elapsedText = elapsedMs >= ELAPSED_MIN_MS ? `\u00b7 ${formatElapsed(elapsedMs)}` : "";
 
-  headerActivity.hidden = false;
+  showHeaderActivity();
   headerActivity.dataset.activity = kind;
   headerActivity.title = `Agent activity: ${label}`;
-  headerActivityText.textContent = `${label}${elapsed}`;
   headerActivityDot.style.background = color;
   headerActivity.style.setProperty("--header-activity-color", color);
+
+  if (label !== headerActivityLabelText) {
+    headerActivityLabelText = label;
+    headerActivityLabel.textContent = label;
+    safeAnimate(
+      headerActivityLabel,
+      { y: [-4, 0], opacity: [0, 1] },
+      springPresets.snappy as unknown as Record<string, unknown>
+    );
+  }
+
+  if (elapsedText !== headerActivityElapsedText) {
+    headerActivityElapsedText = elapsedText;
+    headerActivityElapsed.textContent = elapsedText;
+    safeAnimate(headerActivityElapsed, { opacity: [0.4, 1] }, { duration: 0.18, ease: "easeOut" });
+  }
 }
+
+function showHeaderActivity(): void {
+  if (!headerActivity.hidden) return;
+  if (headerActivityAnim) {
+    try {
+      headerActivityAnim.stop();
+    } catch {}
+    headerActivityAnim = null;
+  }
+  headerActivity.hidden = false;
+  headerActivityAnim = safeAnimate(
+    headerActivity,
+    { scale: [0.85, 1.04, 1], opacity: [0, 1] },
+    springPresets.bouncy as unknown as Record<string, unknown>
+  );
+}
+
+function hideHeaderActivity(): void {
+  headerActivity.dataset.activity = "idle";
+  headerActivityLabelText = "Idle";
+  headerActivityElapsedText = "";
+  headerActivityLabel.textContent = "Idle";
+  headerActivityElapsed.textContent = "";
+  headerActivityDot.style.background = "var(--fg-dim)";
+  if (headerActivity.hidden) return;
+  if (headerActivityAnim) {
+    try {
+      headerActivityAnim.stop();
+    } catch {}
+    headerActivityAnim = null;
+  }
+  headerActivityAnim = safeAnimate(
+    headerActivity,
+    { scale: 0.9, opacity: 0 },
+    { duration: 0.14, ease: "easeOut" }
+  );
+  headerActivityAnim.then(() => {
+    const stillIdle = !active || (!active.busy && active.activity === "idle");
+    if (stillIdle) headerActivity.hidden = true;
+  });
+}
+
+let headerActivityAnim: MotionControls | null = null;
+let headerActivityLabelText = "";
+let headerActivityElapsedText = "";
 
 let elapsedTicker: number | null = null;
 
@@ -1697,7 +1778,6 @@ function makeTab(cwd: string, customTitle?: string, colorTag?: string): Tab {
   appIconEl.className = "tab-app-icon";
   appIconEl.src = appIcon;
   appIconEl.alt = "";
-
   const busy = document.createElement("span");
   busy.className = "tab-busy";
   const colorDot = document.createElement("span");
@@ -1711,7 +1791,7 @@ function makeTab(cwd: string, customTitle?: string, colorTag?: string): Tab {
   close.textContent = "\u00d7";
   close.setAttribute("aria-label", "Close tab");
   button.append(appIconEl, busy, colorDot, label, close);
-
+  attachButtonSpring(button, { hoverScale: 1.0, pressScale: 0.97 });
   // Declared before the tab literal so the reconciler hooks can close over it.
   let self: Tab;
   const plan = new PlanReconciler({
@@ -2618,6 +2698,15 @@ installWindowDnd({
 });
 
 newTabButton.addEventListener("click", () => void addTab());
+attachButtonSpring(newTabButton);
+
+const chromeActionsRow = document.querySelector(".chrome-actions-row") as HTMLElement | null;
+if (chromeActionsRow) {
+  attachToolbarHoverPill(chromeActionsRow, { pillClass: "chrome-action-indicator" });
+  for (const btn of chromeActionsRow.querySelectorAll<HTMLElement>("button")) {
+    attachButtonSpring(btn, { hoverScale: 1.02, pressScale: 0.97 });
+  }
+}
 
 headerUsage.addEventListener("click", () => {
   dockHooksUsage();
@@ -2642,6 +2731,12 @@ function dockHooksUsage(): void {
   }
   usageModal.toggle();
 }
+function closeOtherPopovers(except: "folders" | "chats" | "menu"): void {
+  if (except !== "folders" && recentFoldersModal?.isOpen) recentFoldersModal.close();
+  if (except !== "chats" && recentChatsModal?.isOpen) recentChatsModal.close();
+  if (except !== "menu" && topMenu?.isOpen) topMenu.close();
+}
+
 function openRecentFoldersModal(): void {
   if (!recentFoldersModal) {
     recentFoldersModal = new RecentFoldersModal(recentFoldersBtn, {
@@ -2688,6 +2783,7 @@ function openRecentFoldersModal(): void {
     });
   }
   recentFoldersModal.setPanelPosition(panelPosition);
+  closeOtherPopovers("folders");
   recentFoldersModal.toggle(active?.cwd);
 }
 
@@ -2721,6 +2817,7 @@ function openRecentChatsModal(): void {
   }
   const currentCwd = active?.cwd ?? "";
   recentChatsModal.setPanelPosition(panelPosition);
+  closeOtherPopovers("chats");
   recentChatsModal.toggle(currentCwd, active?.sessionKey ?? active?.sessionId);
 }
 
@@ -2945,6 +3042,7 @@ topMenuBtn?.addEventListener("click", () => {
       },
     });
   }
+  closeOtherPopovers("menu");
   topMenu?.toggle();
 });
 
@@ -3184,6 +3282,7 @@ async function boot(): Promise<void> {
       entry.colorTag,
     );
   }
+  document.getElementById("boot-skeleton")?.remove();
   dock.focus();
 
   try {

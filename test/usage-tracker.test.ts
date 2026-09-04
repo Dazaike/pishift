@@ -337,7 +337,7 @@ describe("usage tracker percent rendering", () => {
 });
 
 describe("usage tracker vertical orientation", () => {
-  it("renders vertical meters and sets vertical class when orientation is vertical", async () => {
+  it("keeps the selected gauge style in a vertical grid", async () => {
     const sampleReports: ProviderUsageReport[] = [
       {
         provider: "openai",
@@ -362,13 +362,9 @@ describe("usage tracker vertical orientation", () => {
 
     await tracker.refresh();
     expect(tracker.el.classList.contains("vertical")).toBe(true);
-
-    const meter = tracker.el.querySelector(".usage-tracker-vertical-meter");
-    expect(meter).not.toBeNull();
-    expect(tracker.el.querySelector(".usage-tracker-circle")).toBeNull();
-
-    const icon = tracker.el.querySelector(".usage-tracker-icon");
-    expect(icon).not.toBeNull();
+    expect(tracker.el.querySelector(".usage-tracker-circle")).not.toBeNull();
+    expect(tracker.el.querySelector(".usage-tracker-vertical-meter")).toBeNull();
+    expect(tracker.el.querySelector(".usage-tracker-icon")).not.toBeNull();
 
     tracker.destroy();
   });
@@ -398,17 +394,18 @@ describe("usage tracker vertical orientation", () => {
 
     await tracker.refresh();
     expect(tracker.el.classList.contains("vertical")).toBe(false);
+    expect(tracker.el.querySelector(".usage-tracker-circle")).not.toBeNull();
 
-    // Simulate stacked tab layout
     document.body.setAttribute("data-tab-layout", "stack");
     tracker.render();
     expect(tracker.el.classList.contains("vertical")).toBe(true);
-    expect(tracker.el.querySelector(".usage-tracker-vertical-meter")).not.toBeNull();
+    expect(tracker.el.querySelector(".usage-tracker-circle")).not.toBeNull();
+    expect(tracker.el.querySelector(".usage-tracker-vertical-meter")).toBeNull();
 
-    // Revert
     document.body.removeAttribute("data-tab-layout");
     tracker.render();
     expect(tracker.el.classList.contains("vertical")).toBe(false);
+    expect(tracker.el.querySelector(".usage-tracker-circle")).not.toBeNull();
 
     tracker.destroy();
   });
