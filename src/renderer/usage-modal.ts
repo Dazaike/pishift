@@ -1,5 +1,6 @@
 import type { ProviderUsageReport } from "../shared/ipc";
 import { renderUsageCards } from "./usage-render";
+import { popoverMotion } from "./motion-utils";
 
 export class UsageModal {
   readonly el: HTMLDivElement;
@@ -51,7 +52,7 @@ export class UsageModal {
   }
 
   async open(): Promise<void> {
-    this.el.hidden = false;
+    popoverMotion.animatePopoverOpen(this.el);
     if (!this.hasLoaded) {
       await this.refresh();
     } else {
@@ -81,7 +82,10 @@ export class UsageModal {
   }
 
   close(): void {
-    this.el.hidden = true;
+    if (this.el.hidden) return;
+    popoverMotion.animatePopoverClose(this.el, () => {
+      this.el.hidden = true;
+    });
   }
 
   private render(): void {

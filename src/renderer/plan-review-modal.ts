@@ -1,3 +1,4 @@
+import { attachButtonSpring, popoverMotion } from "./motion-utils";
 export type PlanReviewAction =
   | "execute"
   | "compact"
@@ -52,7 +53,7 @@ export class PlanReviewModal {
     this.isLoading = false;
     this.onActionCallback = onAction;
     this.render(opts);
-    this.el.hidden = false;
+    popoverMotion.animatePopoverOpen(this.el);
   }
 
   updateStats(stats: string): void {
@@ -62,10 +63,18 @@ export class PlanReviewModal {
   }
 
   close(): void {
-    this.el.hidden = true;
-    this.onActionCallback = null;
-    this.statsSpan = null;
-    this.isLoading = false;
+    if (this.el.hidden) {
+      this.onActionCallback = null;
+      this.statsSpan = null;
+      this.isLoading = false;
+      return;
+    }
+    popoverMotion.animatePopoverClose(this.el, () => {
+      this.el.hidden = true;
+      this.onActionCallback = null;
+      this.statsSpan = null;
+      this.isLoading = false;
+    });
   }
 
   /** Swap the picker UI for an inline loading state; keeps the sheet visible (no reopen flash). */
@@ -232,5 +241,8 @@ export class PlanReviewModal {
     footer.append(refineBtn, saveBtn, quitBtn);
 
     this.el.append(header, primaryCard, grid, footer);
+    for (const btn of this.el.querySelectorAll("button")) {
+      attachButtonSpring(btn);
+    }
   }
 }

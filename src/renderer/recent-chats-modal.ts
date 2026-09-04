@@ -1,4 +1,5 @@
 import type { PanelPosition, RecentChatInfo } from "../shared/ipc";
+import { attachButtonSpring, attachToolbarHoverPill, popoverMotion } from "./motion-utils";
 
 export interface RecentChatsCallbacks {
   onResumeChat: (sessionId: string) => void;
@@ -13,6 +14,8 @@ export class RecentChatsModal {
   private activeSessionId: string | null = null;
   private searchQuery = "";
   private selectedIndex = -1;
+  private listPill: { dispose: () => void; sync: (immediate?: boolean) => void } | null = null;
+  private isClosing = false;
   private loading = false;
   private panelPosition: PanelPosition = "top-right";
 
@@ -91,6 +94,7 @@ export class RecentChatsModal {
   }
 
   toggle(currentCwd: string, activeSessionId?: string | null): void {
+    if (this.isClosing) return;
     if (this.isOpen) {
       this.close();
     } else {
@@ -103,16 +107,27 @@ export class RecentChatsModal {
     if (activeSessionId !== undefined) this.activeSessionId = activeSessionId;
     this.searchQuery = "";
     this.selectedIndex = -1;
-    this.el.removeAttribute("hidden");
+    this.anchor.classList.add("open");
+    this.anchor.setAttribute("aria-expanded", "true");
     this.render();
     this.position();
+    popoverMotion.animatePopoverOpen(this.el);
     await this.refresh();
     const searchInput = this.el.querySelector<HTMLInputElement>(".popover-search-input");
     searchInput?.focus();
   }
 
   close(): void {
-    this.el.setAttribute("hidden", "true");
+    if (this.isClosing || this.el.hidden) return;
+    this.isClosing = true;
+    this.listPill?.dispose();
+    this.listPill = null;
+    popoverMotion.animatePopoverClose(this.el, () => {
+      this.isClosing = false;
+      this.el.setAttribute("hidden", "true");
+      this.anchor.classList.remove("open");
+      this.anchor.setAttribute("aria-expanded", "false");
+    });
   }
 
   async refresh(): Promise<void> {
@@ -347,6 +362,9 @@ export class RecentChatsModal {
     this.el.appendChild(listContainer);
 
     this.renderList();
+    for (const btn of this.el.querySelectorAll("button")) {
+      attachButtonSpring(btn);
+    }
     requestAnimationFrame(() => this.position());
   }
 
@@ -476,6 +494,13 @@ export class RecentChatsModal {
     });
 
     listContainer.appendChild(list);
+    this.listPill?.dispose();
+    this.listPill = attachToolbarHoverPill(list, {
+      itemSelector: ".popover-item",
+      parkedSelector: ".popover-item.active-chat, .popover-item.selected",
+      pillClass: "popover-row-indicator",
+      box: true,
+    });
   }
 }
 

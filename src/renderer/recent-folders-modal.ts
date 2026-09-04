@@ -1,6 +1,7 @@
 import folderIcon from "./assets/icons/folder.png";
 
 import type { PanelPosition } from "../shared/ipc";
+import { attachButtonSpring, attachToolbarHoverPill, popoverMotion } from "./motion-utils";
 
 export interface RecentFoldersCallbacks {
   onSelectFolder: (folder: string, newTab?: boolean) => void;
@@ -14,6 +15,7 @@ export class RecentFoldersModal {
   private currentCwd = "";
   private searchQuery = "";
   private selectedIndex = -1;
+  private listPill: { dispose: () => void; sync: (immediate?: boolean) => void } | null = null;
   private loading = false;
   private panelPosition: PanelPosition = "top-right";
 
@@ -69,11 +71,11 @@ export class RecentFoldersModal {
       if (this.isOpen) this.position();
     });
   }
-
   get isOpen(): boolean {
     return !this.el.hidden;
   }
 
+  private isClosing = false;
   setCurrentCwd(cwd: string): void {
     this.currentCwd = cwd;
     if (this.isOpen) this.render();
@@ -82,8 +84,8 @@ export class RecentFoldersModal {
     this.panelPosition = pos;
     if (this.isOpen) this.position();
   }
-
   toggle(currentCwd?: string): void {
+    if (this.isClosing) return;
     if (this.isOpen) {
       this.close();
     } else {
@@ -95,16 +97,26 @@ export class RecentFoldersModal {
     if (currentCwd) this.currentCwd = currentCwd;
     this.searchQuery = "";
     this.selectedIndex = -1;
-    this.el.removeAttribute("hidden");
+    this.anchor.classList.add("open");
+    this.anchor.setAttribute("aria-expanded", "true");
     this.render();
     this.position();
+    popoverMotion.animatePopoverOpen(this.el);
     await this.refresh();
     const searchInput = this.el.querySelector<HTMLInputElement>(".popover-search-input");
     searchInput?.focus();
   }
-
   close(): void {
-    this.el.setAttribute("hidden", "true");
+    if (this.isClosing || this.el.hidden) return;
+    this.isClosing = true;
+    this.listPill?.dispose();
+    this.listPill = null;
+    popoverMotion.animatePopoverClose(this.el, () => {
+      this.isClosing = false;
+      this.el.setAttribute("hidden", "true");
+      this.anchor.classList.remove("open");
+      this.anchor.setAttribute("aria-expanded", "false");
+    });
   }
 
   async refresh(): Promise<void> {
@@ -452,6 +464,16 @@ export class RecentFoldersModal {
     });
 
     listContainer.appendChild(list);
+    this.listPill?.dispose();
+    this.listPill = attachToolbarHoverPill(list, {
+      itemSelector: ".popover-item",
+      parkedSelector: ".popover-item.active-folder, .popover-item.selected",
+      pillClass: "popover-row-indicator",
+      box: true,
+    });
+    for (const btn of list.querySelectorAll<HTMLElement>("button")) {
+      attachButtonSpring(btn, { hoverScale: 1.0, pressScale: 0.96 });
+    }
   }
 }
 

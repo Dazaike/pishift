@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, webUtils } from "electron";
+import { contextBridge, ipcRenderer, webFrame, webUtils } from "electron";
 import { release } from "node:os";
 
 import {
@@ -22,8 +22,52 @@ import {
   type TranscriptSnapshot,
 } from "../shared/ipc";
 import type { SlashCommand } from "../shared/slash-commands";
+import { getThemeByName } from "../shared/themes";
+
+// Preload runs before the HTML root exists, so touching
+// `document.documentElement` here silently failed and left the default theme
+// visible. Inject the persisted theme into the page's author CSS instead;
+// `:root:root` outranks the static `:root` defaults, while later inline styles
+// from applyTheme() still win when the user changes themes.
+try {
+  const prefix = "--pishift-theme=";
+  const arg = process.argv.find((candidate) => candidate.startsWith(prefix));
+  if (arg) {
+    const preset = getThemeByName(decodeURIComponent(arg.slice(prefix.length)));
+    void webFrame.insertCSS(
+      `:root:root {
+        --bg: ${preset.bg};
+        --bg-raised: ${preset.bgRaised};
+        --bg-tab: ${preset.bgTab};
+        --border: ${preset.border};
+        --fg: ${preset.fg};
+        --fg-dim: ${preset.fgDim};
+        --accent: ${preset.accent};
+      }`,
+      { cssOrigin: "author" },
+    );
+  }
+} catch {
+  // Falls back to the default :root theme in styles.css.
+}
+
+function startupArg(name: string): string | undefined {
+  const prefix = `--pishift-${name}=`;
+  const arg = process.argv.find((candidate) => candidate.startsWith(prefix));
+  return arg ? decodeURIComponent(arg.slice(prefix.length)) : undefined;
+}
+
+const startupAppearance = Object.freeze({
+  themeName: startupArg("theme"),
+  hideTopButtonLabels: startupArg("hide-top-labels") === "1",
+  hideBottomButtonLabels: startupArg("hide-bottom-labels") === "1",
+  collapseTopBarToMenu: startupArg("collapse-top-bar") === "1",
+  showUsageInHeader: startupArg("show-header-usage") === "1",
+  tabLayoutMode: startupArg("tab-layout"),
+});
 
 const api = {
+  startupAppearance,
   spawn: (req: SpawnRequest): Promise<SpawnResult> => ipcRenderer.invoke(CH.ptySpawn, req),
   write: (id: string, data: string): void => ipcRenderer.send(CH.ptyWrite, id, data),
   resize: (id: string, cols: number, rows: number): void =>

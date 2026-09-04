@@ -1,5 +1,6 @@
 import { formatThinkingLevel } from "./dock";
 import { getThinkingIconSvg } from "./thinking-icons";
+import { attachToolbarHoverPill, popoverMotion } from "./motion-utils";
 
 const VIEWPORT_MARGIN = 8;
 const ANCHOR_GAP = 12;
@@ -9,7 +10,7 @@ export class ThinkingMenu {
   private levels: readonly string[] = [];
   private current = "";
   private onSelectCallback: (level: string) => void;
-
+  private listPill: { dispose: () => void; sync: (immediate?: boolean) => void } | null = null;
   constructor(private readonly anchor: HTMLElement, onSelect: (level: string) => void) {
     this.onSelectCallback = onSelect;
     this.el = document.createElement("div");
@@ -56,16 +57,27 @@ export class ThinkingMenu {
 
   open(): void {
     if (this.levels.length === 0) return;
+    this.anchor.classList.add("open");
     this.render();
     this.el.removeAttribute("hidden");
-    // Measure after layout so offsetWidth/Height are final (ignores open animation transform).
     requestAnimationFrame(() => {
-      if (this.isOpen) this.position();
+      if (this.isOpen) {
+        this.position();
+        this.listPill?.sync(true);
+      }
     });
+    const controls = popoverMotion.animatePopoverOpen(this.el);
+    controls.then(() => this.listPill?.sync(true));
   }
 
   close(): void {
-    this.el.setAttribute("hidden", "true");
+    if (this.el.hidden) return;
+    this.anchor.classList.remove("open");
+    this.listPill?.dispose();
+    this.listPill = null;
+    popoverMotion.animatePopoverClose(this.el, () => {
+      this.el.setAttribute("hidden", "true");
+    });
   }
 
   private position(): void {
@@ -91,21 +103,43 @@ export class ThinkingMenu {
   }
 
   private render(): void {
+    this.listPill?.dispose();
+    this.listPill = null;
     this.el.replaceChildren();
-    for (const level of [...this.levels].reverse()) {
+    const listEl = document.createElement("div");
+    listEl.className = "thinking-menu-list";
+    const levels = [...this.levels].reverse();
+    for (let i = 0; i < levels.length; i++) {
+      const level = levels[i]!;
       const row = document.createElement("div");
       row.className = level === this.current ? "thinking-menu-item active" : "thinking-menu-item";
       row.role = "option";
       row.setAttribute("aria-selected", level === this.current ? "true" : "false");
       const iconSvg = getThinkingIconSvg(level);
       const label = formatThinkingLevel(level);
-      row.innerHTML = `${iconSvg}<span>${label}</span>`;
+      row.innerHTML = `${iconSvg}<span class="thinking-menu-item-name">${label}</span>`;
       row.addEventListener("mousedown", (ev) => {
         ev.preventDefault();
-        this.close();
+        this.current = level;
+        for (const other of listEl.querySelectorAll(".thinking-menu-item")) {
+          other.classList.toggle("active", other === row);
+        }
+        this.listPill?.sync();
         this.onSelectCallback(level);
+        // Let the selection pill settle onto the picked row before the
+        // popover closes, instead of closing before it's visible.
+        window.setTimeout(() => this.close(), 320);
       });
-      this.el.appendChild(row);
+      listEl.appendChild(row);
     }
+    this.el.appendChild(listEl);
+    this.listPill = attachToolbarHoverPill(listEl, {
+      itemSelector: ".thinking-menu-item",
+      // The selected thinking level is already communicated by its accent
+      // color. Do not park the hover pill on it (notably when Plan mode
+      // changes the selected level while the menu is open).
+      pillClass: "thinking-row-indicator",
+      box: true,
+    });
   }
 }

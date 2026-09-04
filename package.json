@@ -1,7 +1,7 @@
 {
   "name": "pishift",
   "productName": "PiShift",
-  "version": "1.8.4",
+  "version": "1.8.73",
   "author": "Dazaike",
   "private": true,
   "description": "PiShift — Desktop terminal shell for Oh My Pi (omp)",
@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "animejs": "4.5.0",
+    "motion": "^12.4.7",
     "node-pty": "1.1.0"
   },
   "devDependencies": {

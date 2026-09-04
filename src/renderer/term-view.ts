@@ -79,6 +79,8 @@ const PTY_RESIZE_DEBOUNCE_MS = 80;
 const ACK_DEADLINE_MS = 1500;
 const MIN_FONT = 8;
 const MAX_FONT = 32;
+/** Longest a blank idle screen may hide behind the boot skeleton. */
+const SKELETON_FALLBACK_MS = 4000;
 
 /** One xterm.js terminal, one PTY session, one tab body. */
 export class TermView {
@@ -130,6 +132,9 @@ export class TermView {
   /** Floating "Reference" affordance shown over a finished mouse selection. */
   private selectionBubble: HTMLButtonElement | null = null;
   private selectionDragging = false;
+  private skeletonEl: HTMLDivElement | null = null;
+  private skeletonRemoveTimer: number | undefined;
+  private skeletonFallbackTimer: number | undefined;
 
   constructor(
     private readonly hooks: TermViewHooks,
@@ -228,6 +233,55 @@ export class TermView {
       },
       { passive: false },
     );
+
+    this.skeletonEl = this.buildSkeleton();
+    this.el.appendChild(this.skeletonEl);
+  }
+
+  /**
+   * A fresh PTY has nothing to paint until omp finishes booting, which would
+   * otherwise show a flat black rectangle. This overlay stands in for that
+   * gap with shimmer skeleton rows, matching the loading treatment used
+   * elsewhere in the app. omp's first bytes are typically alt-screen/clear
+   * escapes with no visible glyphs, so `maybeHideSkeleton()` only fades it
+   * once the buffer actually has rendered non-blank text — with a fallback
+   * timeout so a legitimately blank idle screen doesn't hide it forever.
+   */
+  private buildSkeleton(): HTMLDivElement {
+    const el = document.createElement("div");
+    el.className = "term-skeleton";
+    const widths = [38, 92, 78, 60, 85, 45, 70, 55];
+    for (const width of widths) {
+      const line = document.createElement("div");
+      line.className = "term-skeleton-line";
+      line.style.width = `${width}%`;
+      el.appendChild(line);
+    }
+    this.skeletonFallbackTimer = window.setTimeout(() => this.hideSkeleton(), SKELETON_FALLBACK_MS);
+    return el;
+  }
+
+  private hasVisibleContent(): boolean {
+    const buffer = this.term.buffer.active;
+    const rows = Math.min(buffer.length, this.term.rows);
+    for (let i = 0; i < rows; i++) {
+      const line = buffer.getLine(i);
+      if (line && line.translateToString(true).trim().length > 0) return true;
+    }
+    return false;
+  }
+
+  private maybeHideSkeleton(): void {
+    if (this.hasVisibleContent()) this.hideSkeleton();
+  }
+
+  private hideSkeleton(): void {
+    const el = this.skeletonEl;
+    if (!el) return;
+    this.skeletonEl = null;
+    clearTimeout(this.skeletonFallbackTimer);
+    el.classList.add("leaving");
+    this.skeletonRemoveTimer = window.setTimeout(() => el.remove(), 220);
   }
 
   /** Attach to the DOM tree and (first time only) open the terminal. */
@@ -284,6 +338,7 @@ export class TermView {
         window.clearTimeout(this.ackTimer);
         this.ackTimer = undefined;
       }
+      if (this.skeletonEl) this.maybeHideSkeleton();
       ack();
     };
     this.ackTimer = window.setTimeout(ackOnce, ACK_DEADLINE_MS);
@@ -541,6 +596,8 @@ export class TermView {
     if (this.rafHandle) cancelAnimationFrame(this.rafHandle);
     clearTimeout(this.ptyResizeTimer);
     clearTimeout(this.ackTimer);
+    clearTimeout(this.skeletonRemoveTimer);
+    clearTimeout(this.skeletonFallbackTimer);
     this.observer?.disconnect();
     this.observer = null;
     this.webgl?.dispose();

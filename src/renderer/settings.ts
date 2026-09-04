@@ -21,6 +21,7 @@ import {
   MIN_SCROLL_STEPS,
 } from "./term-view";
 import { clampVolume, DEFAULT_DONE_SOUND_VOLUME } from "./completion-sound";
+import { attachButtonSpring, safeAnimate, springPresets } from "./motion-utils";
 import {
   isPasteMarkerPaint,
   isPasteMarkerStyle,
@@ -344,6 +345,16 @@ export class SettingsModal {
     }
   }
 
+  private appendSectionBody(section: HTMLElement, ...nodes: Node[]): void {
+    const wrap = document.createElement("div");
+    wrap.className = "settings-section-content";
+    const inner = document.createElement("div");
+    inner.className = "settings-section-content-inner";
+    inner.append(...nodes);
+    wrap.append(inner);
+    section.append(wrap);
+  }
+
   private sectionHeader(id: SettingsSectionId, title: string, description: string): HTMLDivElement {
     const collapsed = this.settingsSectionCollapsed[id] === true;
     const header = document.createElement("div");
@@ -480,6 +491,14 @@ export class SettingsModal {
         this.currentPreset = preset;
         this.onSelectCallback(preset);
         this.render();
+        const active = this.el.querySelector<HTMLElement>(".theme-card.active");
+        if (active) {
+          safeAnimate(
+            active,
+            { scale: [0.98, 1.03, 1] },
+            springPresets.snappy as unknown as Record<string, unknown>
+          );
+        }
       };
 
       card.addEventListener("click", pick);
@@ -489,6 +508,7 @@ export class SettingsModal {
           pick();
         }
       });
+      attachButtonSpring(card, { hoverScale: 1.02, pressScale: 0.98 });
 
       themeList.appendChild(card);
     }
@@ -529,7 +549,7 @@ export class SettingsModal {
     fontRow.append(fontLabel, fontInput);
     fontSection.append(fontHeader, fontRow);
     if (!this.settingsSectionCollapsed.appearance) {
-      themeSection.append(themeList, fontSection);
+      this.appendSectionBody(themeSection, themeList, fontSection);
     }
 
     // Section 3: Composer Glow Colors
@@ -899,10 +919,10 @@ export class SettingsModal {
       volumeRow,
     );
     if (!this.settingsSectionCollapsed.composer) {
-      activitySection.append(pasteRow, markerRow, paintRow, pulseLabel);
+      this.appendSectionBody(activitySection, pasteRow, markerRow, paintRow, pulseLabel);
     }
     interfaceSection.append(interfaceHeader);
-    if (!this.settingsSectionCollapsed.interface) interfaceSection.append(optionsList);
+    if (!this.settingsSectionCollapsed.interface) this.appendSectionBody(interfaceSection, optionsList);
 
     body.append(
       themeSection,
@@ -986,7 +1006,7 @@ export class SettingsModal {
     tabsToggle.append(tabsCheck, tabsText);
 
     section.append(heading);
-    if (!this.settingsSectionCollapsed.composer) section.append(grid, tabsToggle);
+    if (!this.settingsSectionCollapsed.composer) this.appendSectionBody(section, grid, tabsToggle);
     return section;
   }
 

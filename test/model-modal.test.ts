@@ -73,4 +73,23 @@ describe("ModelModal", () => {
 
     expect(modal.isOpen).toBe(false);
   });
+
+  it("does not rebuild the list when the current model updates", () => {
+    const modal = new ModelModal(DEFAULT_USER_MODELS, "gemini-3.7-flash", vi.fn(), vi.fn());
+    modal.open();
+    const first = modal.el.querySelector(".model-row");
+    expect(first).not.toBeNull();
+    modal.setCurrentModel("grok-4.5");
+    expect(modal.el.querySelector(".model-row")).toBe(first);
+    expect(modal.el.querySelector(".model-row.active .model-row-name")?.textContent).toBe("Grok 4.5");
+  });
+
+  it("selects the keyboard-highlighted model with Enter", () => {
+    const onSelect = vi.fn();
+    const modal = new ModelModal(DEFAULT_USER_MODELS, "gemini-3.7-flash", onSelect, vi.fn());
+    modal.open();
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    expect(onSelect).toHaveBeenCalledWith("gemini-3.7-flash", "google");
+  });
 });

@@ -1,4 +1,5 @@
 import settingsIcon from "./assets/icons/settings.png";
+import { attachButtonSpring, attachToolbarHoverPill, popoverMotion } from "./motion-utils";
 
 export interface TopMenuCallbacks {
   onOpenTodo: () => void;
@@ -11,7 +12,7 @@ export interface TopMenuCallbacks {
 export class TopMenu {
   readonly el: HTMLDivElement;
   private selectedIndex = -1;
-
+  private listPill: { dispose: () => void; sync: (immediate?: boolean) => void } | null = null;
   constructor(
     private readonly anchor: HTMLElement,
     private readonly callbacks: TopMenuCallbacks,
@@ -72,11 +73,21 @@ export class TopMenu {
     this.selectedIndex = -1;
     this.render();
     this.el.removeAttribute("hidden");
+    this.anchor.classList.add("open");
+    this.anchor.setAttribute("aria-expanded", "true");
     this.position();
+    popoverMotion.animatePopoverOpen(this.el);
   }
 
   close(): void {
-    this.el.setAttribute("hidden", "true");
+    if (this.el.hidden) return;
+    this.listPill?.dispose();
+    this.listPill = null;
+    this.anchor.classList.remove("open");
+    this.anchor.setAttribute("aria-expanded", "false");
+    popoverMotion.animatePopoverClose(this.el, () => {
+      this.el.setAttribute("hidden", "true");
+    });
   }
 
   private position(): void {
@@ -105,6 +116,7 @@ export class TopMenu {
       it.classList.toggle("selected", idx === this.selectedIndex);
       if (idx === this.selectedIndex) it.focus();
     });
+    this.listPill?.sync();
   }
 
   private render(): void {
@@ -167,5 +179,19 @@ export class TopMenu {
       this.close();
       this.callbacks.onQuit();
     });
+
+    const body = this.el.querySelector<HTMLElement>(".top-menu-body");
+    if (body) {
+      this.listPill?.dispose();
+      this.listPill = attachToolbarHoverPill(body, {
+        itemSelector: ".top-menu-item",
+        parkedSelector: ".top-menu-item.selected",
+        pillClass: "top-menu-row-indicator",
+        box: true,
+      });
+      for (const btn of body.querySelectorAll<HTMLElement>(".top-menu-item")) {
+        attachButtonSpring(btn, { hoverScale: 1.0, pressScale: 0.97 });
+      }
+    }
   }
 }
