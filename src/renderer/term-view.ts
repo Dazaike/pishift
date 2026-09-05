@@ -546,6 +546,26 @@ export class TermView {
   getSelection(): string {
     return this.term.getSelection();
   }
+  /**
+   * Extracts the most recent non-blank lines from the terminal buffer for quick
+   * tab preview inspection.
+   */
+  getRecentLines(maxLines = 10): string[] {
+    const buffer = this.term.buffer.active;
+    const totalRows = buffer.length;
+    const result: string[] = [];
+    // Scan backwards from bottom of buffer
+    for (let i = totalRows - 1; i >= 0 && result.length < maxLines; i--) {
+      const line = buffer.getLine(i);
+      if (!line) continue;
+      const text = line.translateToString(true);
+      // Skip trailing empty lines before the first content line is found
+      if (result.length === 0 && !text.trim()) continue;
+      result.unshift(text);
+    }
+    return result;
+  }
+
 
   clear(): void {
     this.term.clear();

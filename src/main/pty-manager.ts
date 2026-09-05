@@ -88,6 +88,7 @@ export class PtyManager {
       cwd,
       env: buildPtyEnv(process.env, id),
       useConpty: true,
+      useConptyDll: process.platform === "win32",
     });
 
     const session: Session = {

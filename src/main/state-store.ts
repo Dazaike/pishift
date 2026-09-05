@@ -6,7 +6,7 @@ import {
   normalizeSettingsSectionCollapsed,
   normalizeUsageTrackerSettings,
 } from "../shared/usage-tracker";
-import { isTabLayoutMode } from "../shared/tab-layout";
+import { isTabLayout } from "../shared/tab-layout";
 
 const DEBOUNCE_MS = 500;
 
@@ -87,7 +87,8 @@ export class StateStore {
           raw.panelPosition === "top-right"
             ? raw.panelPosition
             : undefined,
-        tabLayoutMode: isTabLayoutMode(raw.tabLayoutMode) ? raw.tabLayoutMode : undefined,
+        tabPreviews: typeof raw.tabPreviews === "boolean" ? raw.tabPreviews : undefined,
+        tabLayout: isTabLayout(raw.tabLayout) ? raw.tabLayout : undefined,
         splitRatio:
           typeof raw.splitRatio === "number" && raw.splitRatio >= 0.1 && raw.splitRatio <= 0.9
             ? raw.splitRatio

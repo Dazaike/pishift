@@ -107,7 +107,7 @@ function createWindow(): BrowserWindow {
         `--pishift-hide-bottom-labels=${state.hideBottomButtonLabels ? "1" : "0"}`,
         `--pishift-collapse-top-bar=${state.collapseTopBarToMenu ? "1" : "0"}`,
         `--pishift-show-header-usage=${state.showUsageInHeader ? "1" : "0"}`,
-        `--pishift-tab-layout=${encodeURIComponent(state.tabLayoutMode ?? "scroll")}`,
+        `--pishift-tab-previews=${state.tabPreviews === false ? "0" : "1"}`,
       ],
     },
   });

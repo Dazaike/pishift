@@ -105,8 +105,8 @@ No fake web-view wrappers pretending to be terminals. Just a genuine hardware-ac
 - **Themes & Settings** in one modal: palette picker, **Terminal Font Family** override, and interface toggles that persist.
 - **Composer Glow Colors:** pick a glow per agent activity, optionally color the tab busy indicators to match, and **Reset to defaults** when your palette experiment goes badly.
 - **Live Provider Quotas & Usage Tracker:** Pin live provider limits directly in the top bar with customizable gauge styles (Bar, Battery, Circle), tier-colored percentages (green/yellow/red), draggable/clickable order swapping, and custom refresh intervals.
-- **Interface Options:** pin token/cost usage in the header, go icons-only in the top bar or the dock, collapse the top bar into a burger menu (☰), set **Recent Menus Placement** (Top Right, Center Screen, Top Center, Bottom Center), and tune **Scroll Wheel Steps**.
-- **Too Many Tabs:** twelve sessions no longer get compressed into twelve identical 30px slivers. Tabs keep their real width and you choose how the overflow is handled — **Scrolling Strip** (nudge arrows plus wheel-to-travel), **Stacked Rows** (tabs wrap vertically, header grows to three rows then scrolls), or **Condense Extras into a +N Menu** (a filterable session switcher; the active tab is never the one that gets hidden).
+- **Interface Options:** pin token/cost usage in the header, go icons-only in the top bar or the dock, collapse the top bar into a burger menu (☰), set **Recent Menus Placement** (Top Right, Center Screen, Top Center, Bottom Center), live **Hover Tab Previews** to peek at inactive session buffers, and tune **Scroll Wheel Steps**.
+- **Tab Layout:** pick how sessions live — **Vertical Rail (Docked Icons)** (48px left strip of glyphs that expands titles on hover, with glowing busy sweeps on background tabs), **Vertical Rail (Floating / Auto-hide)** (edge pill that blooms into the full rail), or **Horizontal (Compact)** (tiny top-bar tabs with wheel/nudge overflow).
 - **Long Paste behavior:** *Ask Each Time* by default, or lock it to always attach as a wrapped block, always attach as a local file, or always paste inline.
 - **Completion chime:** play a sound when the agent finishes working, with a volume slider and a **Test** button so you can pick something that won't make you hate your job.
 ### 🗃️ Quick-Switch Everything
@@ -123,8 +123,8 @@ No fake web-view wrappers pretending to be terminals. Just a genuine hardware-ac
 
 ### Download the binary (for people with places to be)
 Grab the latest release from the **[Releases](https://github.com/Dazaike/pishift/releases)** tab:
-- **`PiShift Setup 1.8.73.exe`** — Standard installer.
-- **`PiShift-1.8.73-win.zip`** — Portable zip if you have installer commitment issues.
+- **`PiShift Setup 1.9.15.exe`** — Standard installer.
+- **`PiShift-1.9.15-win.zip`** — Portable zip if you have installer commitment issues.
 
 ### Build from source (for hackers & tinkerers)
 

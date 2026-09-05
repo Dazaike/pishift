@@ -83,6 +83,10 @@ export class ModelModal {
     return !this.el.hidden;
   }
 
+  get activeModel(): string {
+    return this.currentModel;
+  }
+
   open(currentModel?: string): void {
     if (currentModel) this.currentModel = currentModel;
     this.showAddForm = false;
@@ -113,7 +117,6 @@ export class ModelModal {
 
   setCurrentModel(model: string): void {
     this.currentModel = model;
-    if (this.isOpen && !this.showAddForm) this.paintActive();
   }
 
   private addModel(model: CustomModelConfig): void {
@@ -379,21 +382,6 @@ export class ModelModal {
     });
   }
 
-  private isCurrentModel(item: CustomModelConfig): boolean {
-    const cur = this.currentModel.toLowerCase();
-    return cur.includes(item.id.toLowerCase()) || cur.includes(item.name.toLowerCase());
-  }
-
-  private paintActive(): void {
-    for (const row of this.el.querySelectorAll<HTMLElement>(".model-row")) {
-      const id = row.dataset.modelId ?? "";
-      const name = row.querySelector(".model-row-name")?.textContent ?? "";
-      const cur = this.currentModel.toLowerCase();
-      row.classList.toggle("active", cur.includes(id.toLowerCase()) || cur.includes(name.toLowerCase()));
-    }
-    this.listPill?.sync();
-  }
-
   private renderList(container: HTMLElement): void {
     container.replaceChildren();
 
@@ -410,11 +398,9 @@ export class ModelModal {
 
     for (let i = 0; i < this.models.length; i++) {
       const item = this.models[i]!;
-      const isCurrent = this.isCurrentModel(item);
 
       const card = document.createElement("div");
       let cardClass = "model-row";
-      if (isCurrent) cardClass += " active";
       if (i === this.kbIndex) cardClass += " kb-active";
       if (this.isEditMode) cardClass += " in-edit";
       if (this.isReordering) cardClass += " reorderable";
@@ -579,7 +565,7 @@ export class ModelModal {
     container.appendChild(listEl);
     this.listPill = attachToolbarHoverPill(listEl, {
       itemSelector: ".model-row",
-      parkedSelector: ".model-row.active",
+      parkedSelector: "",
       pillClass: "model-row-indicator",
       box: true,
     });

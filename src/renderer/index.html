@@ -9,41 +9,8 @@
     <title>PiShift</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
-  <body data-tab-layout="scroll">
+  <body>
     <header id="chrome">
-      <div id="tab-strip">
-        <button
-          id="tab-nudge-left"
-          class="tab-nudge"
-          type="button"
-          hidden
-          title="Scroll tabs left"
-          aria-label="Scroll tabs left"
-        >
-          &#8249;
-        </button>
-        <div id="tabs" role="tablist"></div>
-        <button
-          id="tab-nudge-right"
-          class="tab-nudge"
-          type="button"
-          hidden
-          title="Scroll tabs right"
-          aria-label="Scroll tabs right"
-        >
-          &#8250;
-        </button>
-        <button
-          id="tab-overflow-chip"
-          type="button"
-          hidden
-          aria-haspopup="dialog"
-          aria-label="Show hidden sessions"
-        ></button>
-      </div>
-      <button id="new-tab" title="New OMP session (Ctrl+Shift+T)" aria-label="New OMP session">
-        <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>
-      </button>
       <div id="header-usage" title="Session token & cost metrics (Click for provider breakdown)">
         <img src="./assets/icons/usage.png" alt="" class="btn-icon" />
         <span id="header-usage-text">Usage &middot; $0.00</span>
@@ -98,6 +65,21 @@
       </div>
     </header>
     <div id="workspace">
+      <nav id="tab-rail" aria-label="Sessions">
+        <div id="tab-rail-panel">
+          <button id="tab-nudge-left" class="tab-nudge" type="button" hidden title="Scroll tabs left" aria-label="Scroll tabs left">&#8249;</button>
+          <div id="tab-rail-list" role="tablist"></div>
+          <button id="tab-nudge-right" class="tab-nudge" type="button" hidden title="Scroll tabs right" aria-label="Scroll tabs right">&#8250;</button>
+          <div id="tab-rail-footer">
+            <button id="new-tab" title="New OMP session (Ctrl+Shift+T)" aria-label="New OMP session">
+              <span class="new-tab-glyph" aria-hidden="true">
+                <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M8 3v10M3 8h10"/></svg>
+              </span>
+              <span class="new-tab-label">New Session</span>
+            </button>
+          </div>
+        </div>
+      </nav>
       <main id="views">
         <div id="pane-primary" class="split-pane active">
           <div id="boot-skeleton" class="term-skeleton">

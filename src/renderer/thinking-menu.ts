@@ -42,6 +42,9 @@ export class ThinkingMenu {
     return !this.el.hidden;
   }
 
+  get currentLevel(): string {
+    return this.current;
+  }
   setLevels(levels: readonly string[], current: string): void {
     this.levels = levels;
     this.current = current;
@@ -112,32 +115,23 @@ export class ThinkingMenu {
     for (let i = 0; i < levels.length; i++) {
       const level = levels[i]!;
       const row = document.createElement("div");
-      row.className = level === this.current ? "thinking-menu-item active" : "thinking-menu-item";
+      row.className = "thinking-menu-item";
       row.role = "option";
-      row.setAttribute("aria-selected", level === this.current ? "true" : "false");
       const iconSvg = getThinkingIconSvg(level);
       const label = formatThinkingLevel(level);
       row.innerHTML = `${iconSvg}<span class="thinking-menu-item-name">${label}</span>`;
       row.addEventListener("mousedown", (ev) => {
         ev.preventDefault();
         this.current = level;
-        for (const other of listEl.querySelectorAll(".thinking-menu-item")) {
-          other.classList.toggle("active", other === row);
-        }
-        this.listPill?.sync();
         this.onSelectCallback(level);
-        // Let the selection pill settle onto the picked row before the
-        // popover closes, instead of closing before it's visible.
-        window.setTimeout(() => this.close(), 320);
+        this.close();
       });
       listEl.appendChild(row);
     }
     this.el.appendChild(listEl);
     this.listPill = attachToolbarHoverPill(listEl, {
       itemSelector: ".thinking-menu-item",
-      // The selected thinking level is already communicated by its accent
-      // color. Do not park the hover pill on it (notably when Plan mode
-      // changes the selected level while the menu is open).
+      parkedSelector: "",
       pillClass: "thinking-row-indicator",
       box: true,
     });

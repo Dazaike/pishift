@@ -369,7 +369,7 @@ describe("usage tracker vertical orientation", () => {
     tracker.destroy();
   });
 
-  it("switches to vertical layout in auto mode when tabs are stacked", async () => {
+  it("keeps auto mode horizontal now that tabs live in the vertical rail", async () => {
     const sampleReports: ProviderUsageReport[] = [
       {
         provider: "openai",
@@ -396,16 +396,8 @@ describe("usage tracker vertical orientation", () => {
     expect(tracker.el.classList.contains("vertical")).toBe(false);
     expect(tracker.el.querySelector(".usage-tracker-circle")).not.toBeNull();
 
-    document.body.setAttribute("data-tab-layout", "stack");
-    tracker.render();
-    expect(tracker.el.classList.contains("vertical")).toBe(true);
-    expect(tracker.el.querySelector(".usage-tracker-circle")).not.toBeNull();
-    expect(tracker.el.querySelector(".usage-tracker-vertical-meter")).toBeNull();
-
-    document.body.removeAttribute("data-tab-layout");
     tracker.render();
     expect(tracker.el.classList.contains("vertical")).toBe(false);
-    expect(tracker.el.querySelector(".usage-tracker-circle")).not.toBeNull();
 
     tracker.destroy();
   });

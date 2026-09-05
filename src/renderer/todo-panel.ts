@@ -1,5 +1,5 @@
 import type { AsyncJob, ProviderUsageReport, TodoPhase } from "../shared/ipc";
-import { renderUsageCards } from "./usage-render";
+import { animateUsageReveal, renderUsageCards, renderUsageSkeleton } from "./usage-render";
 
 export type TodoPanelMode = "overlay" | "docked";
 
@@ -147,17 +147,11 @@ export class TodoPanel {
 
   private renderUsage(): void {
     if (this.usageLoading) {
-      const loadingBox = document.createElement("div");
-      loadingBox.className = "usage-loading-box";
-      const spinner = document.createElement("span");
-      spinner.className = "usage-spinner";
-      const text = document.createElement("span");
-      text.textContent = "Querying live provider quotas...";
-      loadingBox.append(spinner, text);
-      this.usageBody.replaceChildren(loadingBox);
+      renderUsageSkeleton(this.usageBody);
       return;
     }
     renderUsageCards(this.usageBody, this.usageReports);
+    animateUsageReveal(this.usageBody);
   }
 
   private render(): void {

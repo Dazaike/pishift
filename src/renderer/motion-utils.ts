@@ -388,7 +388,9 @@ export function attachToolbarHoverPill(
   let hovered: HTMLElement | null = null;
 
   const sync = (immediate = false): void => {
-    const parked = container.querySelector<HTMLElement>(parkedSelector);
+    const parked = parkedSelector
+      ? container.querySelector<HTMLElement>(parkedSelector)
+      : null;
     const target =
       hovered && isToolbarItemShown(hovered)
         ? hovered
