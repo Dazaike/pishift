@@ -228,6 +228,35 @@ export class ChatView {
     this.emptyText.textContent = EMPTY_TEXT[reason];
     this.empty.hidden = false;
   }
+  /**
+   * Extracts recent plain text snippets from chat turns for tab preview.
+   */
+  getRecentPreviewLines(maxLines = 8): string[] {
+    const result: string[] = [];
+    // Check live body first if visible
+    if (!this.live.hidden && this.liveBody.textContent?.trim()) {
+      const text = this.liveBody.textContent.trim();
+      result.push(...text.split("\n").slice(-maxLines));
+    }
+    if (result.length < maxLines) {
+      for (let i = this.rows.length - 1; i >= 0 && result.length < maxLines; i--) {
+        const r = this.rows[i];
+        if (r.type === "entry") {
+          const speaker = r.entry.role === "user" ? "You: " : "Agent: ";
+          for (const part of r.entry.parts) {
+            if (part.kind === "text" && part.text.trim()) {
+              const lines = part.text.trim().split("\n");
+              for (let j = lines.length - 1; j >= 0 && result.length < maxLines; j--) {
+                result.unshift(j === 0 ? `${speaker}${lines[j]}` : lines[j]);
+              }
+            }
+          }
+        }
+      }
+    }
+    return result.slice(-maxLines);
+  }
+
 
   /** Drive the activity pill (what the agent is doing) beneath the live text. */
   setActivity(activity: ControlBridgeActivity, since: number | null): void {

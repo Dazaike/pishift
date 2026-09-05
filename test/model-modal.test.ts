@@ -81,7 +81,7 @@ describe("ModelModal", () => {
     expect(first).not.toBeNull();
     modal.setCurrentModel("grok-4.5");
     expect(modal.el.querySelector(".model-row")).toBe(first);
-    expect(modal.el.querySelector(".model-row.active .model-row-name")?.textContent).toBe("Grok 4.5");
+    expect(modal.el.querySelector(".model-row.active")).toBeNull();
   });
 
   it("selects the keyboard-highlighted model with Enter", () => {

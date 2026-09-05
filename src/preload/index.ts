@@ -63,7 +63,7 @@ const startupAppearance = Object.freeze({
   hideBottomButtonLabels: startupArg("hide-bottom-labels") === "1",
   collapseTopBarToMenu: startupArg("collapse-top-bar") === "1",
   showUsageInHeader: startupArg("show-header-usage") === "1",
-  tabLayoutMode: startupArg("tab-layout"),
+  tabPreviews: startupArg("tab-previews") !== "0",
 });
 
 const api = {

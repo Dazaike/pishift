@@ -7,6 +7,8 @@ import type {
   PasteMarkerStyle,
   PasteModeSetting,
 } from "./paste-attach";
+import type { TabLayout } from "./tab-layout";
+export type { TabLayout } from "./tab-layout";
 
 /** Transcript payloads travel over `CH.transcript*`; the model lives in `./transcript`. */
 export type {
@@ -290,7 +292,6 @@ export type TabState = { cwd: string; customTitle?: string; colorTag?: string };
 export type WindowBounds = { x: number; y: number; width: number; height: number };
 
 import type { ThemeSettings } from "./theme";
-import type { TabLayoutMode } from "./tab-layout";
 import type { SettingsSectionId, UsageTrackerSettings } from "./usage-tracker";
 
 export type CustomModelConfig = {
@@ -358,8 +359,10 @@ export type PersistedState = {
   autoExpandTools?: boolean;
   /** Open persisted thinking blocks in Chat View. */
   autoExpandReasoning?: boolean;
-  /** How the tab strip copes with more tabs than the header can show. */
-  tabLayoutMode?: TabLayoutMode;
+  /** Show live hover thumbnail/content preview popover when hovering inactive tabs. */
+  tabPreviews?: boolean;
+  /** Presentation of sessions: vertical session rail vs scaled-down compact horizontal strip. */
+  tabLayout?: TabLayout;
   splitRatio?: number;
   /** Chime when a session goes from working back to waiting for input. */
   doneSoundEnabled?: boolean;

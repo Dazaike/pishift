@@ -196,11 +196,8 @@ export class UsageTracker {
       return;
     }
 
-    const isVertical =
-      this.settings.orientation === "vertical" ||
-      (this.settings.orientation === "auto" &&
-        typeof document !== "undefined" &&
-        document.body?.getAttribute("data-tab-layout") === "stack");
+    // `auto` has nothing to react to now that tabs live in a vertical rail.
+    const isVertical = this.settings.orientation === "vertical";
     this.el.classList.toggle("vertical", isVertical);
 
     const items = document.createElement("div");

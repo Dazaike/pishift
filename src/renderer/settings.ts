@@ -9,6 +9,11 @@ import {
   type ViewMode,
 } from "../shared/ipc";
 import {
+  DEFAULT_TAB_LAYOUT,
+  isTabLayout,
+  type TabLayout,
+} from "../shared/tab-layout";
+import {
   DEFAULT_THEME_NAME,
   getThemeByName,
   THEME_PRESETS,
@@ -30,13 +35,6 @@ import {
   type PasteMarkerStyle,
   type PasteModeSetting,
 } from "../shared/paste-attach";
-import {
-  DEFAULT_TAB_LAYOUT_MODE,
-  isTabLayoutMode,
-  TAB_LAYOUT_LABELS,
-  TAB_LAYOUT_MODES,
-  type TabLayoutMode,
-} from "../shared/tab-layout";
 import {
   MIN_USAGE_TRACKER_REFRESH_MS,
   USAGE_TRACKER_REFRESH_PRESETS,
@@ -61,7 +59,8 @@ export class SettingsModal {
   private defaultViewMode: ViewMode;
   private autoExpandTools: boolean;
   private autoExpandReasoning: boolean;
-  private tabLayoutMode: TabLayoutMode;
+  private tabPreviews: boolean;
+  private tabLayout: TabLayout;
   private usageTracker: UsageTrackerSettings;
   private usageReports: ProviderUsageReport[];
   private settingsSectionCollapsed: Partial<Record<SettingsSectionId, boolean>>;
@@ -79,7 +78,8 @@ export class SettingsModal {
   private onDefaultViewModeChange: (mode: ViewMode) => void;
   private onToggleAutoExpandTools: (enabled: boolean) => void;
   private onToggleAutoExpandReasoning: (enabled: boolean) => void;
-  private onTabLayoutModeChange: (mode: TabLayoutMode) => void;
+  private onToggleTabPreviews: (enabled: boolean) => void;
+  private onTabLayoutChange: (layout: TabLayout) => void;
   private pasteMode: PasteModeSetting;
   private onPasteModeChange: (mode: PasteModeSetting) => void;
   private pasteMarkerStyle: PasteMarkerStyle;
@@ -127,8 +127,10 @@ export class SettingsModal {
     onDefaultViewModeChange: (mode: ViewMode) => void;
     onToggleAutoExpandTools: (enabled: boolean) => void;
     onToggleAutoExpandReasoning: (enabled: boolean) => void;
-    tabLayoutMode: TabLayoutMode | undefined;
-    onTabLayoutModeChange: (mode: TabLayoutMode) => void;
+    tabPreviews: boolean | undefined;
+    onToggleTabPreviews: (enabled: boolean) => void;
+    tabLayout?: TabLayout | undefined;
+    onTabLayoutChange: (layout: TabLayout) => void;
     initialScrollSteps: number | undefined;
     onScrollStepsChange: (steps: number) => void;
     pasteMode: PasteModeSetting | undefined;
@@ -165,7 +167,8 @@ export class SettingsModal {
     this.defaultViewMode = opts.defaultViewMode ?? "terminal";
     this.autoExpandTools = opts.autoExpandTools ?? false;
     this.autoExpandReasoning = opts.autoExpandReasoning ?? true;
-    this.tabLayoutMode = opts.tabLayoutMode ?? DEFAULT_TAB_LAYOUT_MODE;
+    this.tabPreviews = opts.tabPreviews ?? true;
+    this.tabLayout = opts.tabLayout ?? DEFAULT_TAB_LAYOUT;
     this.usageTracker = opts.usageTracker;
     this.usageReports = opts.usageReports;
     this.settingsSectionCollapsed = opts.settingsSectionCollapsed;
@@ -182,7 +185,8 @@ export class SettingsModal {
     this.onDefaultViewModeChange = opts.onDefaultViewModeChange;
     this.onToggleAutoExpandTools = opts.onToggleAutoExpandTools;
     this.onToggleAutoExpandReasoning = opts.onToggleAutoExpandReasoning;
-    this.onTabLayoutModeChange = opts.onTabLayoutModeChange;
+    this.onToggleTabPreviews = opts.onToggleTabPreviews;
+    this.onTabLayoutChange = opts.onTabLayoutChange;
     this.scrollSteps = clampScrollSteps(opts.initialScrollSteps ?? DEFAULT_SCROLL_STEPS);
     this.onScrollStepsChange = opts.onScrollStepsChange;
     this.pasteMode = opts.pasteMode ?? "ask";
@@ -252,7 +256,8 @@ export class SettingsModal {
     defaultViewMode?: ViewMode;
     autoExpandTools?: boolean;
     autoExpandReasoning?: boolean;
-    tabLayoutMode?: TabLayoutMode;
+    tabPreviews?: boolean;
+    tabLayout?: TabLayout;
     scrollSteps?: number;
     pasteMode?: PasteModeSetting;
     pasteMarkerStyle?: PasteMarkerStyle;
@@ -300,8 +305,11 @@ export class SettingsModal {
     if (typeof state.autoExpandReasoning === "boolean") {
       this.autoExpandReasoning = state.autoExpandReasoning;
     }
-    if (isTabLayoutMode(state.tabLayoutMode)) {
-      this.tabLayoutMode = state.tabLayoutMode;
+    if (typeof state.tabPreviews === "boolean") {
+      this.tabPreviews = state.tabPreviews;
+    }
+    if (isTabLayout(state.tabLayout)) {
+      this.tabLayout = state.tabLayout;
     }
     if (typeof state.scrollSteps === "number") {
       this.scrollSteps = clampScrollSteps(state.scrollSteps);
@@ -676,6 +684,34 @@ export class SettingsModal {
       this.onDefaultViewModeChange(this.defaultViewMode);
     });
     viewModeRow.append(viewModeLabel, viewModeSelect);
+    // Option 5c: Tab Layout presentation (Vertical Session Rail vs Horizontal Strip)
+    const tabLayoutRow = document.createElement("div");
+    tabLayoutRow.className = "settings-pos-row";
+    const tabLayoutLabel = document.createElement("label");
+    tabLayoutLabel.className = "settings-pos-label";
+    tabLayoutLabel.textContent = "Tab Layout";
+
+    const tabLayoutSelect = document.createElement("select");
+    tabLayoutSelect.className = "settings-select";
+    const tabLayoutOptions: { id: TabLayout; label: string }[] = [
+      { id: "vertical", label: "Vertical Rail (Docked Icons)" },
+      { id: "vertical-floating", label: "Vertical Rail (Floating / Auto-hide)" },
+      { id: "horizontal", label: "Horizontal (Compact)" },
+    ];
+    for (const opt of tabLayoutOptions) {
+      const el = document.createElement("option");
+      el.value = opt.id;
+      el.textContent = opt.label;
+      if (opt.id === this.tabLayout) el.selected = true;
+      tabLayoutSelect.appendChild(el);
+    }
+    tabLayoutSelect.addEventListener("change", () => {
+      const val = isTabLayout(tabLayoutSelect.value) ? tabLayoutSelect.value : "vertical";
+      this.tabLayout = val;
+      this.onTabLayoutChange(this.tabLayout);
+    });
+    tabLayoutRow.append(tabLayoutLabel, tabLayoutSelect);
+
 
     const autoExpandToolsLabel = document.createElement("label");
     autoExpandToolsLabel.className = "settings-check-label";
@@ -703,28 +739,20 @@ export class SettingsModal {
     autoExpandReasoningText.textContent = "Auto-expand Reasoning in Chat View";
     autoExpandReasoningLabel.append(autoExpandReasoningCheck, autoExpandReasoningText);
 
-    // Option 6: How the tab strip copes with many open sessions
-    const tabLayoutRow = document.createElement("div");
-    tabLayoutRow.className = "settings-pos-row";
-    const tabLayoutLabel = document.createElement("label");
-    tabLayoutLabel.className = "settings-pos-label";
-    tabLayoutLabel.textContent = "Too Many Tabs";
-
-    const tabLayoutSelect = document.createElement("select");
-    tabLayoutSelect.className = "settings-select";
-    for (const mode of TAB_LAYOUT_MODES) {
-      const el = document.createElement("option");
-      el.value = mode;
-      el.textContent = TAB_LAYOUT_LABELS[mode];
-      if (mode === this.tabLayoutMode) el.selected = true;
-      tabLayoutSelect.appendChild(el);
-    }
-    tabLayoutSelect.addEventListener("change", () => {
-      if (!isTabLayoutMode(tabLayoutSelect.value)) return;
-      this.tabLayoutMode = tabLayoutSelect.value;
-      this.onTabLayoutModeChange(this.tabLayoutMode);
+    // Option 6b: Hover tab previews
+    const tabPreviewsLabel = document.createElement("label");
+    tabPreviewsLabel.className = "settings-check-label";
+    const tabPreviewsCheck = document.createElement("input");
+    tabPreviewsCheck.type = "checkbox";
+    tabPreviewsCheck.checked = this.tabPreviews;
+    tabPreviewsCheck.addEventListener("change", () => {
+      this.tabPreviews = tabPreviewsCheck.checked;
+      this.onToggleTabPreviews(this.tabPreviews);
     });
-    tabLayoutRow.append(tabLayoutLabel, tabLayoutSelect);
+    const tabPreviewsText = document.createElement("span");
+    tabPreviewsText.textContent = "Show Tab Previews on Hover";
+    tabPreviewsLabel.append(tabPreviewsCheck, tabPreviewsText);
+
 
     // Option 7: Wheel scroll steps
     const scrollRow = document.createElement("div");
@@ -905,15 +933,16 @@ export class SettingsModal {
     volumeRow.append(volumeHead, volumeInput);
 
     optionsList.append(
-      usageLabel,
+      tabPreviewsLabel,
+      scrollRow,
       topLabelsLabel,
       bottomLabelsLabel,
       burgerMenuLabel,
       posRow,
       viewModeRow,
       autoExpandToolsLabel,
-      autoExpandReasoningLabel,
       tabLayoutRow,
+      autoExpandReasoningLabel,
       scrollRow,
       doneSoundLabel,
       volumeRow,

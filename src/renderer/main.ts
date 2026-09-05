@@ -86,12 +86,9 @@ import { RecentFoldersModal } from "./recent-folders-modal";
 import { RecentChatsModal } from "./recent-chats-modal";
 import { ChatView } from "./chat-view";
 import { TopMenu } from "./top-menu";
-import { TabStrip, type TabStripEntry } from "./tab-strip";
-import {
-  DEFAULT_TAB_LAYOUT_MODE,
-  isTabLayoutMode,
-  type TabLayoutMode,
-} from "../shared/tab-layout";
+import { TabRail, type TabRailEntry } from "./tab-rail";
+import { TabPreviewPopover, type TabPreviewInfo } from "./tab-preview";
+import type { TabLayout } from "../shared/tab-layout";
 import {
   DEFAULT_SETTINGS_SECTION_COLLAPSED,
   DEFAULT_USAGE_TRACKER_SETTINGS,
@@ -103,9 +100,6 @@ import {
 import { UsageTracker } from "./usage-tracker";
 const api = window.pishift;
 const startupAppearance = api.startupAppearance;
-const startupTabLayout = isTabLayoutMode(startupAppearance.tabLayoutMode)
-  ? startupAppearance.tabLayoutMode
-  : DEFAULT_TAB_LAYOUT_MODE;
 document.body.classList.toggle(
   "hide-top-button-labels",
   startupAppearance.hideTopButtonLabels,
@@ -118,7 +112,6 @@ document.body.classList.toggle(
   "top-bar-as-menu",
   startupAppearance.collapseTopBarToMenu,
 );
-document.body.dataset.tabLayout = startupTabLayout;
 const startupHeaderUsage = document.getElementById("header-usage");
 if (startupHeaderUsage instanceof HTMLElement) {
   startupHeaderUsage.style.display = startupAppearance.showUsageInHeader
@@ -126,11 +119,14 @@ if (startupHeaderUsage instanceof HTMLElement) {
     : "none";
 }
 
-const tabsEl = document.getElementById("tabs") as HTMLDivElement;
-const tabStripEl = document.getElementById("tab-strip") as HTMLDivElement;
-const tabNudgeLeft = document.getElementById("tab-nudge-left") as HTMLButtonElement;
-const tabNudgeRight = document.getElementById("tab-nudge-right") as HTMLButtonElement;
-const tabOverflowChip = document.getElementById("tab-overflow-chip") as HTMLButtonElement;
+const tabRailPanel = document.getElementById("tab-rail-panel") as HTMLDivElement;
+const tabRailList = document.getElementById("tab-rail-list") as HTMLDivElement;
+const tabRailNav = document.getElementById("tab-rail") as HTMLElement;
+const chromeEl = document.getElementById("chrome") as HTMLElement;
+const workspaceEl = document.getElementById("workspace") as HTMLElement;
+const headerUsageEl = document.getElementById("header-usage") as HTMLElement | null;
+const tabNudgeLeft = document.getElementById("tab-nudge-left") as HTMLButtonElement | null;
+const tabNudgeRight = document.getElementById("tab-nudge-right") as HTMLButtonElement | null;
 const viewsEl = document.getElementById("views") as HTMLDivElement;
 const panePrimaryEl = document.getElementById("pane-primary") as HTMLDivElement;
 const paneSecondaryEl = document.getElementById("pane-secondary") as HTMLDivElement;
@@ -187,6 +183,8 @@ type Tab = {
   activitySince: number | null;
   button: HTMLButtonElement;
   appIcon: HTMLImageElement;
+  /** Single-character session initial shown in the collapsed rail. */
+  glyph: HTMLSpanElement;
   colorDot: HTMLSpanElement;
   label: HTMLSpanElement;
   notice: HTMLDivElement | null;
@@ -263,7 +261,7 @@ let pasteMarkerPaint: PasteMarkerPaint = "pill";
 let pasteMarkerPulse = true;
 let doneSoundEnabled = true;
 let doneSoundVolume = DEFAULT_DONE_SOUND_VOLUME;
-let tabLayoutMode: TabLayoutMode = startupTabLayout;
+let tabPreviewsEnabled = startupAppearance.tabPreviews ?? true;
 let usageTrackerSettings: UsageTrackerSettings = {
   ...DEFAULT_USAGE_TRACKER_SETTINGS,
   quotas: [],
@@ -285,53 +283,113 @@ function applyScrollSteps(steps: number): void {
   terminalScrollSteps = clampScrollSteps(steps);
   for (const tab of tabs) tab.view?.setScrollSteps(terminalScrollSteps);
 }
-/** Header control width feeds the tab strip's overflow budget, so re-plan. */
+/** Header control widths only affect the header now; tabs live in the rail. */
 function applyButtonLabelVisibility(): void {
   document.body.classList.toggle("hide-top-button-labels", hideTopButtonLabels);
   document.body.classList.toggle("hide-bottom-button-labels", hideBottomButtonLabels);
   document.body.classList.toggle("top-bar-as-menu", collapseTopBarToMenu);
-  tabStrip.invalidate();
   renderTabs();
 }
 function applyPasteMarkerPaint(): void {
   document.body.dataset.pastePaint = pasteMarkerPaint;
 }
 
-/** Tab overflow behaviour (scrolling strip / stacked rows / `+N` menu). */
-const tabStrip = new TabStrip({
-  strip: tabStripEl,
-  scroller: tabsEl,
-  nudgeLeft: tabNudgeLeft,
-  nudgeRight: tabNudgeRight,
-  chip: tabOverflowChip,
-  entries: (): TabStripEntry[] =>
-    tabs.map((tab) => ({
-      key: tab.sessionNumber,
-      label: tabDisplayName(tab),
-      cwd: tab.cwd,
-      element: tab.button,
-      active: tab === active,
-      busy: tab.busy,
-      awaiting: tab.awaitingAsk || tab.awaitingPlanReview,
-      glow:
-        activityColorsOnTabs && tab.activity !== "idle" ? activityColors[tab.activity] : null,
-    })),
-  onActivate: (key) => {
-    const tab = tabs.find((t) => t.sessionNumber === key);
-    if (tab) activate(tab);
-  },
-  onClose: (key) => {
-    const tab = tabs.find((t) => t.sessionNumber === key);
-    if (tab) void requestCloseTab(tab);
-  },
+let tabLayout: TabLayout = "vertical";
+
+function applyTabLayout(layout: TabLayout): void {
+  tabLayout = layout;
+  document.body.dataset.tabLayout = layout;
+  if (tabRailNav && chromeEl && workspaceEl) {
+    if (layout === "horizontal") {
+      if (tabRailNav.parentElement !== chromeEl) {
+        chromeEl.insertBefore(tabRailNav, headerUsageEl ?? chromeEl.firstChild);
+      }
+    } else {
+      if (tabRailNav.parentElement !== workspaceEl) {
+        workspaceEl.insertBefore(tabRailNav, workspaceEl.firstChild);
+      }
+    }
+  }
+  renderTabs();
+  tabRail.sync();
+}
+function syncTabNudges(): void {
+  if (tabLayout !== "horizontal" || !tabNudgeLeft || !tabNudgeRight) {
+    if (tabNudgeLeft) tabNudgeLeft.hidden = true;
+    if (tabNudgeRight) tabNudgeRight.hidden = true;
+    return;
+  }
+  const { scrollLeft, scrollWidth, clientWidth } = tabRailList;
+  const overflowing = scrollWidth - clientWidth > 1;
+  tabNudgeLeft.hidden = !overflowing || scrollLeft <= 2;
+  tabNudgeRight.hidden = !overflowing || scrollLeft + clientWidth >= scrollWidth - 2;
+}
+
+tabNudgeLeft?.addEventListener("click", () => {
+  tabRailList.scrollBy({ left: -140, behavior: "smooth" });
 });
 
-function applyTabLayoutMode(mode: TabLayoutMode): void {
-  tabLayoutMode = mode;
-  tabStrip.setMode(mode);
-  usageTracker?.render();
-  queueUsageTrackerLayout(true);
-}
+tabNudgeRight?.addEventListener("click", () => {
+  tabRailList.scrollBy({ left: 140, behavior: "smooth" });
+});
+
+tabRailList.addEventListener("scroll", () => {
+  syncTabNudges();
+}, { passive: true });
+
+window.addEventListener("resize", () => {
+  syncTabNudges();
+});
+
+tabRailNav.addEventListener(
+  "wheel",
+  (ev) => {
+    if (tabLayout !== "horizontal") return;
+    const { scrollWidth, clientWidth } = tabRailList;
+    if (scrollWidth <= clientWidth) return;
+    const delta = Math.abs(ev.deltaX) > Math.abs(ev.deltaY) ? ev.deltaX : ev.deltaY;
+    if (delta === 0) return;
+    ev.preventDefault();
+    tabRailList.scrollLeft += delta;
+    syncTabNudges();
+  },
+  { passive: false }
+);
+
+/** Vertical session rail: sliding active/hover pills, hover-expanded labels. */
+const tabRail = new TabRail({
+  panel: tabRailPanel,
+  list: tabRailList,
+  entries: (): TabRailEntry[] =>
+    tabs.map((tab) => ({
+      key: tab.sessionNumber,
+      element: tab.button,
+      active: tab === active,
+    })),
+});
+
+const tabPreviewPopover = new TabPreviewPopover(tabRailList, (key: number): TabPreviewInfo | null => {
+  const tab = tabs.find((t) => t.sessionNumber === key);
+  if (!tab) return null;
+  const viewMode = tab.viewMode;
+  let lines: string[] = [];
+  if (viewMode === "chat" && tab.chat) {
+    lines = tab.chat.getRecentPreviewLines(7);
+  } else if (tab.view) {
+    lines = tab.view.getRecentLines(7);
+  }
+  return {
+    sessionNumber: tab.sessionNumber,
+    title: tabDisplayName(tab),
+    cwd: tab.cwd,
+    modelName: tab.modelName || "",
+    activity: tab.activity,
+    viewMode,
+    lines,
+  };
+});
+tabPreviewPopover.setEnabled(tabPreviewsEnabled);
+
 let settingsModal: SettingsModal | null = null;
 let modelModal: ModelModal | null = null;
 let usageModal: UsageModal | null = null;
@@ -400,19 +458,11 @@ function updateProviderReports(reports: ProviderUsageReport[]): void {
 }
 
 let usageTrackerLayoutFrame: number | null = null;
-let usageTrackerLayoutNeedsReplan = false;
 
-function queueUsageTrackerLayout(replan: boolean): void {
-  usageTrackerLayoutNeedsReplan ||= replan;
+function queueUsageTrackerLayout(): void {
   if (usageTrackerLayoutFrame !== null) return;
   usageTrackerLayoutFrame = window.requestAnimationFrame(() => {
     usageTrackerLayoutFrame = null;
-    const needsReplan = usageTrackerLayoutNeedsReplan;
-    usageTrackerLayoutNeedsReplan = false;
-    placeUsageTracker();
-    if (!needsReplan) return;
-    tabStrip.invalidate();
-    tabStrip.sync();
     placeUsageTracker();
   });
 }
@@ -772,7 +822,6 @@ function updateHeaderUsageVisibility(): void {
   if (headerUsage) {
     headerUsage.style.display = showUsageInHeader ? "inline-flex" : "none";
   }
-  tabStrip.invalidate();
   renderTabs();
 }
 
@@ -854,10 +903,11 @@ function persist(): void {
     hideBottomButtonLabels,
     doneSoundEnabled,
     doneSoundVolume,
-    tabLayoutMode,
+    tabPreviews: tabPreviewsEnabled,
     usageTracker: usageTrackerSettings,
     settingsSectionCollapsed,
     splitRatio: splitRatio !== 0.5 ? splitRatio : undefined,
+    tabLayout,
   });
 }
 
@@ -874,12 +924,15 @@ function renderTabs(): void {
     tab.button.classList.toggle("tab-split-secondary", isSecSplit);
     tab.button.classList.toggle("busy", tab.busy);
     tab.button.classList.toggle("awaiting-ask", tab.awaitingAsk || tab.awaitingPlanReview);
-    if (activityColorsOnTabs && tab.activity !== "idle") {
-      tab.button.style.setProperty("--tab-glow", activityColors[tab.activity]);
+    if (tab.busy || tab.activity !== "idle") {
+      const act = tab.activity !== "idle" ? tab.activity : "working";
+      const color = activityColors[act] ?? DEFAULT_ACTIVITY_COLORS[act] ?? "var(--accent)";
+      tab.button.style.setProperty("--tab-glow", color);
     } else {
       tab.button.style.removeProperty("--tab-glow");
     }
     tab.label.textContent = name;
+    tab.glyph.textContent = (name.trim()[0] ?? "\u2022").toUpperCase();
 
     const isPiShift = name === "PiShift";
     tab.appIcon.style.display = isPiShift ? "inline-block" : "none";
@@ -898,8 +951,9 @@ function renderTabs(): void {
     const source = tab.customTitle ? "manual" : cleanAutoTitle(tab.title) ? "auto" : "folder";
     tab.button.title = `${name} (${tab.cwd}) — ${source} · right-click for options · double-click to rename`;
   }
-  tabStrip.sync();
-  queueUsageTrackerLayout(true);
+  tabRail.sync();
+  syncTabNudges();
+  queueUsageTrackerLayout();
 }
 
 function placeUsageTracker(): void {
@@ -1561,6 +1615,7 @@ function startRenameTab(tab: Tab): void {
   input.value = currentName;
   input.spellcheck = false;
   const commit = (): void => {
+    tabRail.setPinnedOpen(false);
     const val = input.value.trim();
     // Empty / same as auto title clears the manual override so auto titles resume.
     const auto = cleanAutoTitle(tab.title);
@@ -1578,6 +1633,7 @@ function startRenameTab(tab: Tab): void {
   };
 
   const cancel = (): void => {
+    tabRail.setPinnedOpen(false);
     input.replaceWith(tab.label);
     renderTabs();
   };
@@ -1593,6 +1649,7 @@ function startRenameTab(tab: Tab): void {
   });
 
   input.addEventListener("blur", commit);
+  tabRail.setPinnedOpen(true);
   tab.label.replaceWith(input);
   input.focus();
   input.select();
@@ -1782,6 +1839,12 @@ function makeTab(cwd: string, customTitle?: string, colorTag?: string): Tab {
   busy.className = "tab-busy";
   const colorDot = document.createElement("span");
   colorDot.className = "tab-color-dot";
+  const glyph = document.createElement("span");
+  glyph.className = "tab-glyph-text";
+  glyph.textContent = (customTitle?.trim()[0] ?? "P").toUpperCase();
+  const glyphCell = document.createElement("span");
+  glyphCell.className = "tab-glyph";
+  glyphCell.append(appIconEl, glyph, colorDot, busy);
   const label = document.createElement("span");
   label.className = "tab-label";
   label.textContent = customTitle || "PiShift";
@@ -1790,7 +1853,7 @@ function makeTab(cwd: string, customTitle?: string, colorTag?: string): Tab {
   close.className = "tab-close";
   close.textContent = "\u00d7";
   close.setAttribute("aria-label", "Close tab");
-  button.append(appIconEl, busy, colorDot, label, close);
+  button.append(glyphCell, label, close);
   attachButtonSpring(button, { hoverScale: 1.0, pressScale: 0.97 });
   // Declared before the tab literal so the reconciler hooks can close over it.
   let self: Tab;
@@ -1822,6 +1885,7 @@ function makeTab(cwd: string, customTitle?: string, colorTag?: string): Tab {
     progressBusyTimer: null,
     button,
     appIcon: appIconEl,
+    glyph,
     colorDot,
     label,
     notice: null,
@@ -1847,6 +1911,7 @@ function makeTab(cwd: string, customTitle?: string, colorTag?: string): Tab {
     chat: null,
     transcriptSubscribed: false,
   };
+  button.dataset.tabKey = String(tab.sessionNumber);
   self = tab;
 
   button.addEventListener("mousedown", (ev) => {
@@ -1899,16 +1964,18 @@ function makeTab(cwd: string, customTitle?: string, colorTag?: string): Tab {
     });
   });
 
-  // Tab drag-and-drop horizontal reordering
+  // Tab drag-and-drop vertical reordering
   button.addEventListener("dragstart", (ev) => {
     draggedTab = tab;
     button.classList.add("tab-dragging");
+    tabRail.setPinnedOpen(true);
     ev.dataTransfer?.setData("text/plain", tab.cwd);
     ev.dataTransfer?.setData(INTERNAL_DRAG_TYPE, "tab");
   });
 
   button.addEventListener("dragend", () => {
     draggedTab = null;
+    tabRail.setPinnedOpen(false);
     button.classList.remove("tab-dragging");
     for (const t of tabs) {
       t.button.classList.remove("drop-before", "drop-after");
@@ -1919,8 +1986,10 @@ function makeTab(cwd: string, customTitle?: string, colorTag?: string): Tab {
     if (!draggedTab || draggedTab === tab) return;
     ev.preventDefault();
     const rect = button.getBoundingClientRect();
-    const mid = rect.left + rect.width / 2;
-    if (ev.clientX < mid) {
+    const isHorizontal = tabLayout === "horizontal";
+    const mid = isHorizontal ? rect.left + rect.width / 2 : rect.top + rect.height / 2;
+    const clientCoord = isHorizontal ? ev.clientX : ev.clientY;
+    if (clientCoord < mid) {
       button.classList.add("drop-before");
       button.classList.remove("drop-after");
     } else {
@@ -1941,15 +2010,17 @@ function makeTab(cwd: string, customTitle?: string, colorTag?: string): Tab {
     let toIdx = tabs.indexOf(tab);
     if (fromIdx < 0 || toIdx < 0) return;
     const rect = button.getBoundingClientRect();
-    const mid = rect.left + rect.width / 2;
-    if (ev.clientX >= mid) {
+    const isHorizontal = tabLayout === "horizontal";
+    const mid = isHorizontal ? rect.left + rect.width / 2 : rect.top + rect.height / 2;
+    const clientCoord = isHorizontal ? ev.clientX : ev.clientY;
+    if (clientCoord >= mid) {
       toIdx += 1;
     }
     tabs.splice(fromIdx, 1);
     const insertIdx = fromIdx < toIdx ? toIdx - 1 : toIdx;
     tabs.splice(insertIdx, 0, draggedTab);
     for (const t of tabs) {
-      tabsEl.appendChild(t.button);
+      tabRailList.appendChild(t.button);
     }
     renderTabs();
     persist();
@@ -1967,7 +2038,7 @@ function makeTab(cwd: string, customTitle?: string, colorTag?: string): Tab {
     void requestCloseTab(tab);
   });
 
-  tabsEl.appendChild(button);
+  tabRailList.appendChild(button);
   tabs.push(tab);
   return tab;
 }
@@ -2887,9 +2958,15 @@ function openSettingsModal(): void {
         for (const tab of tabs) tab.chat?.setAutoExpandReasoning(enabled);
         persist();
       },
-      tabLayoutMode,
-      onTabLayoutModeChange: (mode) => {
-        applyTabLayoutMode(mode);
+      tabPreviews: tabPreviewsEnabled,
+      onToggleTabPreviews: (enabled) => {
+        tabPreviewsEnabled = enabled;
+        tabPreviewPopover.setEnabled(enabled);
+        persist();
+      },
+      tabLayout,
+      onTabLayoutChange: (layout) => {
+        applyTabLayout(layout);
         persist();
       },
       initialScrollSteps: terminalScrollSteps,
@@ -2963,7 +3040,7 @@ function openSettingsModal(): void {
     defaultViewMode,
     autoExpandTools,
     autoExpandReasoning,
-    tabLayoutMode,
+    tabPreviews: tabPreviewsEnabled,
     scrollSteps: terminalScrollSteps,
     pasteMode,
     pasteMarkerStyle,
@@ -2974,6 +3051,7 @@ function openSettingsModal(): void {
     usageTracker: usageTrackerSettings,
     usageReports: [...(usageTracker?.currentReports ?? [])],
     settingsSectionCollapsed,
+    tabLayout,
   });
   settingsModal.open();
 }
@@ -3230,6 +3308,11 @@ async function boot(): Promise<void> {
     todoPanelMode = state.todoPanelMode;
   }
   todoPanel.init(todoPanelVisible, todoPanelMode);
+  if (state.tabLayout) {
+    applyTabLayout(state.tabLayout);
+  } else {
+    applyTabLayout("vertical");
+  }
   if (state.favoriteModels) {
     favoriteModels = state.favoriteModels;
   }
@@ -3255,9 +3338,10 @@ async function boot(): Promise<void> {
   if (state.panelPosition) {
     panelPosition = state.panelPosition;
   }
-  applyTabLayoutMode(
-    isTabLayoutMode(state.tabLayoutMode) ? state.tabLayoutMode : DEFAULT_TAB_LAYOUT_MODE,
-  );
+  if (typeof state.tabPreviews === "boolean") {
+    tabPreviewsEnabled = state.tabPreviews;
+    tabPreviewPopover.setEnabled(tabPreviewsEnabled);
+  }
   usageTrackerSettings = normalizeUsageTrackerSettings(state.usageTracker);
   settingsSectionCollapsed = {
     ...DEFAULT_SETTINGS_SECTION_COLLAPSED,
