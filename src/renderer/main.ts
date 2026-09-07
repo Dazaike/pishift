@@ -1652,28 +1652,41 @@ async function restartSession(tab: Tab): Promise<void> {
   renderTabs();
 }
 
-function handleOmpUpdateDetected(latestVersion: string, source: "check" | "stream" = "check"): void {
-  if (ompLatestVersion === latestVersion && ompUpdateAvailable) return;
+const notifiedVersions = new Set<string>();
+
+function isValidSemver(v: string | undefined | null): boolean {
+  if (!v || typeof v !== "string") return false;
+  return /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(v.trim().replace(/^v/i, ""));
+}
+
+function handleOmpUpdateDetected(latestVersion: string, source: "check" | "stream" = "check", notify = true): void {
+  const cleanVer = latestVersion.trim().replace(/^v/i, "");
+  if (!isValidSemver(cleanVer)) return;
+
+  if (ompLatestVersion === cleanVer && ompUpdateAvailable) return;
   ompUpdateAvailable = true;
-  ompLatestVersion = latestVersion;
+  ompLatestVersion = cleanVer;
 
   if (ompUpdateBtn) {
     ompUpdateBtn.hidden = false;
-    ompUpdateBtn.title = `New version ${latestVersion} is available. Click to update OMP and restart session.`;
+    ompUpdateBtn.title = `New version ${cleanVer} is available. Click to update OMP and restart session.`;
     if (ompUpdateLabel) ompUpdateLabel.textContent = "Update OMP";
-    if (ompUpdateVersion) ompUpdateVersion.textContent = latestVersion;
+    if (ompUpdateVersion) ompUpdateVersion.textContent = cleanVer;
   }
 
-  topMenu?.setUpdateStatus(true, latestVersion);
+  topMenu?.setUpdateStatus(true, cleanVer);
 
-  api.notify(
-    "OMP Update Available",
-    `New version ${latestVersion} is available. Click 'Update OMP' in the top bar to install.`,
-  );
-  dock.showToast(`OMP Update Available: ${latestVersion}`, 5000);
+  if (notify && !notifiedVersions.has(cleanVer)) {
+    notifiedVersions.add(cleanVer);
+    api.notify(
+      "OMP Update Available",
+      `New version ${cleanVer} is available. Click 'Update OMP' in the top bar to install.`,
+    );
+    dock.showToast(`OMP Update Available: ${cleanVer}`, 5000);
+  }
 
   if (source === "check") {
-    const notice = `\r\n\x1b[38;2;245;158;11m\x1b[1mUpdate Available\x1b[0m\r\nNew version ${latestVersion} is available. Run: omp update or click Update OMP in top bar\r\n`;
+    const notice = `\r\n\x1b[38;2;245;158;11m\x1b[1mUpdate Available\x1b[0m\r\nNew version ${cleanVer} is available. Run: omp update or click Update OMP in top bar\r\n`;
     active?.view?.writeToTerminal(notice);
   }
 }
@@ -1692,6 +1705,20 @@ function handleOmpUpdateCompleted(_latestVersion?: string | null): void {
   topMenu?.setUpdateStatus(false, null);
 }
 
+async function refreshOmpUpdateStatus(notify = false): Promise<void> {
+  if (ompUpdating) return;
+  try {
+    const check = await api.checkOmpUpdate();
+    if (check.updateAvailable && check.latestVersion && isValidSemver(check.latestVersion)) {
+      handleOmpUpdateDetected(check.latestVersion, "check", notify);
+    } else {
+      handleOmpUpdateCompleted();
+    }
+  } catch (err) {
+    console.error("OMP update check error:", err);
+  }
+}
+
 async function triggerOmpUpdate(): Promise<void> {
   if (ompUpdating) return;
   ompUpdating = true;
@@ -1707,12 +1734,12 @@ async function triggerOmpUpdate(): Promise<void> {
   try {
     const res = await api.performOmpUpdate();
     if (res.success) {
-      const ver = ompLatestVersion;
-      handleOmpUpdateCompleted(ver);
-      dock.showToast(`OMP updated${ver ? ` to ${ver}` : ""}! Restarting session...`, 3000);
+      handleOmpUpdateCompleted();
+      dock.showToast("OMP updated! Restarting session...", 3000);
       if (active) {
         await restartSession(active);
       }
+      window.setTimeout(() => void refreshOmpUpdateStatus(false), 3000);
     } else {
       ompUpdating = false;
       if (ompUpdateBtn) {
@@ -2383,12 +2410,12 @@ function parseStatusStream(tab: Tab, rawData: string): void {
   if (text.length > STATUS_SCAN_LIMIT) text = text.slice(text.length - STATUS_SCAN_LIMIT);
   const plain = text.replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, "");
   if (!plain) return;
-  // OMP update notice in terminal output (e.g. "Update Available ... New version 18.1.13 is available")
-  const streamUpdateMatch =
-    /Update Available[\s\S]*?New version\s+([^\s\r\n]+)\s+is available/i.exec(plain) ??
-    /New version available:\s*([^\s\r\n]+)/i.exec(plain);
-  if (streamUpdateMatch && streamUpdateMatch[1]) {
-    handleOmpUpdateDetected(streamUpdateMatch[1].trim(), "stream");
+  // OMP update notice in terminal startup banner
+  if (
+    !ompUpdateAvailable &&
+    /(?:^|\r|\n)\s*Update Available\s*\r?\n\s*New version\s+v?\d+\.\d+\.\d+\s+is available/i.test(plain)
+  ) {
+    void refreshOmpUpdateStatus(true);
   }
   // Ahead of the statusline gate: omp's large-paste selector replaces the
   // statusline entirely while it is up.
@@ -3083,6 +3110,13 @@ function openSettingsModal(): void {
         autoUpdateOmpOnOpen = enabled;
         persist();
       },
+      onOmpUpdateChecked: (res) => {
+        if (res.updateAvailable && res.latestVersion && isValidSemver(res.latestVersion)) {
+          handleOmpUpdateDetected(res.latestVersion, "check", false);
+        } else {
+          handleOmpUpdateCompleted();
+        }
+      },
       onPanelPositionChange: (pos) => {
         panelPosition = pos;
         recentFoldersModal?.setPanelPosition(pos);
@@ -3583,11 +3617,11 @@ async function boot(): Promise<void> {
     void (async () => {
       try {
         const check = await api.checkOmpUpdate();
-        if (check.updateAvailable && check.latestVersion) {
+        if (check.updateAvailable && check.latestVersion && isValidSemver(check.latestVersion)) {
           dock.showToast(`Updating OMP to ${check.latestVersion}...`, 4000);
           const res = await api.performOmpUpdate();
           if (res.success) {
-            handleOmpUpdateCompleted(check.latestVersion);
+            handleOmpUpdateCompleted();
             dock.showToast(`OMP updated to ${check.latestVersion} and terminal restarted.`, 4000);
             api.notify(
               "OMP Updated",
@@ -3597,9 +3631,11 @@ async function boot(): Promise<void> {
               await restartSession(active);
             }
           } else {
-            handleOmpUpdateDetected(check.latestVersion, "check");
+            handleOmpUpdateDetected(check.latestVersion, "check", true);
             dock.showToast(`OMP auto-update failed: ${res.error ?? "Unknown error"}`, 6000);
           }
+        } else {
+          handleOmpUpdateCompleted();
         }
       } catch (err) {
         console.error("Auto-update OMP on open error:", err);
@@ -3607,29 +3643,11 @@ async function boot(): Promise<void> {
     })();
   } else {
     // Default: Never auto-update or auto-restart without user clicking the button
-    window.setTimeout(async () => {
-      try {
-        const check = await api.checkOmpUpdate();
-        if (check.updateAvailable && check.latestVersion) {
-          handleOmpUpdateDetected(check.latestVersion, "check");
-        }
-      } catch (err) {
-        console.error("Background OMP update check error:", err);
-      }
-    }, 2000);
+    window.setTimeout(() => void refreshOmpUpdateStatus(true), 2000);
   }
 
   // Periodic background check every 4 hours
-  window.setInterval(async () => {
-    try {
-      const check = await api.checkOmpUpdate();
-      if (check.updateAvailable && check.latestVersion) {
-        handleOmpUpdateDetected(check.latestVersion, "check");
-      }
-    } catch (err) {
-      console.error("Periodic OMP update check error:", err);
-    }
-  }, 4 * 60 * 60 * 1000);
+  window.setInterval(() => void refreshOmpUpdateStatus(true), 4 * 60 * 60 * 1000);
 }
 
 void boot();

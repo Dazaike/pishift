@@ -1524,6 +1524,10 @@ body.hide-top-button-labels .btn-chrome-glyph {
   border-radius: 4px;
 }
 
+.btn-omp-update-version:empty {
+  display: none !important;
+}
+
 .btn-omp-update.updating {
   cursor: wait !important;
   opacity: 0.85;
