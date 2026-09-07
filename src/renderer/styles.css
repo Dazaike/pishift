@@ -1171,6 +1171,35 @@ body[data-tab-layout="horizontal"] .tab.drop-after {
 }
 
 
+/* Header App Version Badge (top far left) */
+#header-version {
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 7px;
+  margin: 0 8px 0 0;
+  border: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--bg-tab) 60%, transparent);
+  color: var(--fg-dim);
+  font-size: 10px;
+  font-family: var(--mono);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  user-select: none;
+  -webkit-app-region: drag;
+  opacity: 0.8;
+  transition: opacity 140ms ease, color 140ms ease, border-color 140ms ease;
+  flex-shrink: 0;
+}
+
+#header-version:hover {
+  opacity: 1;
+  color: var(--fg);
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
+}
+
 /* Header Pinned Usage Meter */
 #header-usage {
   align-self: center;
@@ -1321,6 +1350,7 @@ body[data-tab-layout="horizontal"] .tab.drop-after {
 #btn-split,
 #btn-settings,
 #btn-todo,
+#btn-omp-update,
 #btn-relaunch,
 #btn-quit,
 #btn-top-menu {
@@ -1386,6 +1416,7 @@ body.hide-top-button-labels #btn-todo span:not(.btn-todo-icon):not(.btn-chrome-g
 body.hide-top-button-labels #btn-recent-folders span,
 body.hide-top-button-labels #btn-recent-chats span,
 body.hide-top-button-labels #btn-settings span,
+body.hide-top-button-labels #btn-omp-update span:not(.btn-omp-update-icon-wrap):not(.btn-omp-update-badge),
 body.hide-top-button-labels #btn-relaunch span:not(.btn-chrome-glyph),
 body.hide-top-button-labels #btn-quit span:not(.btn-chrome-glyph),
 body.hide-top-button-labels #btn-top-menu .btn-top-menu-text {
@@ -1396,10 +1427,10 @@ body.hide-top-button-labels #btn-todo,
 body.hide-top-button-labels #btn-recent-folders,
 body.hide-top-button-labels #btn-recent-chats,
 body.hide-top-button-labels #btn-settings,
+body.hide-top-button-labels #btn-omp-update,
 body.hide-top-button-labels #btn-relaunch,
 body.hide-top-button-labels #btn-quit,
 body.hide-top-button-labels #btn-top-menu {
-  width: 32px !important;
   height: 32px !important;
   min-width: 32px !important;
   padding: 0 !important;
@@ -1428,6 +1459,97 @@ body.hide-top-button-labels .btn-split-svg {
 
 body.hide-top-button-labels .btn-chrome-glyph {
   font-size: 14px;
+}
+
+/* OMP Update Button */
+.btn-omp-update {
+  background: color-mix(in srgb, #f59e0b 14%, transparent) !important;
+  border: 1px solid color-mix(in srgb, #f59e0b 40%, transparent) !important;
+  color: #f59e0b !important;
+  box-shadow: 0 0 10px -2px rgba(245, 158, 11, 0.35);
+  font-weight: 600;
+  transition: all 180ms ease;
+}
+
+.btn-omp-update:hover {
+  background: color-mix(in srgb, #f59e0b 24%, transparent) !important;
+  border-color: color-mix(in srgb, #f59e0b 60%, transparent) !important;
+  color: #fbbf24 !important;
+  box-shadow: 0 0 14px -1px rgba(245, 158, 11, 0.5);
+}
+
+.btn-omp-update-icon-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.btn-omp-update-svg {
+  flex: 0 0 auto;
+  color: inherit;
+  transition: transform 140ms ease;
+}
+
+.btn-omp-update-badge {
+  position: absolute;
+  top: -2px;
+  right: -3px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #f59e0b;
+  box-shadow: 0 0 6px #f59e0b;
+  animation: pulse-update-badge 2s infinite ease-in-out;
+}
+
+@keyframes pulse-update-badge {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.9;
+  }
+  50% {
+    transform: scale(1.4);
+    opacity: 0.4;
+  }
+}
+
+.btn-omp-update-version {
+  font-size: 11px;
+  opacity: 0.85;
+  font-weight: 500;
+  background: color-mix(in srgb, #f59e0b 25%, transparent);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.btn-omp-update.updating {
+  cursor: wait !important;
+  opacity: 0.85;
+  pointer-events: none;
+}
+
+.btn-omp-update.updating .btn-omp-update-svg {
+  animation: spin-omp-update 1s linear infinite;
+}
+
+.btn-omp-update.updating .btn-omp-update-badge {
+  display: none;
+}
+
+@keyframes spin-omp-update {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+body.hide-top-button-labels .btn-omp-update-svg {
+  width: 15px;
+  height: 15px;
 }
 #btn-top-menu {
   display: none;
@@ -4276,6 +4398,52 @@ body.hide-bottom-button-labels #dock-change-dir .btn-icon {
   color: var(--fg-dim);
 }
 
+.settings-check-col {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.settings-check-subtext {
+  margin-left: 26px;
+  line-height: 1.4;
+}
+
+.settings-action-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.settings-action-btn {
+  padding: 5px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border));
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--fg);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 140ms ease;
+  white-space: nowrap;
+}
+
+.settings-action-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  border-color: var(--accent);
+}
+
+.settings-action-btn:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+
+.settings-action-status {
+  line-height: 1.3;
+}
+
 /* settings-footer layout is defined once above — keep this block from reintroducing a solid strip */
 
 .settings-done,
@@ -6203,6 +6371,25 @@ body.hide-bottom-button-labels #dock-change-dir .btn-icon {
 .top-menu-item-quit:hover,
 .top-menu-item-quit.selected {
   color: #f7768e;
+}
+
+.top-menu-item-update {
+  color: #f59e0b !important;
+}
+
+.top-menu-item-update:hover,
+.top-menu-item-update.selected {
+  color: #fbbf24 !important;
+}
+
+.top-menu-badge {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: color-mix(in srgb, #f59e0b 20%, transparent);
+  color: #f59e0b;
 }
 
 .top-menu-divider {

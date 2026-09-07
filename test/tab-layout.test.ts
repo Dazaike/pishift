@@ -5,7 +5,7 @@ import { DEFAULT_TAB_LAYOUT, isTabLayout, TAB_LAYOUTS } from "../src/shared/tab-
 describe("tab-layout", () => {
   it("defines default layout as vertical", () => {
     expect(DEFAULT_TAB_LAYOUT).toBe("vertical");
-    expect(TAB_LAYOUTS).toEqual(["vertical", "vertical-floating", "horizontal"]);
+    expect(TAB_LAYOUTS).toEqual(["vertical", "vertical-floating", "vertical-icons", "horizontal"]);
   });
 
   it("validates tab layout mode correctly", () => {
