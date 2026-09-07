@@ -11,6 +11,9 @@
   </head>
   <body>
     <header id="chrome">
+      <div id="header-version" class="header-version" title="PiShift v1.9.17">
+        <span id="header-version-text">v1.9.17</span>
+      </div>
       <div id="header-usage" title="Session token & cost metrics (Click for provider breakdown)">
         <img src="./assets/icons/usage.png" alt="" class="btn-icon" />
         <span id="header-usage-text">Usage &middot; $0.00</span>
@@ -26,6 +29,18 @@
           <button id="btn-todo" title="Toggle To-Do panel">
             <span class="btn-todo-icon">&#9776;</span>
             <span>To-Do</span>
+          </button>
+          <button id="btn-omp-update" class="btn-omp-update" hidden type="button" title="Update OMP">
+            <span class="btn-omp-update-icon-wrap" aria-hidden="true">
+              <svg class="btn-omp-update-svg" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="7 10 12 15 17 10"></polyline>
+                <line x1="12" y1="15" x2="12" y2="3"></line>
+              </svg>
+              <span class="btn-omp-update-badge"></span>
+            </span>
+            <span class="btn-omp-update-label">Update OMP</span>
+            <span class="btn-omp-update-version"></span>
           </button>
           <div id="usage-tracker-anchor" aria-live="polite"></div>
           <button id="btn-recent-chats" title="Recent Chats for Current Folder">

@@ -147,6 +147,9 @@ if (settingsImg) settingsImg.src = settingsIcon;
 const todoBtn = document.getElementById("btn-todo") as HTMLButtonElement;
 const recentFoldersBtn = document.getElementById("btn-recent-folders") as HTMLButtonElement;
 const usageTrackerAnchor = document.getElementById("usage-tracker-anchor") as HTMLDivElement;
+const ompUpdateBtn = document.getElementById("btn-omp-update") as HTMLButtonElement | null;
+const ompUpdateLabel = ompUpdateBtn?.querySelector<HTMLSpanElement>(".btn-omp-update-label");
+const ompUpdateVersion = ompUpdateBtn?.querySelector<HTMLSpanElement>(".btn-omp-update-version");
 const recentChatsBtn = document.getElementById("btn-recent-chats") as HTMLButtonElement;
 const topMenuBtn = document.getElementById("btn-top-menu") as HTMLButtonElement | null;
 const relaunchBtn = document.getElementById("btn-relaunch") as HTMLButtonElement | null;
@@ -154,6 +157,13 @@ const quitBtn = document.getElementById("btn-quit") as HTMLButtonElement | null;
 const winMinBtn = document.getElementById("win-min") as HTMLButtonElement | null;
 const winMaxBtn = document.getElementById("win-max") as HTMLButtonElement | null;
 const winCloseBtn = document.getElementById("win-close") as HTMLButtonElement | null;
+const headerVersionEl = document.getElementById("header-version") as HTMLDivElement | null;
+const headerVersionText = document.getElementById("header-version-text") as HTMLSpanElement | null;
+if (api.appVersion) {
+  const ver = api.appVersion.startsWith("v") ? api.appVersion : `v${api.appVersion}`;
+  if (headerVersionText) headerVersionText.textContent = ver;
+  if (headerVersionEl) headerVersionEl.title = `PiShift ${ver}`;
+}
 const headerUsage = document.getElementById("header-usage") as HTMLDivElement;
 const headerUsageText = document.getElementById("header-usage-text") as HTMLSpanElement;
 const headerActivity = document.getElementById("header-activity") as HTMLDivElement;
@@ -258,6 +268,10 @@ const ELAPSED_MIN_MS = 5000;
 let hideTopButtonLabels = startupAppearance.hideTopButtonLabels;
 let hideBottomButtonLabels = startupAppearance.hideBottomButtonLabels;
 let collapseTopBarToMenu = startupAppearance.collapseTopBarToMenu;
+let autoUpdateOmpOnOpen = false;
+let ompUpdateAvailable = false;
+let ompLatestVersion: string | null = null;
+let ompUpdating = false;
 let panelPosition: PanelPosition = "top-right";
 /** View mode new tabs open in; per-tab mode diverges freely from it. */
 let defaultViewMode: ViewMode = "terminal";
@@ -929,6 +943,7 @@ function persist(): void {
     todoPanelMode,
     hideTopButtonLabels,
     hideBottomButtonLabels,
+    autoUpdateOmpOnOpen,
     doneSoundEnabled,
     doneSoundVolume,
     tabPreviews: tabPreviewsEnabled,
@@ -1637,6 +1652,88 @@ async function restartSession(tab: Tab): Promise<void> {
   renderTabs();
 }
 
+function handleOmpUpdateDetected(latestVersion: string, source: "check" | "stream" = "check"): void {
+  if (ompLatestVersion === latestVersion && ompUpdateAvailable) return;
+  ompUpdateAvailable = true;
+  ompLatestVersion = latestVersion;
+
+  if (ompUpdateBtn) {
+    ompUpdateBtn.hidden = false;
+    ompUpdateBtn.title = `New version ${latestVersion} is available. Click to update OMP and restart session.`;
+    if (ompUpdateLabel) ompUpdateLabel.textContent = "Update OMP";
+    if (ompUpdateVersion) ompUpdateVersion.textContent = latestVersion;
+  }
+
+  topMenu?.setUpdateStatus(true, latestVersion);
+
+  api.notify(
+    "OMP Update Available",
+    `New version ${latestVersion} is available. Click 'Update OMP' in the top bar to install.`,
+  );
+  dock.showToast(`OMP Update Available: ${latestVersion}`, 5000);
+
+  if (source === "check") {
+    const notice = `\r\n\x1b[38;2;245;158;11m\x1b[1mUpdate Available\x1b[0m\r\nNew version ${latestVersion} is available. Run: omp update or click Update OMP in top bar\r\n`;
+    active?.view?.writeToTerminal(notice);
+  }
+}
+
+function handleOmpUpdateCompleted(_latestVersion?: string | null): void {
+  ompUpdateAvailable = false;
+  ompLatestVersion = null;
+  ompUpdating = false;
+  if (ompUpdateBtn) {
+    ompUpdateBtn.hidden = true;
+    ompUpdateBtn.disabled = false;
+    ompUpdateBtn.classList.remove("updating");
+    if (ompUpdateLabel) ompUpdateLabel.textContent = "Update OMP";
+    if (ompUpdateVersion) ompUpdateVersion.textContent = "";
+  }
+  topMenu?.setUpdateStatus(false, null);
+}
+
+async function triggerOmpUpdate(): Promise<void> {
+  if (ompUpdating) return;
+  ompUpdating = true;
+
+  if (ompUpdateBtn) {
+    ompUpdateBtn.disabled = true;
+    ompUpdateBtn.classList.add("updating");
+    if (ompUpdateLabel) ompUpdateLabel.textContent = "Updating OMP...";
+  }
+
+  dock.showToast("Updating OMP...", 4000);
+
+  try {
+    const res = await api.performOmpUpdate();
+    if (res.success) {
+      const ver = ompLatestVersion;
+      handleOmpUpdateCompleted(ver);
+      dock.showToast(`OMP updated${ver ? ` to ${ver}` : ""}! Restarting session...`, 3000);
+      if (active) {
+        await restartSession(active);
+      }
+    } else {
+      ompUpdating = false;
+      if (ompUpdateBtn) {
+        ompUpdateBtn.disabled = false;
+        ompUpdateBtn.classList.remove("updating");
+        if (ompUpdateLabel) ompUpdateLabel.textContent = "Retry Update";
+      }
+      dock.showToast(`OMP update failed: ${res.error ?? "Unknown error"}`, 6000);
+    }
+  } catch (err) {
+    ompUpdating = false;
+    if (ompUpdateBtn) {
+      ompUpdateBtn.disabled = false;
+      ompUpdateBtn.classList.remove("updating");
+      if (ompUpdateLabel) ompUpdateLabel.textContent = "Retry Update";
+    }
+    const msg = err instanceof Error ? err.message : String(err);
+    dock.showToast(`OMP update failed: ${msg}`, 6000);
+  }
+}
+
 function startRenameTab(tab: Tab): void {
   const currentName = tabDisplayName(tab);
   const input = document.createElement("input");
@@ -2286,6 +2383,13 @@ function parseStatusStream(tab: Tab, rawData: string): void {
   if (text.length > STATUS_SCAN_LIMIT) text = text.slice(text.length - STATUS_SCAN_LIMIT);
   const plain = text.replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, "");
   if (!plain) return;
+  // OMP update notice in terminal output (e.g. "Update Available ... New version 18.1.13 is available")
+  const streamUpdateMatch =
+    /Update Available[\s\S]*?New version\s+([^\s\r\n]+)\s+is available/i.exec(plain) ??
+    /New version available:\s*([^\s\r\n]+)/i.exec(plain);
+  if (streamUpdateMatch && streamUpdateMatch[1]) {
+    handleOmpUpdateDetected(streamUpdateMatch[1].trim(), "stream");
+  }
   // Ahead of the statusline gate: omp's large-paste selector replaces the
   // statusline entirely while it is up.
   if (detectPasteMenu(plain)) tab.pasteMenuSeen = true;
@@ -2974,6 +3078,11 @@ function openSettingsModal(): void {
         applyButtonLabelVisibility();
         persist();
       },
+      autoUpdateOmpOnOpen,
+      onToggleAutoUpdateOmpOnOpen: (enabled) => {
+        autoUpdateOmpOnOpen = enabled;
+        persist();
+      },
       onPanelPositionChange: (pos) => {
         panelPosition = pos;
         recentFoldersModal?.setPanelPosition(pos);
@@ -3089,6 +3198,7 @@ function openSettingsModal(): void {
     tabPreviews: tabPreviewsEnabled,
     scrollSteps: terminalScrollSteps,
     pasteMode,
+    autoUpdateOmpOnOpen,
     pasteMarkerStyle,
     pasteMarkerPaint,
     pasteMarkerPulse,
@@ -3105,6 +3215,7 @@ function openSettingsModal(): void {
 }
 
 todoBtn.addEventListener("click", () => todoPanel.toggle());
+ompUpdateBtn?.addEventListener("click", () => void triggerOmpUpdate());
 recentFoldersBtn.addEventListener("click", () => openRecentFoldersModal());
 recentChatsBtn.addEventListener("click", () => openRecentChatsModal());
 splitBtn?.addEventListener("click", () => void toggleSplitScreen());
@@ -3158,6 +3269,7 @@ topMenuBtn?.addEventListener("click", () => {
       onOpenTodo: () => todoPanel.toggle(),
       onOpenSettings: () => openSettingsModal(),
       onToggleSplit: () => void toggleSplitScreen(),
+      onUpdateOmp: () => void triggerOmpUpdate(),
       onRelaunch: () => {
         persist();
         api.relaunchApp();
@@ -3167,6 +3279,7 @@ topMenuBtn?.addEventListener("click", () => {
         api.quitApp();
       },
     });
+    topMenu.setUpdateStatus(ompUpdateAvailable, ompLatestVersion);
   }
   closeOtherPopovers("menu");
   topMenu?.toggle();
@@ -3411,6 +3524,9 @@ async function boot(): Promise<void> {
   if (typeof state.collapseTopBarToMenu === "boolean") {
     collapseTopBarToMenu = state.collapseTopBarToMenu;
   }
+  if (typeof state.autoUpdateOmpOnOpen === "boolean") {
+    autoUpdateOmpOnOpen = state.autoUpdateOmpOnOpen;
+  }
   applyButtonLabelVisibility();
   if (state.panelPosition) {
     panelPosition = state.panelPosition;
@@ -3461,6 +3577,59 @@ async function boot(): Promise<void> {
       applyThinkingLevelsForModel(active.modelName, active.thinkingLevel);
     }
   } catch {}
+
+  // OMP Update Check on Startup
+  if (autoUpdateOmpOnOpen) {
+    void (async () => {
+      try {
+        const check = await api.checkOmpUpdate();
+        if (check.updateAvailable && check.latestVersion) {
+          dock.showToast(`Updating OMP to ${check.latestVersion}...`, 4000);
+          const res = await api.performOmpUpdate();
+          if (res.success) {
+            handleOmpUpdateCompleted(check.latestVersion);
+            dock.showToast(`OMP updated to ${check.latestVersion} and terminal restarted.`, 4000);
+            api.notify(
+              "OMP Updated",
+              `OMP updated to ${check.latestVersion} and terminal restarted.`,
+            );
+            if (active) {
+              await restartSession(active);
+            }
+          } else {
+            handleOmpUpdateDetected(check.latestVersion, "check");
+            dock.showToast(`OMP auto-update failed: ${res.error ?? "Unknown error"}`, 6000);
+          }
+        }
+      } catch (err) {
+        console.error("Auto-update OMP on open error:", err);
+      }
+    })();
+  } else {
+    // Default: Never auto-update or auto-restart without user clicking the button
+    window.setTimeout(async () => {
+      try {
+        const check = await api.checkOmpUpdate();
+        if (check.updateAvailable && check.latestVersion) {
+          handleOmpUpdateDetected(check.latestVersion, "check");
+        }
+      } catch (err) {
+        console.error("Background OMP update check error:", err);
+      }
+    }, 2000);
+  }
+
+  // Periodic background check every 4 hours
+  window.setInterval(async () => {
+    try {
+      const check = await api.checkOmpUpdate();
+      if (check.updateAvailable && check.latestVersion) {
+        handleOmpUpdateDetected(check.latestVersion, "check");
+      }
+    } catch (err) {
+      console.error("Periodic OMP update check error:", err);
+    }
+  }, 4 * 60 * 60 * 1000);
 }
 
 void boot();

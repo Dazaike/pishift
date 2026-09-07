@@ -35,6 +35,7 @@ import { isSafeExternalUrl } from "../shared/url";
 import { loadInstalledModels, loadRecentChats, loadRecentFolders, loadSessionMessages, queryOmpUsage } from "./omp-data";
 import { loadSkillCommands } from "./omp-skills";
 import { loadJobActivity } from "./job-activity";
+import { checkOmpUpdate, performOmpUpdate } from "./omp-updater";
 import { PtyManager } from "./pty-manager";
 import { StateStore } from "./state-store";
 import { getThemeByName } from "../shared/themes";
@@ -98,6 +99,7 @@ function createWindow(): BrowserWindow {
       // visible frame already matches the user's saved chrome/layout settings.
       additionalArguments: [
         `--pishift-theme=${encodeURIComponent(theme.name)}`,
+        `--pishift-version=${encodeURIComponent(app.getVersion())}`,
         `--pishift-hide-top-labels=${state.hideTopButtonLabels ? "1" : "0"}`,
         `--pishift-hide-bottom-labels=${state.hideBottomButtonLabels ? "1" : "0"}`,
         `--pishift-collapse-top-bar=${state.collapseTopBarToMenu ? "1" : "0"}`,
@@ -258,7 +260,10 @@ function registerIpc(): void {
   ipcMain.handle(CH.getModels, () => loadInstalledModels());
   ipcMain.handle(CH.getProviderUsage, () => queryOmpUsage());
   ipcMain.handle(CH.readControlBridgeStatus, () => bridgeListener?.currentState ?? null);
+  ipcMain.handle(CH.checkOmpUpdate, () => checkOmpUpdate(store.ompPath));
+  ipcMain.handle(CH.performOmpUpdate, () => performOmpUpdate(store.ompPath));
   ipcMain.handle(CH.getRecentFolders, () => loadRecentFolders(store.recentFolders));
+  ipcMain.handle(CH.getAppVersion, () => app.getVersion());
   ipcMain.handle(CH.addRecentFolder, (_e, folder: string) => store.addRecentFolder(folder));
   ipcMain.handle(CH.removeRecentFolder, (_e, folder: string) => store.removeRecentFolder(folder));
   ipcMain.on(CH.clearRecentFolders, () => store.clearRecentFolders());

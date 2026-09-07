@@ -351,6 +351,15 @@ export class TermView {
     }
   }
 
+  /** Write directly to xterm viewport screen (e.g. system banner or update notice). */
+  writeToTerminal(data: string): void {
+    if (!this.disposed) {
+      try {
+        this.term.write(data);
+      } catch {}
+    }
+  }
+
   /** Resolves once PTY output has been quiet for `quietMs`, or after `timeoutMs` total elapsed, whichever comes first. */
   async waitForQuiet(quietMs: number, timeoutMs: number): Promise<void> {
     const deadline = Date.now() + timeoutMs;

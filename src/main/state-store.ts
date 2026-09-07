@@ -40,6 +40,8 @@ export class StateStore {
       return {
         bounds: raw.bounds,
         ompPath: raw.ompPath,
+        autoUpdateOmpOnOpen:
+          typeof raw.autoUpdateOmpOnOpen === "boolean" ? raw.autoUpdateOmpOnOpen : undefined,
         themeName: raw.themeName,
         theme: raw.theme,
         fontFamily: typeof raw.fontFamily === "string" ? raw.fontFamily : undefined,

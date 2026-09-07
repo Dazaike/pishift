@@ -10,6 +10,8 @@ import {
   type JobActivityDetails,
   type KillJobRequest,
   type PersistedState,
+  type OmpUpdateCheckResult,
+  type OmpUpdateResult,
   type ProviderUsageReport,
   type PtyData,
   type PtyExit,
@@ -59,6 +61,7 @@ function startupArg(name: string): string | undefined {
 
 const startupAppearance = Object.freeze({
   themeName: startupArg("theme"),
+  appVersion: startupArg("version"),
   hideTopButtonLabels: startupArg("hide-top-labels") === "1",
   hideBottomButtonLabels: startupArg("hide-bottom-labels") === "1",
   collapseTopBarToMenu: startupArg("collapse-top-bar") === "1",
@@ -68,6 +71,8 @@ const startupAppearance = Object.freeze({
 
 const api = {
   startupAppearance,
+  appVersion: startupArg("version") ?? "1.9.17",
+  getAppVersion: (): Promise<string> => ipcRenderer.invoke(CH.getAppVersion),
   spawn: (req: SpawnRequest): Promise<SpawnResult> => ipcRenderer.invoke(CH.ptySpawn, req),
   write: (id: string, data: string): void => ipcRenderer.send(CH.ptyWrite, id, data),
   resize: (id: string, cols: number, rows: number): void =>
@@ -134,6 +139,8 @@ const api = {
   defaultCwd: (): Promise<string> => ipcRenderer.invoke(CH.defaultCwd),
   getModels: (): Promise<InstalledModelGroup[]> => ipcRenderer.invoke(CH.getModels),
   getProviderUsage: (): Promise<ProviderUsageReport[]> => ipcRenderer.invoke(CH.getProviderUsage),
+  checkOmpUpdate: (): Promise<OmpUpdateCheckResult> => ipcRenderer.invoke(CH.checkOmpUpdate),
+  performOmpUpdate: (): Promise<OmpUpdateResult> => ipcRenderer.invoke(CH.performOmpUpdate),
   getRecentFolders: (): Promise<string[]> => ipcRenderer.invoke(CH.getRecentFolders),
   addRecentFolder: (folder: string): Promise<string[]> => ipcRenderer.invoke(CH.addRecentFolder, folder),
   removeRecentFolder: (folder: string): Promise<string[]> => ipcRenderer.invoke(CH.removeRecentFolder, folder),

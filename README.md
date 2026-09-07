@@ -117,14 +117,20 @@ No fake web-view wrappers pretending to be terminals. Just a genuine hardware-ac
 - **Live Activity Sync:** Tab titles and status reflect the agent's actual state (`idle`, `working`, `thinking`) in real time instead of the generic "Temp" default.
 - **Stall Recovery That Doesn’t Lie:** A frozen terminal output stream gets an explicit Resume or Kill action; long-running tools show elapsed time instead of pretending they vanished into the void.
 
+### 🔄 In-App OMP Updater
+- **Automated OMP Update Prompts:** Glowing amber update button in the top chrome row whenever a new OMP release is detected.
+- **One-Click Update & Auto-Restart:** Click to download and install the latest `omp` release directly inside PiShift and automatically restart your active session.
+- **Auto-Update on Open Toggle:** Configure PiShift in Settings to automatically update OMP upon opening the app.
+- **Header Version Badge:** Monospace version badge in the top far left of the header bar.
+
 ---
 
 ## 🛠️ How to run it
 
 ### Download the binary (for people with places to be)
  Grab the latest release from the **[Releases](https://github.com/Dazaike/pishift/releases)** tab:
-- **`PiShift Setup 1.9.16.exe`** — Standard installer.
-- **`PiShift-1.9.16-win.zip`** — Portable zip if you have installer commitment issues.
+- **`PiShift Setup 1.9.17.exe`** — Standard installer.
+- **`PiShift-1.9.17-win.zip`** — Portable zip if you have installer commitment issues.
 ### Build from source (for hackers & tinkerers)
 
 ```bash

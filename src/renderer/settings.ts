@@ -83,6 +83,8 @@ export class SettingsModal {
   private onToggleHideTopButtonLabels: (hide: boolean) => void;
   private onToggleHideBottomButtonLabels: (hide: boolean) => void;
   private onToggleCollapseTopBarToMenu: (collapse: boolean) => void;
+  private autoUpdateOmpOnOpen: boolean;
+  private onToggleAutoUpdateOmpOnOpen: (enabled: boolean) => void;
   private onPanelPositionChange: (pos: PanelPosition) => void;
   private onDefaultViewModeChange: (mode: ViewMode) => void;
   private onToggleAutoExpandTools: (enabled: boolean) => void;
@@ -134,6 +136,8 @@ export class SettingsModal {
     onToggleHideTopButtonLabels: (hide: boolean) => void;
     onToggleHideBottomButtonLabels: (hide: boolean) => void;
     onToggleCollapseTopBarToMenu: (collapse: boolean) => void;
+    autoUpdateOmpOnOpen?: boolean | undefined;
+    onToggleAutoUpdateOmpOnOpen: (enabled: boolean) => void;
     onPanelPositionChange: (pos: PanelPosition) => void;
     onDefaultViewModeChange: (mode: ViewMode) => void;
     onToggleAutoExpandTools: (enabled: boolean) => void;
@@ -176,6 +180,8 @@ export class SettingsModal {
     this.activityColors = { ...DEFAULT_ACTIVITY_COLORS, ...opts.initialActivityColors };
     this.activityColorsOnTabs = opts.initialActivityColorsOnTabs ?? false;
     this.hideTopButtonLabels = opts.hideTopButtonLabels ?? false;
+    this.autoUpdateOmpOnOpen = opts.autoUpdateOmpOnOpen ?? false;
+    this.onToggleAutoUpdateOmpOnOpen = opts.onToggleAutoUpdateOmpOnOpen;
     this.hideBottomButtonLabels = opts.hideBottomButtonLabels ?? false;
     this.collapseTopBarToMenu = opts.collapseTopBarToMenu ?? false;
     this.panelPosition = opts.panelPosition ?? "top-right";
@@ -273,6 +279,7 @@ export class SettingsModal {
     hideTopButtonLabels?: boolean;
     hideBottomButtonLabels?: boolean;
     collapseTopBarToMenu?: boolean;
+    autoUpdateOmpOnOpen?: boolean;
     panelPosition?: PanelPosition;
     defaultViewMode?: ViewMode;
     autoExpandTools?: boolean;
@@ -315,6 +322,9 @@ export class SettingsModal {
     }
     if (typeof state.collapseTopBarToMenu === "boolean") {
       this.collapseTopBarToMenu = state.collapseTopBarToMenu;
+    }
+    if (typeof state.autoUpdateOmpOnOpen === "boolean") {
+      this.autoUpdateOmpOnOpen = state.autoUpdateOmpOnOpen;
     }
     if (state.panelPosition) {
       this.panelPosition = state.panelPosition;
@@ -659,6 +669,61 @@ export class SettingsModal {
     const burgerMenuText = document.createElement("span");
     burgerMenuText.textContent = "Collapse Top Bar Buttons into Burger Menu (\u2630)";
     burgerMenuLabel.append(burgerMenuCheck, burgerMenuText);
+    // Option: Automatically update OMP upon opening the app
+    const autoUpdateRow = document.createElement("div");
+    autoUpdateRow.className = "settings-check-col";
+    const autoUpdateLabel = document.createElement("label");
+    autoUpdateLabel.className = "settings-check-label";
+    const autoUpdateCheck = document.createElement("input");
+    autoUpdateCheck.type = "checkbox";
+    autoUpdateCheck.checked = this.autoUpdateOmpOnOpen;
+    autoUpdateCheck.addEventListener("change", () => {
+      this.autoUpdateOmpOnOpen = autoUpdateCheck.checked;
+      this.onToggleAutoUpdateOmpOnOpen(this.autoUpdateOmpOnOpen);
+    });
+    const autoUpdateText = document.createElement("span");
+    autoUpdateText.textContent = "Automatically update OMP upon opening the app";
+    autoUpdateLabel.append(autoUpdateCheck, autoUpdateText);
+    const autoUpdateSub = document.createElement("div");
+    autoUpdateSub.className = "settings-desc settings-check-subtext";
+    autoUpdateSub.textContent =
+      "Checks for OMP updates on app launch, installs any new version, and restarts the session automatically. When disabled, PiShift prompts you with the update button instead.";
+    autoUpdateRow.append(autoUpdateLabel, autoUpdateSub);
+
+    // Option: Manual check for OMP updates
+    const ompCheckRow = document.createElement("div");
+    ompCheckRow.className = "settings-action-row";
+    const ompCheckBtn = document.createElement("button");
+    ompCheckBtn.type = "button";
+    ompCheckBtn.className = "settings-action-btn";
+    ompCheckBtn.textContent = "Check for OMP Updates";
+    const ompCheckStatus = document.createElement("span");
+    ompCheckStatus.className = "settings-desc settings-action-status";
+    ompCheckStatus.textContent = "Check if a newer version of OMP is available";
+    ompCheckBtn.addEventListener("click", async () => {
+      ompCheckBtn.disabled = true;
+      ompCheckStatus.textContent = "Checking for OMP updates...";
+      ompCheckStatus.style.color = "var(--fg-dim)";
+      try {
+        const res = await window.pishift.checkOmpUpdate();
+        if (res.updateAvailable && res.latestVersion) {
+          ompCheckStatus.textContent = `Update available: ${res.latestVersion} (Current: ${res.currentVersion ?? "installed"})`;
+          ompCheckStatus.style.color = "#f59e0b";
+        } else if (res.error) {
+          ompCheckStatus.textContent = `Check failed: ${res.error}`;
+          ompCheckStatus.style.color = "#f7768e";
+        } else {
+          ompCheckStatus.textContent = `OMP is up to date (${res.currentVersion ?? "latest"}).`;
+          ompCheckStatus.style.color = "var(--fg-dim)";
+        }
+      } catch (err) {
+        ompCheckStatus.textContent = `Check failed: ${err instanceof Error ? err.message : String(err)}`;
+        ompCheckStatus.style.color = "#f7768e";
+      } finally {
+        ompCheckBtn.disabled = false;
+      }
+    });
+    ompCheckRow.append(ompCheckBtn, ompCheckStatus);
 
     // Option 5: Placement of recent menus
     const posRow = document.createElement("div");
@@ -1036,6 +1101,8 @@ export class SettingsModal {
       topLabelsLabel,
       bottomLabelsLabel,
       burgerMenuLabel,
+      autoUpdateRow,
+      ompCheckRow,
       posRow,
       viewModeRow,
       autoExpandToolsLabel,

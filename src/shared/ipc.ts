@@ -70,7 +70,23 @@ export const CH = {
   unsubscribeTranscript: "transcript:unsubscribe",
   transcriptUpdate: "transcript:update",
   transcriptBlob: "transcript:blob",
+  checkOmpUpdate: "app:check-omp-update",
+  performOmpUpdate: "app:perform-omp-update",
+  getAppVersion: "app:get-version",
 } as const;
+
+export interface OmpUpdateCheckResult {
+  updateAvailable: boolean;
+  currentVersion?: string;
+  latestVersion?: string;
+  error?: string;
+}
+
+export interface OmpUpdateResult {
+  success: boolean;
+  output?: string;
+  error?: string;
+}
 
 export type ControlBridgeActivity = AgentActivity;
 
@@ -328,6 +344,8 @@ export type ViewMode = "terminal" | "chat";
 export type PersistedState = {
   bounds?: WindowBounds;
   ompPath?: string;
+  /** Automatically update OMP upon opening the app. */
+  autoUpdateOmpOnOpen?: boolean;
   themeName?: string;
   theme?: Partial<ThemeSettings>;
   fontFamily?: string;
