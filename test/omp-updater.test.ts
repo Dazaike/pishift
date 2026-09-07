@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
-import { checkOmpUpdate, parseOmpUpdateCheckOutput } from "../src/main/omp-updater";
+import { checkOmpUpdate, isNewerVersion, isValidSemver, parseOmpUpdateCheckOutput } from "../src/main/omp-updater";
 import { StateStore } from "../src/main/state-store";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -56,6 +56,45 @@ New version available: 18.1.13
     expect(res.updateAvailable).toBe(false);
     expect(res.currentVersion).toBeUndefined();
     expect(res.latestVersion).toBeUndefined();
+  });
+  it("rejects non-semver tokens like regex expressions or symbols", () => {
+    const output = `
+Current version: 18.1.14
+New version available: \\s*([^\\s\\r\\n]+)
+`;
+    const res = parseOmpUpdateCheckOutput(output);
+    expect(res.updateAvailable).toBe(false);
+    expect(res.latestVersion).toBeUndefined();
+  });
+
+  it("returns updateAvailable: false when latest version is older than current version", () => {
+    const output = `
+Current version: 18.1.14
+New version available: 18.1.11
+`;
+    const res = parseOmpUpdateCheckOutput(output);
+    expect(res.updateAvailable).toBe(false);
+  });
+});
+
+describe("semver helpers", () => {
+  it("validates semantic version strings", () => {
+    expect(isValidSemver("18.1.14")).toBe(true);
+    expect(isValidSemver("v1.9.17")).toBe(true);
+    expect(isValidSemver("1.0.0-alpha.1")).toBe(true);
+    expect(isValidSemver("\\s*([^\\s\\r\\n]+)")).toBe(false);
+    expect(isValidSemver("-")).toBe(false);
+    expect(isValidSemver("")).toBe(false);
+    expect(isValidSemver(null)).toBe(false);
+    expect(isValidSemver(undefined)).toBe(false);
+  });
+
+  it("accurately compares version numbers", () => {
+    expect(isNewerVersion("18.1.14", "18.1.11")).toBe(true);
+    expect(isNewerVersion("18.2.0", "18.1.14")).toBe(true);
+    expect(isNewerVersion("19.0.0", "18.9.9")).toBe(true);
+    expect(isNewerVersion("18.1.14", "18.1.14")).toBe(false);
+    expect(isNewerVersion("18.1.11", "18.1.14")).toBe(false);
   });
 });
 

@@ -4,6 +4,7 @@ import {
   GLOW_ACTIVITY_LABELS,
   type GlowActivity,
   type PanelPosition,
+  type OmpUpdateCheckResult,
   type ProviderLimit,
   type ProviderUsageReport,
   type ViewMode,
@@ -85,6 +86,7 @@ export class SettingsModal {
   private onToggleCollapseTopBarToMenu: (collapse: boolean) => void;
   private autoUpdateOmpOnOpen: boolean;
   private onToggleAutoUpdateOmpOnOpen: (enabled: boolean) => void;
+  private onOmpUpdateChecked?: (res: OmpUpdateCheckResult) => void;
   private onPanelPositionChange: (pos: PanelPosition) => void;
   private onDefaultViewModeChange: (mode: ViewMode) => void;
   private onToggleAutoExpandTools: (enabled: boolean) => void;
@@ -139,6 +141,7 @@ export class SettingsModal {
     autoUpdateOmpOnOpen?: boolean | undefined;
     onToggleAutoUpdateOmpOnOpen: (enabled: boolean) => void;
     onPanelPositionChange: (pos: PanelPosition) => void;
+    onOmpUpdateChecked?: (res: OmpUpdateCheckResult) => void;
     onDefaultViewModeChange: (mode: ViewMode) => void;
     onToggleAutoExpandTools: (enabled: boolean) => void;
     onToggleAutoExpandReasoning: (enabled: boolean) => void;
@@ -184,6 +187,7 @@ export class SettingsModal {
     this.onToggleAutoUpdateOmpOnOpen = opts.onToggleAutoUpdateOmpOnOpen;
     this.hideBottomButtonLabels = opts.hideBottomButtonLabels ?? false;
     this.collapseTopBarToMenu = opts.collapseTopBarToMenu ?? false;
+    this.onOmpUpdateChecked = opts.onOmpUpdateChecked;
     this.panelPosition = opts.panelPosition ?? "top-right";
     this.defaultViewMode = opts.defaultViewMode ?? "terminal";
     this.autoExpandTools = opts.autoExpandTools ?? false;
@@ -706,6 +710,7 @@ export class SettingsModal {
       ompCheckStatus.style.color = "var(--fg-dim)";
       try {
         const res = await window.pishift.checkOmpUpdate();
+        this.onOmpUpdateChecked?.(res);
         if (res.updateAvailable && res.latestVersion) {
           ompCheckStatus.textContent = `Update available: ${res.latestVersion} (Current: ${res.currentVersion ?? "installed"})`;
           ompCheckStatus.style.color = "#f59e0b";
