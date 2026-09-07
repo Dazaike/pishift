@@ -189,4 +189,11 @@ describe("index.html OMP update button structure", () => {
     expect(versionText).not.toBeNull();
     expect(versionText?.textContent?.trim()).toMatch(/^v\d+\.\d+\.\d+$/);
   });
+
+  it("styles.css enforces display: none !important for #btn-omp-update[hidden]", () => {
+    const cssPath = join(__dirname, "../src/renderer/styles.css");
+    const css = readFileSync(cssPath, "utf8");
+    expect(css).toMatch(/#btn-omp-update\[hidden\][\s\S]*?display:\s*none\s*!important/);
+    expect(css).toMatch(/body\.top-bar-as-menu\s+#btn-omp-update/);
+  });
 });
