@@ -316,8 +316,7 @@ export class Dock {
     const editorEl = document.getElementById("dock-editor") as HTMLElement;
     this.glow = new DockGlow(editorEl);
     this.lightbox = new ImageLightbox();
-    this.root.appendChild(this.slashMenu.el);
-    this.root.appendChild(this.pasteMenu.el);
+    // Slash/paste menus mount on document.body so glass blur isn't clipped by #dock.
 
     const toast = document.createElement("div");
     toast.id = "dock-toast";

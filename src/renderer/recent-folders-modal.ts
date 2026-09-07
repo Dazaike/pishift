@@ -121,13 +121,14 @@ export class RecentFoldersModal {
 
   async refresh(): Promise<void> {
     this.loading = true;
+    this.renderList();
     try {
       this.folders = await window.pishift.getRecentFolders();
     } catch {
       this.folders = [];
     } finally {
       this.loading = false;
-      if (this.isOpen) this.render();
+      if (this.isOpen) this.renderList();
     }
   }
 

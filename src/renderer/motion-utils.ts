@@ -288,6 +288,20 @@ export const popoverMotion = {
     );
   },
 
+  /** Slide up from below — no scale pop. Good for dock-anchored sheets. */
+  animateSlideUpOpen(el: HTMLElement, options?: Record<string, unknown>): MotionControls {
+    el.hidden = false;
+    return safeAnimate(
+      el,
+      {
+        opacity: [0, 1],
+        y: [8, 0],
+      },
+      // Duration ease beats spring here — no settle tail / lag.
+      options ?? { duration: 0.14, ease: [0.16, 1, 0.3, 1] }
+    );
+  },
+
   animatePopoverClose(
     el: HTMLElement,
     onDone: () => void,
@@ -301,6 +315,29 @@ export const popoverMotion = {
         y: [0, 4],
       },
       options ?? { duration: 0.14, ease: "easeOut" }
+    );
+
+    controls.then(() => {
+      el.hidden = true;
+      onDone();
+    });
+
+    return controls;
+  },
+
+  /** Slide down + fade out — pair with animateSlideUpOpen. */
+  animateSlideDownClose(
+    el: HTMLElement,
+    onDone: () => void,
+    options?: Record<string, unknown>
+  ): MotionControls {
+    const controls = safeAnimate(
+      el,
+      {
+        opacity: [1, 0],
+        y: [0, 6],
+      },
+      options ?? { duration: 0.1, ease: "easeOut" }
     );
 
     controls.then(() => {

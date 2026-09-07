@@ -7,8 +7,8 @@ import type {
   PasteMarkerStyle,
   PasteModeSetting,
 } from "./paste-attach";
-import type { TabLayout } from "./tab-layout";
-export type { TabLayout } from "./tab-layout";
+import type { TabLayout, TabRailSide } from "./tab-layout";
+export type { TabLayout, TabRailSide } from "./tab-layout";
 
 /** Transcript payloads travel over `CH.transcript*`; the model lives in `./transcript`. */
 export type {
@@ -45,6 +45,11 @@ export const CH = {
   readControlBridgeStatus: "control-bridge:read-status",
   setChromeColors: "app:set-chrome-colors",
   setTaskbarBusy: "app:set-taskbar-busy",
+  windowMinimize: "window:minimize",
+  windowMaximizeToggle: "window:maximize-toggle",
+  windowClose: "window:close",
+  windowIsMaximized: "window:is-maximized",
+  windowMaximizedChanged: "window:maximized-changed",
   openPath: "app:open-path",
   showItemInFolder: "app:show-item-in-folder",
   copyText: "app:copy-text",
@@ -363,6 +368,10 @@ export type PersistedState = {
   tabPreviews?: boolean;
   /** Presentation of sessions: vertical session rail vs scaled-down compact horizontal strip. */
   tabLayout?: TabLayout;
+  /** Vertical rail edge. Ignored while tabLayout is horizontal. */
+  tabRailSide?: TabRailSide;
+  /** Invisible hover hit width (px) from the collapsed rail. Vertical only. */
+  tabRailHoverReachPx?: number;
   splitRatio?: number;
   /** Chime when a session goes from working back to waiting for input. */
   doneSoundEnabled?: boolean;

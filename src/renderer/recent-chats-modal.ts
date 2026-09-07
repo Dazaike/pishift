@@ -132,13 +132,14 @@ export class RecentChatsModal {
 
   async refresh(): Promise<void> {
     this.loading = true;
+    this.renderList();
     try {
       this.chats = await window.pishift.getRecentChats(this.currentCwd);
     } catch {
       this.chats = [];
     } finally {
       this.loading = false;
-      if (this.isOpen) this.render();
+      if (this.isOpen) this.renderList();
     }
   }
 

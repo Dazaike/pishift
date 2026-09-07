@@ -150,6 +150,17 @@ const api = {
   setChromeColors: (background: string, symbol: string): void =>
     ipcRenderer.send(CH.setChromeColors, { background, symbol }),
   setTaskbarBusy: (busy: boolean): void => ipcRenderer.send(CH.setTaskbarBusy, busy),
+  windowMinimize: (): void => ipcRenderer.send(CH.windowMinimize),
+  windowMaximizeToggle: (): void => ipcRenderer.send(CH.windowMaximizeToggle),
+  windowClose: (): void => ipcRenderer.send(CH.windowClose),
+  windowIsMaximized: (): Promise<boolean> => ipcRenderer.invoke(CH.windowIsMaximized),
+  onWindowMaximizedChanged: (cb: (maximized: boolean) => void): (() => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, maximized: boolean): void => {
+      cb(Boolean(maximized));
+    };
+    ipcRenderer.on(CH.windowMaximizedChanged, handler);
+    return () => ipcRenderer.removeListener(CH.windowMaximizedChanged, handler);
+  },
   openPath: (targetPath: string): Promise<string> => ipcRenderer.invoke(CH.openPath, targetPath),
   showItemInFolder: (targetPath: string): Promise<void> =>
     ipcRenderer.invoke(CH.showItemInFolder, targetPath),

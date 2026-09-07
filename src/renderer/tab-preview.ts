@@ -232,13 +232,20 @@ export class TabPreviewPopover {
       }
       left = Math.min(Math.max(pad, rect.left), window.innerWidth - pad - width);
     } else {
-      // The rail is vertical and clips its rows, so flank the panel's visible
-      // right edge instead of the row's (clipped) box, and fall back to its left
-      // side when the viewport has no room.
-      const railRight = this.scroller.getBoundingClientRect().right;
-      left = railRight + 8;
-      if (left + width > window.innerWidth - pad) {
-        left = Math.max(pad, railRight - 8 - width);
+      // Flank the visible rail edge; prefer outward into the content area,
+      // then fall back to the opposite side when the viewport has no room.
+      const railRect = this.scroller.getBoundingClientRect();
+      const railOnRight = document.body.dataset.tabRailSide === "right";
+      if (railOnRight) {
+        left = railRect.left - 8 - width;
+        if (left < pad) {
+          left = Math.min(window.innerWidth - pad - width, railRect.right + 8);
+        }
+      } else {
+        left = railRect.right + 8;
+        if (left + width > window.innerWidth - pad) {
+          left = Math.max(pad, railRect.left - 8 - width);
+        }
       }
 
       top = rect.top;
