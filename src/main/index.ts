@@ -42,7 +42,6 @@ import { ControlBridgeListener } from "./control-bridge-listener";
 import { TranscriptWatcher, readTranscriptBlob } from "./transcript";
 
 const DEFAULT_CHROME_BG = "#191b24";
-const DEFAULT_CHROME_FG = "#c8cbd9";
 const TEMP_SUBDIR = "pishift";
 
 export function getDefaultCwd(): string {
@@ -86,11 +85,7 @@ function createWindow(): BrowserWindow {
     show: false,
     icon: join(__dirname, "../../src/renderer/assets/icons/icon.png"),
     titleBarStyle: "hidden",
-    titleBarOverlay: {
-      color: theme.bgRaised,
-      symbolColor: theme.fg,
-      height: 48,
-    },
+    // Caption buttons are drawn in the renderer chrome (native overlay is unstyled).
     backgroundColor: theme.bg,
     webPreferences: {
       preload: join(__dirname, "../preload/index.js"),
@@ -116,6 +111,13 @@ function createWindow(): BrowserWindow {
   // module applies synchronous startup preferences. Waiting for the completed
   // page load guarantees the first visible frame already has those settings.
   window.webContents.once("did-finish-load", () => window.show());
+
+  const emitMaximized = (): void => {
+    if (window.isDestroyed()) return;
+    window.webContents.send(CH.windowMaximizedChanged, window.isMaximized());
+  };
+  window.on("maximize", emitMaximized);
+  window.on("unmaximize", emitMaximized);
 
   const persistBounds = (): void => {
     if (!window.isDestroyed() && !window.isMinimized() && !window.isFullScreen()) {
@@ -286,15 +288,32 @@ function registerIpc(): void {
     (_e, colors: { background: string; symbol: string }) => {
       if (!win || win.isDestroyed()) return;
       const background = colors?.background || DEFAULT_CHROME_BG;
-      const symbol = colors?.symbol || DEFAULT_CHROME_FG;
       try {
-        win.setTitleBarOverlay({ color: background, symbolColor: symbol, height: 48 });
+        // Caption buttons are custom HTML now; only keep the window shell color in sync.
         win.setBackgroundColor(background);
       } catch {
-        // setTitleBarOverlay unavailable on some hosts
+        // setBackgroundColor unavailable on some hosts
       }
     },
   );
+
+  ipcMain.on(CH.windowMinimize, () => {
+    if (!win || win.isDestroyed()) return;
+    win.minimize();
+  });
+  ipcMain.on(CH.windowMaximizeToggle, () => {
+    if (!win || win.isDestroyed()) return;
+    if (win.isMaximized()) win.unmaximize();
+    else win.maximize();
+  });
+  ipcMain.on(CH.windowClose, () => {
+    if (!win || win.isDestroyed()) return;
+    win.close();
+  });
+  ipcMain.handle(CH.windowIsMaximized, () => {
+    if (!win || win.isDestroyed()) return false;
+    return win.isMaximized();
+  });
 
   ipcMain.on(CH.setTaskbarBusy, (_e, busy: boolean) => {
     if (!win || win.isDestroyed()) return;

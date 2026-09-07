@@ -40,6 +40,11 @@ export class SlashMenu {
     this.el.hidden = true;
     this.el.setAttribute("role", "listbox");
     this.el.setAttribute("aria-label", "Slash commands");
+    // Body-fixed so backdrop-filter isn't trapped by #dock's own blur.
+    document.body.appendChild(this.el);
+    window.addEventListener("resize", () => {
+      if (this.isOpen) this.position();
+    });
   }
 
   get isOpen(): boolean {
@@ -62,9 +67,24 @@ export class SlashMenu {
     this.selectedIndex = 0;
     this.render();
     const wasHidden = this.el.hidden;
+    // Unhide first so offsetHeight is real, then pin position before paint/anim.
     this.el.hidden = false;
-    if (wasHidden) popoverMotion.animatePopoverOpen(this.el);
+    this.position();
+    if (wasHidden) popoverMotion.animateSlideUpOpen(this.el);
     return true;
+  }
+
+  private position(): void {
+    const dock = document.getElementById("dock");
+    if (!dock) return;
+    const r = dock.getBoundingClientRect();
+    const menuH = this.el.offsetHeight || 160;
+    // Match prior absolute inset: left/right 10px, bottom edge 4px below dock top.
+    this.el.style.left = `${Math.round(r.left + 10)}px`;
+    this.el.style.width = `${Math.round(Math.max(120, r.width - 20))}px`;
+    this.el.style.top = `${Math.round(r.top - menuH + 4)}px`;
+    this.el.style.right = "auto";
+    this.el.style.bottom = "auto";
   }
 
   close(): void {
@@ -73,7 +93,7 @@ export class SlashMenu {
       this.selectedIndex = 0;
       return;
     }
-    popoverMotion.animatePopoverClose(this.el, () => {
+    popoverMotion.animateSlideDownClose(this.el, () => {
       this.el.hidden = true;
       this.items = [];
       this.selectedIndex = 0;

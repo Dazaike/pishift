@@ -1,3 +1,5 @@
+import "./styles.css";
+
 import appIcon from "./assets/icons/icon.png";
 import settingsIcon from "./assets/icons/settings.png";
 import {
@@ -88,7 +90,13 @@ import { ChatView } from "./chat-view";
 import { TopMenu } from "./top-menu";
 import { TabRail, type TabRailEntry } from "./tab-rail";
 import { TabPreviewPopover, type TabPreviewInfo } from "./tab-preview";
-import type { TabLayout } from "../shared/tab-layout";
+import type { TabLayout, TabRailSide } from "../shared/tab-layout";
+import {
+  clampTabRailHoverReachPx,
+  DEFAULT_TAB_RAIL_HOVER_REACH_PX,
+  DEFAULT_TAB_RAIL_SIDE,
+  isTabRailSide,
+} from "../shared/tab-layout";
 import {
   DEFAULT_SETTINGS_SECTION_COLLAPSED,
   DEFAULT_USAGE_TRACKER_SETTINGS,
@@ -143,6 +151,9 @@ const recentChatsBtn = document.getElementById("btn-recent-chats") as HTMLButton
 const topMenuBtn = document.getElementById("btn-top-menu") as HTMLButtonElement | null;
 const relaunchBtn = document.getElementById("btn-relaunch") as HTMLButtonElement | null;
 const quitBtn = document.getElementById("btn-quit") as HTMLButtonElement | null;
+const winMinBtn = document.getElementById("win-min") as HTMLButtonElement | null;
+const winMaxBtn = document.getElementById("win-max") as HTMLButtonElement | null;
+const winCloseBtn = document.getElementById("win-close") as HTMLButtonElement | null;
 const headerUsage = document.getElementById("header-usage") as HTMLDivElement;
 const headerUsageText = document.getElementById("header-usage-text") as HTMLSpanElement;
 const headerActivity = document.getElementById("header-activity") as HTMLDivElement;
@@ -295,6 +306,8 @@ function applyPasteMarkerPaint(): void {
 }
 
 let tabLayout: TabLayout = "vertical";
+let tabRailSide: TabRailSide = DEFAULT_TAB_RAIL_SIDE;
+let tabRailHoverReachPx = DEFAULT_TAB_RAIL_HOVER_REACH_PX;
 
 function applyTabLayout(layout: TabLayout): void {
   tabLayout = layout;
@@ -312,6 +325,21 @@ function applyTabLayout(layout: TabLayout): void {
   }
   renderTabs();
   tabRail.sync();
+}
+
+function applyTabRailSide(side: TabRailSide): void {
+  tabRailSide = side;
+  document.body.dataset.tabRailSide = side;
+  tabPreviewPopover?.hideImmediate();
+  tabRail.sync();
+}
+
+function applyTabRailHoverReach(px: number): void {
+  tabRailHoverReachPx = clampTabRailHoverReachPx(px);
+  document.documentElement.style.setProperty(
+    "--tab-rail-hover-reach",
+    `${tabRailHoverReachPx}px`,
+  );
 }
 function syncTabNudges(): void {
   if (tabLayout !== "horizontal" || !tabNudgeLeft || !tabNudgeRight) {
@@ -908,6 +936,8 @@ function persist(): void {
     settingsSectionCollapsed,
     splitRatio: splitRatio !== 0.5 ? splitRatio : undefined,
     tabLayout,
+    tabRailSide,
+    tabRailHoverReachPx,
   });
 }
 
@@ -2465,14 +2495,8 @@ function openModelSelector(): void {
         persist();
       },
     );
-    const modelWrap = document.getElementById("dock-model-wrap");
-    if (modelWrap) {
-      modelWrap.appendChild(modelModal.el);
-    } else {
-      const dockControls = document.getElementById("dock-controls");
-      if (dockControls) dockControls.appendChild(modelModal.el);
-      else document.body.appendChild(modelModal.el);
-    }
+    // ModelModal mounts itself on document.body so backdrop-filter can blur
+    // content behind the dock (same pattern as ThinkingMenu).
   }
   modelModal.toggle(active?.modelName);
 }
@@ -2779,6 +2803,18 @@ if (chromeActionsRow) {
   }
 }
 
+const windowControls = document.getElementById("window-controls");
+if (windowControls) {
+  attachToolbarHoverPill(windowControls, {
+    pillClass: "chrome-action-indicator",
+    box: true,
+  });
+  for (const btn of windowControls.querySelectorAll<HTMLElement>("button")) {
+    attachButtonSpring(btn, { hoverScale: 1.04, pressScale: 0.94 });
+  }
+}
+
+
 headerUsage.addEventListener("click", () => {
   dockHooksUsage();
 });
@@ -2969,6 +3005,16 @@ function openSettingsModal(): void {
         applyTabLayout(layout);
         persist();
       },
+      tabRailSide,
+      onTabRailSideChange: (side) => {
+        applyTabRailSide(side);
+        persist();
+      },
+      tabRailHoverReachPx,
+      onTabRailHoverReachChange: (px) => {
+        applyTabRailHoverReach(px);
+        persist();
+      },
       initialScrollSteps: terminalScrollSteps,
       onScrollStepsChange: (steps) => {
         applyScrollSteps(steps);
@@ -3052,6 +3098,8 @@ function openSettingsModal(): void {
     usageReports: [...(usageTracker?.currentReports ?? [])],
     settingsSectionCollapsed,
     tabLayout,
+    tabRailSide,
+    tabRailHoverReachPx,
   });
   settingsModal.open();
 }
@@ -3133,6 +3181,25 @@ quitBtn?.addEventListener("click", () => {
   persist();
   api.quitApp();
 });
+
+function setWindowMaximizedUi(maximized: boolean): void {
+  if (!winMaxBtn) return;
+  const maxIcon = winMaxBtn.querySelector<HTMLElement>(".win-max-icon");
+  const restoreIcon = winMaxBtn.querySelector<HTMLElement>(".win-restore-icon");
+  if (maxIcon) maxIcon.hidden = maximized;
+  if (restoreIcon) restoreIcon.hidden = !maximized;
+  winMaxBtn.title = maximized ? "Restore" : "Maximize";
+  winMaxBtn.setAttribute("aria-label", maximized ? "Restore" : "Maximize");
+}
+
+winMinBtn?.addEventListener("click", () => api.windowMinimize());
+winMaxBtn?.addEventListener("click", () => api.windowMaximizeToggle());
+winCloseBtn?.addEventListener("click", () => {
+  persist();
+  api.windowClose();
+});
+void api.windowIsMaximized().then(setWindowMaximizedUi);
+api.onWindowMaximizedChanged(setWindowMaximizedUi);
 
 document.addEventListener("click", (event) => {
   const anchor = (event.target as HTMLElement | null)?.closest("a");
@@ -3313,6 +3380,16 @@ async function boot(): Promise<void> {
   } else {
     applyTabLayout("vertical");
   }
+  if (isTabRailSide(state.tabRailSide)) {
+    applyTabRailSide(state.tabRailSide);
+  } else {
+    applyTabRailSide(DEFAULT_TAB_RAIL_SIDE);
+  }
+  applyTabRailHoverReach(
+    state.tabRailHoverReachPx !== undefined
+      ? state.tabRailHoverReachPx
+      : DEFAULT_TAB_RAIL_HOVER_REACH_PX,
+  );
   if (state.favoriteModels) {
     favoriteModels = state.favoriteModels;
   }

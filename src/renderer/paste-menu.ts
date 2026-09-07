@@ -1,4 +1,5 @@
 import type { PasteMode } from "../shared/paste-attach";
+import { popoverMotion } from "./motion-utils";
 
 export type PasteMenuChoice = (mode: PasteMode) => void;
 
@@ -39,6 +40,11 @@ export class PasteMenu {
     this.el.hidden = true;
     this.el.setAttribute("role", "listbox");
     this.el.setAttribute("aria-label", "Long paste options");
+    // Body-fixed so backdrop-filter isn't trapped by #dock's own blur.
+    document.body.appendChild(this.el);
+    window.addEventListener("resize", () => {
+      if (this.isOpen) this.position();
+    });
   }
 
   get isOpen(): boolean {
@@ -49,16 +55,40 @@ export class PasteMenu {
     this.onChoose = onChoose;
     this.selectedIndex = 0;
     this.render(lines);
+    const wasHidden = this.el.hidden;
     this.el.hidden = false;
+    this.position();
+    if (wasHidden) popoverMotion.animateSlideUpOpen(this.el);
+  }
+
+  private position(): void {
+    const dock = document.getElementById("dock");
+    if (!dock) return;
+    const r = dock.getBoundingClientRect();
+    const menuH = this.el.offsetHeight || 120;
+    this.el.style.left = `${Math.round(r.left + 10)}px`;
+    this.el.style.width = `${Math.round(Math.max(120, r.width - 20))}px`;
+    this.el.style.top = `${Math.round(r.top - menuH + 4)}px`;
+    this.el.style.right = "auto";
+    this.el.style.bottom = "auto";
   }
 
   /** Hides without answering. Callers that owe an answer use cancel(). */
   close(): void {
-    this.el.hidden = true;
-    this.el.replaceChildren();
-    this.rows = [];
-    this.selectedIndex = 0;
-    this.onChoose = null;
+    if (this.el.hidden) {
+      this.el.replaceChildren();
+      this.rows = [];
+      this.selectedIndex = 0;
+      this.onChoose = null;
+      return;
+    }
+    popoverMotion.animateSlideDownClose(this.el, () => {
+      this.el.hidden = true;
+      this.el.replaceChildren();
+      this.rows = [];
+      this.selectedIndex = 0;
+      this.onChoose = null;
+    });
   }
 
   moveSelection(delta: number): void {

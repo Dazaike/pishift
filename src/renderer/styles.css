@@ -9,11 +9,13 @@
   --fg-dim: #8b93a8;
   --accent: #7aa2f7;
   --accent-glow: rgba(122, 162, 247, 0.25);
-  --chrome-h: 48px;
-  /* Vertical session rail: collapsed indicator tab width, hover-expanded overlay width, row height. */
-  --tab-rail-w: 18px;
+  --chrome-h: 54px;
+  /* Vertical session rail: collapsed icon strip, hover-expanded panel, row height. */
+  --tab-rail-w: 56px;
   --tab-rail-open-w: 240px;
-  --tab-row-h: 38px;
+  --tab-row-h: 44px;
+  /* Invisible hover hit strip from the collapsed rail into the content area. */
+  --tab-rail-hover-reach: 150px;
   /* Shared motion timing: dock send + tab switch stay in sync. */
   --anim-dock: 420ms;
   --anim-dock-ease: cubic-bezier(0.2, 0.85, 0.25, 1);
@@ -27,6 +29,10 @@
   --glow-editing: #fb923c;
   --glow-running: #4ade80;
   --glow-working: #7aa2f7;
+  /* Shared modal / popover surface — frosted glass. */
+  --glass-bg: color-mix(in srgb, #0f0f0f 85%, transparent);
+  --glass-blur: blur(8px) saturate(180%);
+  --glass-border: color-mix(in srgb, #373737 70%, rgba(255, 255, 255, 0.08));
 }
 
 * {
@@ -114,17 +120,21 @@ button:active {
 /* Header & Chrome */
 #chrome {
   display: flex;
-  align-items: stretch;
+  align-items: center;
   height: var(--chrome-h);
   flex: 0 0 var(--chrome-h);
-  background: var(--bg-raised);
-  border-bottom: 1px solid var(--border);
-  padding: 0 4px 0 8px;
-  /* Leave room for Windows caption buttons (min/max/close). */
-  padding-right: 140px;
+  background: #101010;
+  border-bottom: none;
+  padding: 0 10px;
+  /* Room for custom window controls (min/max/close). */
+  padding-right: 10px;
+  overflow: visible;
   -webkit-app-region: drag;
 }
 
+/* ==========================================================================
+   Session rail — collapsed icon strip → glass drawer on hover
+   ========================================================================== */
 #tab-rail {
   position: relative;
   flex: 0 0 var(--tab-rail-w);
@@ -141,7 +151,7 @@ button:active {
   top: 0;
   bottom: 0;
   left: 0;
-  width: 150px;
+  width: var(--tab-rail-hover-reach);
   pointer-events: auto;
   z-index: 1;
 }
@@ -152,7 +162,7 @@ button:active {
   pointer-events: none;
 }
 
-/* Docked Icon Rail (Default Vertical: 48px permanently visible icon strip) */
+/* Docked Icon Rail */
 #tab-rail-panel {
   position: absolute;
   top: 0;
@@ -161,14 +171,15 @@ button:active {
   width: var(--tab-rail-w);
   display: flex;
   flex-direction: column;
-  background: color-mix(in srgb, var(--bg-raised) 80%, transparent);
+  background: #101010;
   border-right: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
   border-radius: 0 16px 16px 0;
   overflow: hidden;
   pointer-events: auto;
   z-index: 2;
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
   box-shadow: none;
   clip-path: none;
   transition:
@@ -192,9 +203,19 @@ button:active {
   pointer-events: auto;
 }
 
+/* Collapsed: keep the + control visible as an icon; label only when expanded. */
+#tab-rail-panel #tab-rail-footer {
+  opacity: 1;
+  pointer-events: auto;
+  border-top-color: color-mix(in srgb, var(--border) 50%, transparent);
+  transition:
+    opacity 140ms ease,
+    border-color 140ms ease;
+}
+
 #tab-rail-panel #new-tab {
-  width: calc(var(--tab-rail-w) - 12px);
-  transition: width 220ms cubic-bezier(0.2, 0.85, 0.25, 1), background 120ms ease;
+  width: calc(var(--tab-rail-w) - 16px);
+  transition: width 220ms cubic-bezier(0.2, 0.85, 0.25, 1), background 120ms ease, opacity 140ms ease;
 }
 
 #tab-rail-panel #new-tab .new-tab-label {
@@ -203,30 +224,93 @@ button:active {
   transition: opacity 140ms ease;
 }
 
-/* Expand docked rail on hover or pinned open */
-#tab-rail:hover #tab-rail-panel,
-#tab-rail-panel.pinned-open {
+/* Expand docked rail on hover or pinned open (not icons-only) */
+body:not([data-tab-layout="vertical-icons"]) #tab-rail:hover #tab-rail-panel,
+body:not([data-tab-layout="vertical-icons"]) #tab-rail-panel.pinned-open {
   width: var(--tab-rail-open-w);
   pointer-events: auto;
-  background: color-mix(in srgb, var(--bg-raised) 92%, transparent);
-  backdrop-filter: blur(24px) saturate(190%);
-  -webkit-backdrop-filter: blur(24px) saturate(190%);
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
   border-color: color-mix(in srgb, var(--border) 70%, rgba(255, 255, 255, 0.12));
   box-shadow:
     14px 0 40px -8px rgba(0, 0, 0, 0.65),
     0 0 0 1px rgba(255, 255, 255, 0.05) inset;
+}
+
+body:not([data-tab-layout="vertical-icons"]) #tab-rail:hover #tab-rail-panel,
+body:not([data-tab-layout="vertical-icons"]) #tab-rail-panel.pinned-open {
   transition-delay: 0ms;
 }
 
-#tab-rail:hover #tab-rail-panel #new-tab,
-#tab-rail-panel.pinned-open #new-tab {
-  width: calc(var(--tab-rail-open-w) - 12px);
+body:not([data-tab-layout="vertical-icons"]) #tab-rail:hover #tab-rail-panel #tab-rail-footer,
+body:not([data-tab-layout="vertical-icons"]) #tab-rail-panel.pinned-open #tab-rail-footer {
+  opacity: 1;
+  pointer-events: auto;
+  border-top-color: color-mix(in srgb, var(--border) 70%, transparent);
 }
 
-#tab-rail:hover #tab-rail-panel #new-tab .new-tab-label,
-#tab-rail-panel.pinned-open #new-tab .new-tab-label {
+body:not([data-tab-layout="vertical-icons"]) #tab-rail:hover #tab-rail-panel #new-tab,
+body:not([data-tab-layout="vertical-icons"]) #tab-rail-panel.pinned-open #new-tab {
+  width: calc(var(--tab-rail-open-w) - 16px);
+}
+
+body:not([data-tab-layout="vertical-icons"]) #tab-rail:hover #tab-rail-panel #new-tab .new-tab-label,
+body:not([data-tab-layout="vertical-icons"]) #tab-rail-panel.pinned-open #new-tab .new-tab-label {
   opacity: 1;
   display: inline;
+}
+
+/* Icons-only: never expand; always show + control as icon */
+body[data-tab-layout="vertical-icons"] #tab-rail::after {
+  display: none !important;
+}
+
+body[data-tab-layout="vertical-icons"] #tab-rail-panel,
+body[data-tab-layout="vertical-icons"] #tab-rail:hover #tab-rail-panel,
+body[data-tab-layout="vertical-icons"] #tab-rail-panel.pinned-open {
+  width: var(--tab-rail-w) !important;
+  max-width: var(--tab-rail-w) !important;
+  background: #101010 !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  box-shadow: none !important;
+  transition: none !important;
+}
+
+body[data-tab-layout="vertical-icons"] #tab-rail-panel #tab-rail-footer {
+  opacity: 1 !important;
+  pointer-events: auto !important;
+  border-top-color: color-mix(in srgb, var(--border) 50%, transparent);
+}
+
+body[data-tab-layout="vertical-icons"] #tab-rail-panel #new-tab,
+body[data-tab-layout="vertical-icons"] #tab-rail:hover #tab-rail-panel #new-tab,
+body[data-tab-layout="vertical-icons"] #tab-rail-panel.pinned-open #new-tab {
+  width: calc(var(--tab-rail-w) - 16px) !important;
+}
+
+body[data-tab-layout="vertical-icons"] #tab-rail-panel #new-tab .new-tab-label,
+body[data-tab-layout="vertical-icons"] #tab-rail:hover #tab-rail-panel #new-tab .new-tab-label {
+  display: none !important;
+  opacity: 0 !important;
+}
+
+body[data-tab-layout="vertical-icons"] .tab {
+  width: calc(var(--tab-rail-w) - 16px) !important;
+  grid-template-columns: 36px !important;
+  padding: 0 !important;
+  gap: 0 !important;
+}
+
+body[data-tab-layout="vertical-icons"] .tab-label,
+body[data-tab-layout="vertical-icons"] .tab-close {
+  display: none !important;
+}
+
+body[data-tab-layout="vertical-icons"] .tab-indicator,
+body[data-tab-layout="vertical-icons"] .tab-hover-indicator {
+  border-radius: 10px;
 }
 
 /* Floating Auto-Hide Mode */
@@ -281,13 +365,17 @@ body[data-tab-layout="vertical-floating"] #tab-rail:hover #tab-rail-panel,
 body[data-tab-layout="vertical-floating"] #tab-rail-panel.pinned-open {
   pointer-events: auto;
   clip-path: inset(0 0 0 0 round 0 16px 16px 0);
-  background: color-mix(in srgb, var(--bg-raised) 74%, transparent);
-  backdrop-filter: blur(24px) saturate(190%);
-  -webkit-backdrop-filter: blur(24px) saturate(190%);
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
   border-color: color-mix(in srgb, var(--border) 70%, rgba(255, 255, 255, 0.12));
   box-shadow:
     14px 0 40px -8px rgba(0, 0, 0, 0.65),
     0 0 0 1px rgba(255, 255, 255, 0.05) inset;
+}
+
+body[data-tab-layout="vertical-floating"] #tab-rail:hover #tab-rail-panel,
+body[data-tab-layout="vertical-floating"] #tab-rail-panel.pinned-open {
   transition-delay: 0ms;
 }
 
@@ -304,8 +392,78 @@ body[data-tab-layout="vertical-floating"] #tab-rail-panel.pinned-open #tab-rail-
   opacity: 1;
   transform: translateX(0);
   pointer-events: auto;
+}
+
+body[data-tab-layout="vertical-floating"] #tab-rail:hover #tab-rail-panel #tab-rail-list,
+body[data-tab-layout="vertical-floating"] #tab-rail:hover #tab-rail-panel #tab-rail-footer,
+body[data-tab-layout="vertical-floating"] #tab-rail-panel.pinned-open #tab-rail-list,
+body[data-tab-layout="vertical-floating"] #tab-rail-panel.pinned-open #tab-rail-footer {
   transition-delay: 0ms;
 }
+
+/* Vertical rail on the right edge */
+body[data-tab-rail-side="right"]:not([data-tab-layout="horizontal"]) #tab-rail {
+  order: 3;
+}
+
+body[data-tab-rail-side="right"]:not([data-tab-layout="horizontal"]) #views {
+  order: 1;
+}
+
+body[data-tab-rail-side="right"]:not([data-tab-layout="horizontal"]) #todo-panel {
+  order: 2;
+}
+
+body[data-tab-rail-side="right"]:not([data-tab-layout="horizontal"]) #tab-rail::after {
+  left: auto;
+  right: 0;
+}
+body[data-tab-rail-side="right"]:not([data-tab-layout="horizontal"]) #tab-rail-panel {
+  left: auto;
+  right: 0;
+  border-right: none;
+  border-left: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: 16px 0 0 16px;
+}
+
+body[data-tab-rail-side="right"]:not([data-tab-layout="horizontal"]):not([data-tab-layout="vertical-icons"]) #tab-rail:hover #tab-rail-panel,
+body[data-tab-rail-side="right"]:not([data-tab-layout="horizontal"]):not([data-tab-layout="vertical-icons"]) #tab-rail-panel.pinned-open {
+  border-color: color-mix(in srgb, var(--border) 70%, rgba(255, 255, 255, 0.12));
+  box-shadow:
+    -14px 0 40px -8px rgba(0, 0, 0, 0.65),
+    0 0 0 1px rgba(255, 255, 255, 0.05) inset;
+}
+
+body[data-tab-rail-side="right"][data-tab-layout="vertical-floating"] #tab-rail-panel {
+  border-left: 1px solid transparent;
+  border-right: none;
+  clip-path: inset(calc(50% - 24px) 9px calc(50% - 24px) calc(100% - 14px) round 999px);
+}
+
+body[data-tab-rail-side="right"][data-tab-layout="vertical-floating"] #tab-rail-panel::before {
+  left: auto;
+  right: 9px;
+}
+
+body[data-tab-rail-side="right"][data-tab-layout="vertical-floating"] #tab-rail-panel #tab-rail-list,
+body[data-tab-rail-side="right"][data-tab-layout="vertical-floating"] #tab-rail-panel #tab-rail-footer {
+  transform: translateX(10px);
+}
+
+body[data-tab-rail-side="right"][data-tab-layout="vertical-floating"] #tab-rail:hover #tab-rail-panel,
+body[data-tab-rail-side="right"][data-tab-layout="vertical-floating"] #tab-rail-panel.pinned-open {
+  clip-path: inset(0 0 0 0 round 16px 0 0 16px);
+  box-shadow:
+    -14px 0 40px -8px rgba(0, 0, 0, 0.65),
+    0 0 0 1px rgba(255, 255, 255, 0.05) inset;
+}
+
+body[data-tab-rail-side="right"]:not([data-tab-layout="horizontal"]) #dock {
+  left: 10px;
+  right: calc(var(--tab-rail-w) + 10px);
+}
+
 #tab-rail-list {
   position: relative;
   flex: 1 1 auto;
@@ -313,7 +471,7 @@ body[data-tab-layout="vertical-floating"] #tab-rail-panel.pinned-open #tab-rail-
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding: 6px;
+  padding: 8px;
   overflow-x: hidden;
   overflow-y: auto;
   scrollbar-width: none;
@@ -325,7 +483,7 @@ body[data-tab-layout="vertical-floating"] #tab-rail-panel.pinned-open #tab-rail-
 
 #tab-rail-footer {
   flex: 0 0 auto;
-  padding: 6px;
+  padding: 8px;
   border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
 }
 
@@ -334,13 +492,12 @@ body[data-tab-layout="vertical-floating"] #tab-rail-panel.pinned-open #tab-rail-
   top: 0;
   left: 0;
   border-radius: 11px;
-  background: color-mix(in srgb, var(--bg-tab) 80%, var(--fg) 14%);
-  border: 1px solid color-mix(in srgb, var(--border) 70%, rgba(255, 255, 255, 0.12));
+  background: color-mix(in srgb, #0a0a0a 72%, var(--fg) 8%);
+  border: 1px solid color-mix(in srgb, var(--border) 55%, rgba(255, 255, 255, 0.06));
   box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.08) inset,
-    0 4px 16px -2px rgba(0, 0, 0, 0.35),
-    0 0 0 1px rgba(255, 255, 255, 0.03);
-  backdrop-filter: blur(12px);
+    0 1px 0 rgba(255, 255, 255, 0.04) inset,
+    0 3px 12px -2px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(10px);
   z-index: 1;
   pointer-events: none;
   will-change: transform, width, height, opacity;
@@ -351,14 +508,13 @@ body[data-tab-layout="vertical-floating"] #tab-rail-panel.pinned-open #tab-rail-
   top: 0;
   left: 0;
   border-radius: 10px;
-  background: color-mix(in srgb, var(--fg) 6%, transparent);
-  border: 1px solid color-mix(in srgb, var(--border) 40%, transparent);
+  background: color-mix(in srgb, #0a0a0a 55%, var(--fg) 6%);
+  border: 1px solid color-mix(in srgb, var(--border) 45%, rgba(255, 255, 255, 0.04));
   box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset;
   z-index: 1;
   pointer-events: none;
   will-change: transform, width, height, opacity;
 }
-
 
 #drag-region {
   flex: 1;
@@ -373,11 +529,11 @@ body[data-tab-layout="vertical-floating"] #tab-rail-panel.pinned-open #tab-rail-
   display: grid;
   grid-template-columns: 36px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   flex: 0 0 auto;
   /* Fixed row width: the panel clips it while collapsed, so expanding the rail
      never reflows label text. */
-  width: calc(var(--tab-rail-open-w) - 12px);
+  width: calc(var(--tab-rail-open-w) - 16px);
   height: var(--tab-row-h);
   padding: 0 6px 0 0;
   border: 1px solid transparent !important;
@@ -395,25 +551,53 @@ body[data-tab-layout="vertical-floating"] #tab-rail-panel.pinned-open #tab-rail-
   -webkit-app-region: no-drag;
 }
 
-/* Centred on the collapsed rail's midpoint: 6px list padding + 18px. */
+/* Monogram / app badge — larger, no outline ring. */
 .tab-glyph {
   position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
   width: 36px;
-  height: 100%;
+  height: 36px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  border: none !important;
+  outline: none !important;
+  box-shadow: none !important;
+  flex-shrink: 0;
 }
 
 .tab-glyph-text {
   font-family: var(--mono);
-  font-size: 13px;
-  font-weight: 600;
+  font-size: 15px;
+  font-weight: 700;
   line-height: 1;
+  letter-spacing: 0.02em;
+  color: var(--fg);
 }
 
 .tab.has-app-icon .tab-glyph-text {
   display: none;
+}
+
+/* PiShift / app-icon tabs: bare icon, no badge plate or ring. */
+.tab.has-app-icon .tab-glyph {
+  background: transparent !important;
+  border: none !important;
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+.tab.active .tab-glyph {
+  background: color-mix(in srgb, var(--accent) 22%, #141414);
+  border: none !important;
+  outline: none !important;
+  box-shadow: none !important;
+  color: var(--fg);
+}
+
+.tab.active.has-app-icon .tab-glyph {
+  background: transparent !important;
 }
 
 @keyframes tab-enter {
@@ -439,26 +623,22 @@ body[data-tab-layout="vertical-floating"] #tab-rail-panel.pinned-open #tab-rail-
   z-index: 2;
 }
 
-/* omp is blocked on a question in this session. */
+/* omp is blocked on a question — text cue only, no icon ring. */
 .tab.awaiting-ask {
   color: #ffd23f;
-  border-color: color-mix(in srgb, #ffd23f 55%, var(--border));
-  background: color-mix(in srgb, #ffd23f 12%, transparent);
-  animation: tab-awaiting-ask 1.2s ease-in-out infinite;
 }
 
 .tab.awaiting-ask.active {
   color: #ffd23f;
 }
 
-@keyframes tab-awaiting-ask {
-  0%,
-  100% {
-    box-shadow: 0 0 0 0 rgba(255, 210, 63, 0);
-  }
-  50% {
-    box-shadow: 0 0 10px 0 rgba(255, 210, 63, 0.55);
-  }
+.tab.awaiting-ask .tab-glyph,
+.tab.awaiting-ask.has-app-icon .tab-glyph {
+  border: none !important;
+  outline: none !important;
+  box-shadow: none !important;
+  background: transparent !important;
+  color: #ffd23f;
 }
 
 .tab.tab-dragging {
@@ -475,23 +655,28 @@ body[data-tab-layout="vertical-floating"] #tab-rail-panel.pinned-open #tab-rail-
 }
 
 .tab-app-icon {
-  width: 17px;
-  height: 17px;
+  width: 22px;
+  height: 22px;
   flex: 0 0 auto;
   object-fit: contain;
-  border-radius: 3px;
+  border-radius: 5px;
   display: none;
   vertical-align: middle;
 }
 
+.tab.has-app-icon .tab-app-icon {
+  display: block;
+}
+
 .tab-color-dot {
   position: absolute;
-  right: 1px;
-  bottom: 3px;
-  width: 7px;
-  height: 7px;
+  right: -2px;
+  bottom: -2px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   display: none;
+  border: 1.5px solid #101010;
   box-shadow: 0 0 4px rgba(0, 0, 0, 0.4);
 }
 
@@ -504,6 +689,7 @@ body[data-tab-layout="vertical-floating"] #tab-rail-panel.pinned-open #tab-rail-
   text-overflow: ellipsis;
   font-weight: 500;
 }
+
 .tab-rename-input {
   background: var(--bg);
   color: var(--fg);
@@ -518,12 +704,13 @@ body[data-tab-layout="vertical-floating"] #tab-rail-panel.pinned-open #tab-rail-
 
 .tab-busy {
   position: absolute;
-  right: 1px;
-  top: 3px;
-  width: 7px;
-  height: 7px;
+  right: -2px;
+  top: -2px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   background: var(--tab-glow, var(--accent));
+  border: 1.5px solid #101010;
   box-shadow: 0 0 6px var(--tab-glow, var(--accent));
   opacity: 0;
   transition: opacity 120ms linear;
@@ -534,8 +721,7 @@ body[data-tab-layout="vertical-floating"] #tab-rail-panel.pinned-open #tab-rail-
   animation: pulse 1.1s ease-in-out infinite;
 }
 
-/* Busy tab: faint rail plus one luminous segment sweeping down its left edge,
-   vividly visible in the 48px docked icon rail. */
+/* Busy tab: faint rail plus one luminous segment sweeping down its left edge. */
 .tab.busy::before {
   content: "";
   position: absolute;
@@ -624,12 +810,12 @@ body[data-tab-layout="vertical-floating"] #tab-rail-panel.pinned-open #tab-rail-
   display: grid;
   grid-template-columns: 36px minmax(0, 1fr);
   align-items: center;
-  gap: 6px;
-  width: calc(var(--tab-rail-open-w) - 12px);
+  gap: 8px;
+  width: calc(var(--tab-rail-open-w) - 16px);
   height: var(--tab-row-h);
   padding: 0;
   border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
-  border-radius: 9px;
+  border-radius: 10px;
   background: color-mix(in srgb, var(--bg-tab) 60%, transparent);
   color: var(--fg-dim);
   text-align: left;
@@ -643,6 +829,10 @@ body[data-tab-layout="vertical-floating"] #tab-rail-panel.pinned-open #tab-rail-
   align-items: center;
   justify-content: center;
   width: 36px;
+  height: 36px;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
 }
 
 .new-tab-label {
@@ -652,8 +842,8 @@ body[data-tab-layout="vertical-floating"] #tab-rail-panel.pinned-open #tab-rail-
 
 #new-tab svg {
   display: block;
-  width: 14px;
-  height: 14px;
+  width: 12px;
+  height: 12px;
 }
 
 #new-tab:hover {
@@ -808,6 +998,10 @@ body[data-tab-layout="horizontal"] #new-tab .new-tab-glyph {
   display: flex;
   align-items: center;
   justify-content: center;
+  border: none;
+  background: transparent;
+  border-radius: 0;
+  box-shadow: none;
 }
 
 body[data-tab-layout="horizontal"] #new-tab svg {
@@ -851,6 +1045,10 @@ body[data-tab-layout="horizontal"] .tab-glyph {
   align-items: center;
   gap: 3px;
   position: static;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  border-radius: 0;
 }
 
 body[data-tab-layout="horizontal"] .tab-glyph-text {
@@ -975,11 +1173,12 @@ body[data-tab-layout="horizontal"] .tab.drop-after {
 
 /* Header Pinned Usage Meter */
 #header-usage {
+  align-self: center;
   display: inline-flex;
   align-items: center;
   gap: 5px;
   padding: 3px 9px;
-  margin: 0 6px;
+  margin: 0 6px 0 0;
   border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
   border-radius: 8px;
   background: color-mix(in srgb, var(--bg-tab) 75%, transparent);
@@ -1010,9 +1209,74 @@ body[data-tab-layout="horizontal"] .tab.drop-after {
   align-items: center;
   gap: 3px;
   margin-left: auto;
+  margin-top: 0;
   min-width: 0;
   flex-shrink: 0;
+  overflow: visible !important;
   -webkit-app-region: drag;
+}
+
+#window-controls {
+  position: relative;
+  align-self: center;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 8px;
+  margin-top: 0;
+  padding: 4px;
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg) 45%, transparent);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset;
+  flex-shrink: 0;
+  overflow: hidden;
+  -webkit-app-region: no-drag;
+}
+
+#window-controls button {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--fg-dim);
+  cursor: pointer;
+  transition: color 140ms ease;
+}
+
+#window-controls .chrome-action-indicator {
+  top: 0 !important;
+  bottom: auto !important;
+  left: 0 !important;
+  border-radius: 7px;
+}
+
+#window-controls button:hover {
+  color: var(--fg);
+}
+
+#window-controls button:active {
+  transform: none;
+}
+
+#win-close:hover {
+  color: #f7768e;
+}
+
+#win-max .win-restore-icon[hidden],
+#win-max .win-max-icon[hidden] {
+  display: none;
+}
+
+#window-controls button svg {
+  display: block;
 }
 
 .chrome-actions-row {
@@ -1020,47 +1284,37 @@ body[data-tab-layout="horizontal"] .tab.drop-after {
   display: flex;
   align-items: center;
   gap: 4px;
-  min-width: 0;
+  min-width: max-content;
   flex-shrink: 0;
-  padding: 3px;
+  /* Extra inset so the sliding hover pill never kisses the border. */
+  padding: 4px;
   border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
   border-radius: 12px;
   background: color-mix(in srgb, var(--bg) 45%, transparent);
   box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset;
+  overflow: visible !important;
   -webkit-app-region: drag;
 }
 
 .chrome-action-indicator,
 .dock-action-indicator,
-.dock-active-indicator {
-  position: absolute;
-  top: 3px;
-  bottom: 3px;
-  border-radius: 9px;
-  background: color-mix(in srgb, var(--bg-tab) 80%, var(--fg) 14%);
-  border: 1px solid color-mix(in srgb, var(--border) 70%, rgba(255, 255, 255, 0.12));
-  box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.08) inset,
-    0 4px 16px -2px rgba(0, 0, 0, 0.35),
-    0 0 0 1px rgba(255, 255, 255, 0.03);
-  backdrop-filter: blur(12px);
-  z-index: 0;
-  pointer-events: none;
-  will-change: transform, width, opacity;
-}
-
+.dock-active-indicator,
 .dock-hover-indicator {
   position: absolute;
-  top: 3px;
-  bottom: 3px;
+  top: 4px;
+  bottom: 4px;
   border-radius: 9px;
-  background: color-mix(in srgb, var(--fg) 6%, transparent);
-  border: 1px solid color-mix(in srgb, var(--border) 40%, transparent);
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset;
-  backdrop-filter: blur(12px);
+  background: color-mix(in srgb, #0a0a0a 72%, var(--fg) 8%);
+  border: 1px solid color-mix(in srgb, var(--border) 55%, rgba(255, 255, 255, 0.06));
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.04) inset,
+    0 3px 12px -2px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(10px);
   z-index: 0;
   pointer-events: none;
   will-change: transform, width, opacity;
+  /* Never clip the pill under parent radius. */
+  overflow: visible;
 }
 #btn-recent-folders,
 #btn-recent-chats,
@@ -1175,7 +1429,6 @@ body.hide-top-button-labels .btn-split-svg {
 body.hide-top-button-labels .btn-chrome-glyph {
   font-size: 14px;
 }
-
 #btn-top-menu {
   display: none;
   flex-shrink: 0;
@@ -1196,6 +1449,18 @@ body.top-bar-as-menu #btn-quit {
 
 body.top-bar-as-menu #btn-top-menu {
   display: inline-flex !important;
+  width: auto !important;
+  min-width: auto !important;
+  max-width: none !important;
+  height: 32px !important;
+  padding: 0 12px !important;
+  overflow: visible !important;
+  flex-shrink: 0 !important;
+}
+
+body.top-bar-as-menu .chrome-actions-row {
+  overflow: visible !important;
+  padding: 4px !important;
 }
 
 .btn-chrome-glyph {
@@ -1345,6 +1610,11 @@ body.resizing-split * {
   box-shadow: 0 16px 44px rgba(0, 0, 0, 0.55);
   z-index: 30;
 }
+
+body[data-tab-rail-side="right"]:not([data-tab-layout="horizontal"]) #workspace.todo-overlay #todo-panel {
+  right: calc(var(--tab-rail-w) + 10px);
+}
+
 
 #todo-panel-header {
   display: flex;
@@ -1619,34 +1889,34 @@ body.resizing-split * {
   display: block;
 }
 
-/* Tab switch: brief directional fade so the swap reads as motion. */
+/* Tab switch: dramatic vertical slide. */
 .view.switch-from-right {
-  animation: view-switch-right var(--anim-dock) var(--anim-dock-ease);
+  animation: view-switch-up 380ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .view.switch-from-left {
-  animation: view-switch-left var(--anim-dock) var(--anim-dock-ease);
+  animation: view-switch-down 380ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-@keyframes view-switch-right {
+@keyframes view-switch-up {
   from {
     opacity: 0;
-    transform: translateX(10px);
+    transform: translateY(48px) scale(0.985);
   }
   to {
     opacity: 1;
-    transform: translateX(0);
+    transform: translateY(0) scale(1);
   }
 }
 
-@keyframes view-switch-left {
+@keyframes view-switch-down {
   from {
     opacity: 0;
-    transform: translateX(-10px);
+    transform: translateY(-48px) scale(0.985);
   }
   to {
     opacity: 1;
-    transform: translateX(0);
+    transform: translateY(0) scale(1);
   }
 }
 
@@ -2346,23 +2616,23 @@ body[data-paste-paint="rail"] .hl-paste {
   }
 }
 
-/* Slash command + long-paste popups — anchored above the composer field */
+/* Slash command + long-paste popups — body-fixed above the dock */
 #slash-menu,
 #paste-menu {
-  position: absolute;
-  /* dock-editor sits above dock-bar; keep menu just over the input */
-  bottom: calc(100% - 4px);
-  left: 10px;
-  right: 10px;
+  position: fixed;
+  left: 0;
+  top: 0;
   max-height: min(260px, 42vh);
   overflow-y: auto;
-  backdrop-filter: blur(20px) saturate(180%);
-  background: color-mix(in srgb, var(--bg-tab) 85%, transparent);
-  border: 1px solid color-mix(in srgb, var(--border) 60%, rgba(255, 255, 255, 0.1));
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
   border-radius: 14px;
   box-shadow: 0 20px 48px -10px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.05) inset;
-  z-index: 120;
+  z-index: 500;
   padding: 4px;
+  transform-origin: bottom center;
 }
 
 #slash-menu[hidden],
@@ -2699,7 +2969,7 @@ body.hide-bottom-button-labels #dock-change-dir .btn-icon {
   align-self: center;
   flex: 0 0 auto;
   position: relative;
-  top: 2px;
+  top: 0;
   margin: 0 10px 0 4px;
   padding: 0 13px 0 10px;
   height: 26px;
@@ -2923,9 +3193,10 @@ body.hide-bottom-button-labels #dock-change-dir .btn-icon {
   max-height: 420px;
   display: flex;
   flex-direction: column;
-  backdrop-filter: blur(20px) saturate(180%);
-  background: color-mix(in srgb, var(--bg-tab) 85%, transparent);
-  border: 1px solid color-mix(in srgb, var(--border) 60%, rgba(255, 255, 255, 0.1));
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
   border-radius: 14px;
   box-shadow: 0 20px 48px -10px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.05) inset, inset 1px 1px 0 rgba(255, 255, 255, 0.08);
   z-index: 80;
@@ -2948,12 +3219,11 @@ body.hide-bottom-button-labels #dock-change-dir .btn-icon {
   display: inline-flex;
 }
 
-/* Model popover — dock-matched sheet above the model chip */
+/* Model popover — body-fixed sheet (must leave #dock so backdrop-filter works) */
 #model-popover {
-  position: absolute;
-  bottom: calc(100% + 8px);
-  left: 50%;
-  translate: -50% 0;
+  position: fixed;
+  left: 0;
+  top: 0;
   transform-origin: bottom center;
   width: 360px;
   max-width: 94vw;
@@ -2961,12 +3231,13 @@ body.hide-bottom-button-labels #dock-change-dir .btn-icon {
   display: flex;
   flex-direction: column;
   padding: 4px;
-  backdrop-filter: blur(20px) saturate(180%);
-  background: color-mix(in srgb, #0f0f0f 85%, transparent);
-  border: 1px solid color-mix(in srgb, #373737 70%, rgba(255, 255, 255, 0.08));
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
   border-radius: 10px;
   box-shadow: 0 16px 36px -8px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.04) inset;
-  z-index: 80;
+  z-index: 500;
   overflow: hidden;
   transition: width 140ms ease;
 }
@@ -3163,10 +3434,12 @@ body.hide-bottom-button-labels #dock-change-dir .btn-icon {
   left: 0;
   top: 0;
   border-radius: 8px;
-  background: color-mix(in srgb, var(--fg) 9%, transparent);
+  background: color-mix(in srgb, #0a0a0a 72%, var(--fg) 8%);
+  border: 1px solid color-mix(in srgb, var(--border) 55%, rgba(255, 255, 255, 0.06));
   box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.06) inset,
-    0 0 0 1px rgba(255, 255, 255, 0.05);
+    0 1px 0 rgba(255, 255, 255, 0.04) inset,
+    0 3px 12px -2px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(10px);
   z-index: 0;
   pointer-events: none;
   opacity: 0;
@@ -3533,8 +3806,10 @@ body.hide-bottom-button-labels #dock-change-dir .btn-icon {
   max-height: 85vh;
   display: flex;
   flex-direction: column;
-  background: var(--bg-raised);
-  border: 1px solid var(--border);
+  background: #101010;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: 1px solid var(--glass-border);
   border-radius: 14px;
   box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6);
   overflow: hidden;
@@ -3547,8 +3822,10 @@ body.hide-bottom-button-labels #dock-change-dir .btn-icon {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  background: var(--bg-raised);
-  border: 1px solid var(--border);
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
   border-radius: 12px;
   box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6);
   animation: dialog-pop 180ms cubic-bezier(0.2, 0.9, 0.3, 1) forwards;
@@ -3610,8 +3887,8 @@ body.hide-bottom-button-labels #dock-change-dir .btn-icon {
   align-items: center;
   justify-content: space-between;
   padding: 14px 20px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-raised);
+  border-bottom: 1px solid var(--glass-border);
+  background: transparent;
   flex-shrink: 0;
 }
 
@@ -3782,10 +4059,11 @@ body.hide-bottom-button-labels #dock-change-dir .btn-icon {
 .settings-footer {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 12px 18px;
-  border-top: 1px solid var(--border);
-  background: var(--bg);
+  justify-content: flex-end;
+  padding: 12px 20px;
+  border-top: 1px solid var(--glass-border);
+  background: transparent;
+  flex-shrink: 0;
 }
 
 .usage-footer {
@@ -3939,7 +4217,7 @@ body.hide-bottom-button-labels #dock-change-dir .btn-icon {
 .settings-check-label {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   font-size: 12px;
   cursor: pointer;
   color: var(--fg);
@@ -3947,8 +4225,50 @@ body.hide-bottom-button-labels #dock-change-dir .btn-icon {
 }
 
 .settings-check-label input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  border: 1px solid color-mix(in srgb, var(--border) 75%, rgba(255, 255, 255, 0.12));
+  border-radius: 5px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.06), transparent 55%),
+    color-mix(in srgb, var(--bg) 55%, var(--bg-raised));
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.05) inset,
+    0 1px 2px rgba(0, 0, 0, 0.25);
   cursor: pointer;
-  accent-color: var(--accent);
+  transition:
+    background 120ms ease,
+    border-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.settings-check-label input[type="checkbox"]:hover {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.07) inset,
+    0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent),
+    0 1px 2px rgba(0, 0, 0, 0.28);
+}
+
+.settings-check-label input[type="checkbox"]:checked {
+  border-color: color-mix(in srgb, var(--accent) 80%, #fff 10%);
+  background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%230f0f0f' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3.5 8.2 6.6 11.2 12.5 4.8'/%3E%3C/svg%3E")
+      center / 11px 11px no-repeat,
+    linear-gradient(180deg, color-mix(in srgb, var(--accent) 92%, #fff), var(--accent));
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.28) inset,
+    0 0 12px color-mix(in srgb, var(--accent) 35%, transparent),
+    0 1px 3px rgba(0, 0, 0, 0.35);
+}
+
+.settings-check-label input[type="checkbox"]:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent);
+  outline-offset: 2px;
 }
 
 .settings-desc {
@@ -3956,15 +4276,7 @@ body.hide-bottom-button-labels #dock-change-dir .btn-icon {
   color: var(--fg-dim);
 }
 
-.settings-footer {
-  padding: 12px 20px;
-  border-top: 1px solid var(--border);
-  background: color-mix(in srgb, var(--bg) 50%, var(--bg-raised));
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  flex-shrink: 0;
-}
+/* settings-footer layout is defined once above — keep this block from reintroducing a solid strip */
 
 .settings-done,
 .usage-done {
@@ -4177,9 +4489,10 @@ body.hide-bottom-button-labels #dock-change-dir .btn-icon {
   display: flex;
   flex-direction: column;
   margin: 0;
-  backdrop-filter: blur(20px) saturate(180%);
-  background: color-mix(in srgb, var(--bg-tab) 85%, transparent);
-  border: 1px solid color-mix(in srgb, var(--border) 60%, rgba(255, 255, 255, 0.1));
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
   border-radius: 14px;
   box-shadow: 0 20px 48px -10px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.05) inset;
   overflow: hidden;
@@ -4211,8 +4524,9 @@ body.hide-bottom-button-labels #dock-change-dir .btn-icon {
   flex-direction: column;
   gap: 10px;
   padding: 12px 14px;
-  backdrop-filter: blur(20px) saturate(180%);
-  background: color-mix(in srgb, var(--bg-tab) 85%, transparent);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  background: var(--glass-bg);
   border: 1px solid color-mix(in srgb, #34d399 40%, var(--border));
   border-radius: 14px;
   box-shadow: 0 14px 44px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(52, 211, 153, 0.15);
@@ -5153,9 +5467,10 @@ body.hide-bottom-button-labels #dock-change-dir .btn-icon {
   left: 50%;
   translate: -50% 0;
   width: 230px;
-  backdrop-filter: blur(20px) saturate(180%);
-  background: color-mix(in srgb, var(--bg-tab) 85%, transparent);
-  border: 1px solid color-mix(in srgb, var(--border) 60%, rgba(255, 255, 255, 0.1));
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
   border-radius: 14px;
   box-shadow: 0 20px 48px -10px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.05) inset;
   z-index: 80;
@@ -5247,9 +5562,10 @@ body.hide-bottom-button-labels #dock-change-dir .btn-icon {
   position: fixed;
   width: 160px;
   padding: 4px;
-  backdrop-filter: blur(20px) saturate(180%);
-  background: color-mix(in srgb, #0f0f0f 85%, transparent);
-  border: 1px solid color-mix(in srgb, #373737 70%, rgba(255, 255, 255, 0.08));
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
   border-radius: 10px;
   box-shadow: 0 16px 36px -8px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.04) inset;
   z-index: 500;
@@ -5637,9 +5953,10 @@ body.hide-bottom-button-labels #dock-change-dir .btn-icon {
   position: fixed;
   display: flex;
   flex-direction: column;
-  backdrop-filter: blur(20px) saturate(180%);
-  background: color-mix(in srgb, var(--bg-tab) 70%, transparent);
-  border: 1px solid color-mix(in srgb, var(--border) 60%, rgba(255, 255, 255, 0.1));
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
   border-radius: 14px;
   box-shadow: 0 20px 48px -10px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.05) inset;
   z-index: 100;
@@ -5653,11 +5970,12 @@ body.hide-bottom-button-labels #dock-change-dir .btn-icon {
 .recent-folders-popover,
 .recent-chats-popover,
 .top-menu-popover {
-  background: color-mix(in srgb, #0f0f0f 78%, transparent) !important;
-  border: 1px solid color-mix(in srgb, #373737 70%, #000) !important;
+  background: var(--glass-bg) !important;
+  border: 1px solid var(--glass-border) !important;
   border-radius: 10px !important;
   box-shadow: 0 10px 28px -8px rgba(0, 0, 0, 0.5) !important;
-  backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: var(--glass-blur) !important;
+  -webkit-backdrop-filter: var(--glass-blur) !important;
 }
 
 .recent-folders-popover {
@@ -5676,11 +5994,12 @@ body.hide-bottom-button-labels #dock-change-dir .btn-icon {
   width: 360px;
   max-width: 94vw;
   padding: 10px 12px;
-  background: color-mix(in srgb, #0f1016 88%, transparent) !important;
-  border: 1px solid color-mix(in srgb, var(--border) 75%, rgba(255, 255, 255, 0.12)) !important;
+  background: var(--glass-bg) !important;
+  border: 1px solid var(--glass-border) !important;
   border-radius: 10px !important;
   box-shadow: 0 16px 36px -6px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.05) inset !important;
-  backdrop-filter: blur(24px) saturate(190%);
+  backdrop-filter: var(--glass-blur) !important;
+  -webkit-backdrop-filter: var(--glass-blur) !important;
   z-index: 105;
   pointer-events: auto;
 }
@@ -5843,12 +6162,11 @@ body.hide-bottom-button-labels #dock-change-dir .btn-icon {
   left: 0;
   top: 0;
   border-radius: 8px;
-  background: color-mix(in srgb, var(--bg-tab) 75%, var(--fg) 12%);
-  border: 1px solid color-mix(in srgb, var(--border) 65%, rgba(255, 255, 255, 0.1));
+  background: color-mix(in srgb, #0a0a0a 72%, var(--fg) 8%);
+  border: 1px solid color-mix(in srgb, var(--border) 55%, rgba(255, 255, 255, 0.06));
   box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.07) inset,
-    0 4px 14px -2px rgba(0, 0, 0, 0.3),
-    0 0 0 1px rgba(255, 255, 255, 0.03);
+    0 1px 0 rgba(255, 255, 255, 0.04) inset,
+    0 3px 12px -2px rgba(0, 0, 0, 0.45);
   backdrop-filter: blur(10px);
   z-index: 0;
   pointer-events: none;
@@ -6151,12 +6469,11 @@ body.hide-bottom-button-labels #dock-change-dir .btn-icon {
   left: 0;
   top: 0;
   border-radius: 8px;
-  background: color-mix(in srgb, var(--bg-tab) 75%, var(--fg) 12%);
-  border: 1px solid color-mix(in srgb, var(--border) 65%, rgba(255, 255, 255, 0.1));
+  background: color-mix(in srgb, #0a0a0a 72%, var(--fg) 8%);
+  border: 1px solid color-mix(in srgb, var(--border) 55%, rgba(255, 255, 255, 0.06));
   box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.07) inset,
-    0 4px 14px -2px rgba(0, 0, 0, 0.3),
-    0 0 0 1px rgba(255, 255, 255, 0.03);
+    0 1px 0 rgba(255, 255, 255, 0.04) inset,
+    0 3px 12px -2px rgba(0, 0, 0, 0.45);
   backdrop-filter: blur(10px);
   z-index: 0;
   pointer-events: none;
@@ -6559,8 +6876,10 @@ body.dnd-hover #dock {
   max-height: 86vh;
   display: flex;
   flex-direction: column;
-  background: var(--bg-raised);
-  border: 1px solid var(--border);
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
   border-radius: 14px;
   box-shadow: 0 24px 64px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.05);
   overflow: hidden;

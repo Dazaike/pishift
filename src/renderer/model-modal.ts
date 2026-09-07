@@ -3,6 +3,9 @@ import { INTERNAL_DRAG_TYPE } from "./dnd";
 import { getProviderIcon } from "./provider-icons";
 import { attachToolbarHoverPill, popoverMotion, SlidingPillIndicator } from "./motion-utils";
 
+const VIEWPORT_MARGIN = 8;
+const ANCHOR_GAP = 12;
+
 export const DEFAULT_USER_MODELS: CustomModelConfig[] = [
   { id: "gemini-3.7-flash", name: "Gemini 3.7 Flash", provider: "google" },
   { id: "claude-3-7-sonnet", name: "Claude 3.7 Sonnet", provider: "anthropic" },
@@ -13,6 +16,7 @@ export type ModelViewMode = "list" | "grid";
 
 export class ModelModal {
   readonly el: HTMLDivElement;
+  private readonly anchor: HTMLElement | null;
   private models: CustomModelConfig[] = [];
   private currentModel: string;
   private showAddForm = false;
@@ -41,11 +45,12 @@ export class ModelModal {
     this.el = document.createElement("div");
     this.el.id = "model-popover";
     this.el.hidden = true;
+    this.anchor = document.getElementById("dock-model");
+    document.body.appendChild(this.el);
 
     document.addEventListener("mousedown", (ev) => {
       if (!this.el.hidden && !this.el.contains(ev.target as Node)) {
-        const modelBtn = document.getElementById("dock-model");
-        if (modelBtn && modelBtn.contains(ev.target as Node)) return;
+        if (this.anchor && this.anchor.contains(ev.target as Node)) return;
         this.close();
       }
     });
@@ -77,6 +82,10 @@ export class ModelModal {
         this.selectModel(rows[this.kbIndex]!);
       }
     });
+
+    window.addEventListener("resize", () => {
+      if (this.isOpen) this.position();
+    });
   }
 
   get isOpen(): boolean {
@@ -95,6 +104,12 @@ export class ModelModal {
     this.kbIndex = -1;
     this.setTriggerOpen(true);
     this.render();
+    requestAnimationFrame(() => {
+      if (this.isOpen) {
+        this.position();
+        this.listPill?.sync(true);
+      }
+    });
     const controls = popoverMotion.animatePopoverOpen(this.el);
     controls.then(() => this.listPill?.sync(true));
   }
@@ -108,6 +123,31 @@ export class ModelModal {
       this.isEditMode = false;
       this.isReordering = false;
     });
+  }
+
+  private position(): void {
+    const anchor = this.anchor;
+    if (!anchor) return;
+
+    const anchorRect = anchor.getBoundingClientRect();
+    const menuW = this.el.offsetWidth || (this.viewMode === "grid" ? 400 : 360);
+    const menuH = this.el.offsetHeight || 200;
+
+    // Center horizontally over the Model button.
+    let left = anchorRect.left + (anchorRect.width - menuW) / 2;
+    left = Math.max(
+      VIEWPORT_MARGIN,
+      Math.min(left, window.innerWidth - menuW - VIEWPORT_MARGIN),
+    );
+
+    // Prefer above the button with a clear gap; flip below if clipped.
+    let top = anchorRect.top - menuH - ANCHOR_GAP;
+    if (top < VIEWPORT_MARGIN) {
+      top = Math.min(anchorRect.bottom + ANCHOR_GAP, window.innerHeight - menuH - VIEWPORT_MARGIN);
+    }
+
+    this.el.style.left = `${Math.round(left)}px`;
+    this.el.style.top = `${Math.round(top)}px`;
   }
 
   toggle(currentModel?: string): void {
@@ -139,6 +179,12 @@ export class ModelModal {
     this.listPill = null;
     this.el.replaceChildren();
     this.el.classList.toggle("grid-view", this.viewMode === "grid");
+
+    if (this.isOpen) {
+      requestAnimationFrame(() => {
+        if (this.isOpen) this.position();
+      });
+    }
 
     const header = document.createElement("header");
     header.className = "model-header";

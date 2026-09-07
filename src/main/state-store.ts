@@ -6,7 +6,7 @@ import {
   normalizeSettingsSectionCollapsed,
   normalizeUsageTrackerSettings,
 } from "../shared/usage-tracker";
-import { isTabLayout } from "../shared/tab-layout";
+import { clampTabRailHoverReachPx, isTabLayout, isTabRailSide } from "../shared/tab-layout";
 
 const DEBOUNCE_MS = 500;
 
@@ -89,6 +89,11 @@ export class StateStore {
             : undefined,
         tabPreviews: typeof raw.tabPreviews === "boolean" ? raw.tabPreviews : undefined,
         tabLayout: isTabLayout(raw.tabLayout) ? raw.tabLayout : undefined,
+        tabRailSide: isTabRailSide(raw.tabRailSide) ? raw.tabRailSide : undefined,
+        tabRailHoverReachPx:
+          raw.tabRailHoverReachPx !== undefined
+            ? clampTabRailHoverReachPx(raw.tabRailHoverReachPx)
+            : undefined,
         splitRatio:
           typeof raw.splitRatio === "number" && raw.splitRatio >= 0.1 && raw.splitRatio <= 0.9
             ? raw.splitRatio

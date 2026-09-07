@@ -9,9 +9,16 @@ import {
   type ViewMode,
 } from "../shared/ipc";
 import {
+  clampTabRailHoverReachPx,
   DEFAULT_TAB_LAYOUT,
+  DEFAULT_TAB_RAIL_HOVER_REACH_PX,
+  DEFAULT_TAB_RAIL_SIDE,
   isTabLayout,
+  isTabRailSide,
+  MAX_TAB_RAIL_HOVER_REACH_PX,
+  MIN_TAB_RAIL_HOVER_REACH_PX,
   type TabLayout,
+  type TabRailSide,
 } from "../shared/tab-layout";
 import {
   DEFAULT_THEME_NAME,
@@ -61,6 +68,8 @@ export class SettingsModal {
   private autoExpandReasoning: boolean;
   private tabPreviews: boolean;
   private tabLayout: TabLayout;
+  private tabRailSide: TabRailSide;
+  private tabRailHoverReachPx: number;
   private usageTracker: UsageTrackerSettings;
   private usageReports: ProviderUsageReport[];
   private settingsSectionCollapsed: Partial<Record<SettingsSectionId, boolean>>;
@@ -80,6 +89,8 @@ export class SettingsModal {
   private onToggleAutoExpandReasoning: (enabled: boolean) => void;
   private onToggleTabPreviews: (enabled: boolean) => void;
   private onTabLayoutChange: (layout: TabLayout) => void;
+  private onTabRailSideChange: (side: TabRailSide) => void;
+  private onTabRailHoverReachChange: (px: number) => void;
   private pasteMode: PasteModeSetting;
   private onPasteModeChange: (mode: PasteModeSetting) => void;
   private pasteMarkerStyle: PasteMarkerStyle;
@@ -131,6 +142,10 @@ export class SettingsModal {
     onToggleTabPreviews: (enabled: boolean) => void;
     tabLayout?: TabLayout | undefined;
     onTabLayoutChange: (layout: TabLayout) => void;
+    tabRailSide?: TabRailSide | undefined;
+    onTabRailSideChange: (side: TabRailSide) => void;
+    tabRailHoverReachPx?: number | undefined;
+    onTabRailHoverReachChange: (px: number) => void;
     initialScrollSteps: number | undefined;
     onScrollStepsChange: (steps: number) => void;
     pasteMode: PasteModeSetting | undefined;
@@ -169,6 +184,10 @@ export class SettingsModal {
     this.autoExpandReasoning = opts.autoExpandReasoning ?? true;
     this.tabPreviews = opts.tabPreviews ?? true;
     this.tabLayout = opts.tabLayout ?? DEFAULT_TAB_LAYOUT;
+    this.tabRailSide = opts.tabRailSide ?? DEFAULT_TAB_RAIL_SIDE;
+    this.tabRailHoverReachPx = clampTabRailHoverReachPx(
+      opts.tabRailHoverReachPx ?? DEFAULT_TAB_RAIL_HOVER_REACH_PX,
+    );
     this.usageTracker = opts.usageTracker;
     this.usageReports = opts.usageReports;
     this.settingsSectionCollapsed = opts.settingsSectionCollapsed;
@@ -187,6 +206,8 @@ export class SettingsModal {
     this.onToggleAutoExpandReasoning = opts.onToggleAutoExpandReasoning;
     this.onToggleTabPreviews = opts.onToggleTabPreviews;
     this.onTabLayoutChange = opts.onTabLayoutChange;
+    this.onTabRailSideChange = opts.onTabRailSideChange;
+    this.onTabRailHoverReachChange = opts.onTabRailHoverReachChange;
     this.scrollSteps = clampScrollSteps(opts.initialScrollSteps ?? DEFAULT_SCROLL_STEPS);
     this.onScrollStepsChange = opts.onScrollStepsChange;
     this.pasteMode = opts.pasteMode ?? "ask";
@@ -258,6 +279,8 @@ export class SettingsModal {
     autoExpandReasoning?: boolean;
     tabPreviews?: boolean;
     tabLayout?: TabLayout;
+    tabRailSide?: TabRailSide;
+    tabRailHoverReachPx?: number;
     scrollSteps?: number;
     pasteMode?: PasteModeSetting;
     pasteMarkerStyle?: PasteMarkerStyle;
@@ -310,6 +333,12 @@ export class SettingsModal {
     }
     if (isTabLayout(state.tabLayout)) {
       this.tabLayout = state.tabLayout;
+    }
+    if (isTabRailSide(state.tabRailSide)) {
+      this.tabRailSide = state.tabRailSide;
+    }
+    if (state.tabRailHoverReachPx !== undefined) {
+      this.tabRailHoverReachPx = clampTabRailHoverReachPx(state.tabRailHoverReachPx);
     }
     if (typeof state.scrollSteps === "number") {
       this.scrollSteps = clampScrollSteps(state.scrollSteps);
@@ -696,6 +725,7 @@ export class SettingsModal {
     const tabLayoutOptions: { id: TabLayout; label: string }[] = [
       { id: "vertical", label: "Vertical Rail (Docked Icons)" },
       { id: "vertical-floating", label: "Vertical Rail (Floating / Auto-hide)" },
+      { id: "vertical-icons", label: "Vertical Rail (Icons Only — no expand)" },
       { id: "horizontal", label: "Horizontal (Compact)" },
     ];
     for (const opt of tabLayoutOptions) {
@@ -711,6 +741,74 @@ export class SettingsModal {
       this.onTabLayoutChange(this.tabLayout);
     });
     tabLayoutRow.append(tabLayoutLabel, tabLayoutSelect);
+
+    // Option 5d: Vertical rail side (left / right)
+    const tabRailSideRow = document.createElement("div");
+    tabRailSideRow.className = "settings-pos-row";
+    const tabRailSideLabel = document.createElement("label");
+    tabRailSideLabel.className = "settings-pos-label";
+    tabRailSideLabel.textContent = "Sidebar Side";
+
+    const tabRailSideSelect = document.createElement("select");
+    tabRailSideSelect.className = "settings-select";
+    const tabRailSideOptions: { id: TabRailSide; label: string }[] = [
+      { id: "left", label: "Left" },
+      { id: "right", label: "Right" },
+    ];
+    for (const opt of tabRailSideOptions) {
+      const el = document.createElement("option");
+      el.value = opt.id;
+      el.textContent = opt.label;
+      if (opt.id === this.tabRailSide) el.selected = true;
+      tabRailSideSelect.appendChild(el);
+    }
+    tabRailSideSelect.addEventListener("change", () => {
+      const val = isTabRailSide(tabRailSideSelect.value) ? tabRailSideSelect.value : "left";
+      this.tabRailSide = val;
+      this.onTabRailSideChange(this.tabRailSide);
+    });
+    tabRailSideRow.append(tabRailSideLabel, tabRailSideSelect);
+
+    // Option 5e: How far from the rail the pointer must be to expand it
+    const tabRailHoverRow = document.createElement("div");
+    tabRailHoverRow.className = "settings-slider-row";
+    const tabRailHoverLabel = document.createElement("label");
+    tabRailHoverLabel.className = "settings-pos-label";
+    tabRailHoverLabel.textContent = "Sidebar Hover Reach";
+    const tabRailHoverValue = document.createElement("span");
+    tabRailHoverValue.className = "settings-slider-value";
+    const formatHoverReach = (px: number): string => `${px} px`;
+    tabRailHoverValue.textContent = formatHoverReach(this.tabRailHoverReachPx);
+    const tabRailHoverInput = document.createElement("input");
+    tabRailHoverInput.type = "range";
+    tabRailHoverInput.className = "settings-slider";
+    tabRailHoverInput.min = String(MIN_TAB_RAIL_HOVER_REACH_PX);
+    tabRailHoverInput.max = String(MAX_TAB_RAIL_HOVER_REACH_PX);
+    tabRailHoverInput.step = "8";
+    tabRailHoverInput.value = String(this.tabRailHoverReachPx);
+    tabRailHoverInput.addEventListener("input", () => {
+      this.tabRailHoverReachPx = clampTabRailHoverReachPx(Number(tabRailHoverInput.value));
+      tabRailHoverValue.textContent = formatHoverReach(this.tabRailHoverReachPx);
+      this.onTabRailHoverReachChange(this.tabRailHoverReachPx);
+    });
+    const tabRailHoverHead = document.createElement("div");
+    tabRailHoverHead.className = "settings-slider-head";
+    tabRailHoverHead.append(tabRailHoverLabel, tabRailHoverValue);
+    tabRailHoverRow.append(tabRailHoverHead, tabRailHoverInput);
+
+    const syncTabRailVerticalOpts = (): void => {
+      const vertical = this.tabLayout !== "horizontal";
+      const expandable = this.tabLayout === "vertical" || this.tabLayout === "vertical-floating";
+      tabRailSideSelect.disabled = !vertical;
+      tabRailSideRow.style.opacity = vertical ? "1" : "0.45";
+      tabRailHoverRow.style.opacity = expandable ? "1" : "0.45";
+      tabRailHoverInput.disabled = !expandable;
+    };
+    tabLayoutSelect.addEventListener("change", () => {
+      syncTabRailVerticalOpts();
+    });
+    syncTabRailVerticalOpts();
+
 
 
     const autoExpandToolsLabel = document.createElement("label");
@@ -942,6 +1040,8 @@ export class SettingsModal {
       viewModeRow,
       autoExpandToolsLabel,
       tabLayoutRow,
+      tabRailSideRow,
+      tabRailHoverRow,
       autoExpandReasoningLabel,
       scrollRow,
       doneSoundLabel,
