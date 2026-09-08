@@ -55,8 +55,12 @@ type Harness = {
   id: string;
   emitted: Emitted[];
   manager: PtyManager;
+  pauseBytes: number;
+  resumeBytes: number;
   /** Chunks handed to the renderer, in order. */
   chunks(): string[];
+  /** Ack everything emitted so far, the way the renderer does per chunk. */
+  ackAll(): void;
 };
 
 async function spawnSession(): Promise<Harness> {
@@ -70,12 +74,20 @@ async function spawnSession(): Promise<Harness> {
     emitted.push({ channel, payload: payload as unknown as Record<string, unknown> });
   const manager = new mod.PtyManager(emit, () => undefined);
   const { id } = manager.spawn({ cwd: process.cwd(), cols: 80, rows: 24 });
+  let acked = 0;
+  const chunks = (): string[] =>
+    emitted.filter((e) => e.channel === CH.ptyData).map((e) => String(e.payload.data));
   return {
     id,
     emitted,
     manager,
-    chunks: () =>
-      emitted.filter((e) => e.channel === CH.ptyData).map((e) => String(e.payload.data)),
+    pauseBytes: mod.PAUSE_BYTES,
+    resumeBytes: mod.RESUME_BYTES,
+    chunks,
+    ackAll: () => {
+      const all = chunks();
+      for (; acked < all.length; acked++) manager.ack(id, all[acked]!.length);
+    },
   };
 }
 
@@ -90,18 +102,44 @@ afterEach(() => {
 });
 
 describe("PtyManager flow control", () => {
-  it("streams a chunked image without an IPC round trip per chunk", async () => {
+  it("streams a chunked image without pausing the child", async () => {
     const h = await spawnSession();
 
     pty.emit("before");
-    expect(pty.pauses).toBe(1);
+    // Ordinary output never pauses: the backlog is nowhere near the watermark.
+    expect(pty.pauses).toBe(0);
     pty.emit(`${MARKER}inline=1:aGVs`);
     pty.emit("bG8=");
-    // Still one pause: the partial sequence buffers instead of pinging the renderer.
-    expect(pty.pauses).toBe(1);
+    expect(pty.pauses).toBe(0);
     pty.emit(BEL);
 
     expect(h.chunks()).toEqual(["before", `${MARKER}size=5;inline=1:aGVsbG8=${BEL}`]);
+  });
+
+  it("pauses only once the unacked backlog crosses the watermark", async () => {
+    const h = await spawnSession();
+
+    pty.emit("x".repeat(h.pauseBytes - 1));
+    expect(pty.paused).toBe(false);
+
+    pty.emit("y");
+    expect(pty.paused).toBe(true);
+    expect(pty.pauses).toBe(1);
+  });
+
+  it("resumes once acks drain the backlog under the low watermark", async () => {
+    const h = await spawnSession();
+
+    pty.emit("x".repeat(h.pauseBytes));
+    expect(pty.paused).toBe(true);
+
+    // Partial drain: still far above the resume watermark.
+    h.manager.ack(h.id, h.pauseBytes - h.resumeBytes - 1);
+    expect(pty.paused).toBe(true);
+
+    h.manager.ack(h.id, 1);
+    expect(pty.paused).toBe(false);
+    expect(pty.resumes).toBe(1);
   });
 
   it("releases a sequence that never terminates instead of swallowing output", async () => {
@@ -114,7 +152,7 @@ describe("PtyManager flow control", () => {
     vi.advanceTimersByTime(600);
     expect(h.chunks()).toEqual([`${MARKER}inline=1:aGVs`]);
 
-    h.manager.ack(h.id);
+    h.ackAll();
     pty.emit("after");
     expect(h.chunks()).toEqual([`${MARKER}inline=1:aGVs`, "after"]);
   });
@@ -127,14 +165,14 @@ describe("PtyManager flow control", () => {
     // released on the short deadline once the ack lets the child flow again.
     pty.emit("tail\x1b");
     expect(h.chunks()).toEqual(["tail"]);
-    h.manager.ack(h.id);
+    h.ackAll();
 
     vi.advanceTimersByTime(100);
     expect(h.chunks()).toEqual(["tail", "\x1b"]);
 
     // A buffered sequence with a header is a real image mid-stream, so it gets
     // the long deadline rather than the short one.
-    h.manager.ack(h.id);
+    h.ackAll();
     pty.emit(`${MARKER}inline=1:aGVs`);
     vi.advanceTimersByTime(100);
     expect(h.chunks()).toEqual(["tail", "\x1b"]);
@@ -142,31 +180,32 @@ describe("PtyManager flow control", () => {
     expect(h.chunks()).toEqual(["tail", "\x1b", `${MARKER}inline=1:aGVs`]);
   });
 
-  it("does not flush withheld bytes while the child is paused awaiting an ack", async () => {
+  it("does not flush withheld bytes while the child is paused", async () => {
     const h = await spawnSession();
 
-    // Text plus the head of an image in one chunk: the text is emitted (pausing
-    // the child) and the sequence stays buffered until the ack lets it flow.
-    pty.emit(`text${MARKER}inline=1:aGVs`);
-    expect(h.chunks()).toEqual(["text"]);
+    // Backlog over the watermark pauses the child; the buffered image head must
+    // not be released behind its back, since a paused child is silent by design.
+    pty.emit("x".repeat(h.pauseBytes));
+    pty.emit(`${MARKER}inline=1:aGVs`);
     expect(pty.paused).toBe(true);
+    const before = h.chunks().length;
 
     vi.advanceTimersByTime(600);
-    expect(h.chunks()).toEqual(["text"]);
+    expect(h.chunks()).toHaveLength(before);
   });
 
   it("resumes the child itself when the renderer never acks", async () => {
     const h = await spawnSession();
 
-    pty.emit("chunk");
+    pty.emit("x".repeat(h.pauseBytes));
     expect(pty.paused).toBe(true);
 
     vi.advanceTimersByTime(STALL_MS * 2);
     expect(h.emitted.some((e) => e.channel === CH.ptyStalled)).toBe(true);
     expect(pty.paused).toBe(false);
 
-    // A second unacked chunk must recover too, without a duplicate banner.
-    pty.emit("more");
+    // A second unacked backlog must recover too, without a duplicate banner.
+    pty.emit("x".repeat(h.pauseBytes));
     expect(pty.paused).toBe(true);
     vi.advanceTimersByTime(STALL_MS * 2);
     expect(pty.paused).toBe(false);
@@ -176,9 +215,9 @@ describe("PtyManager flow control", () => {
   it("clears the stall report once a real ack lands", async () => {
     const h = await spawnSession();
 
-    pty.emit("chunk");
+    pty.emit("x".repeat(h.pauseBytes));
     vi.advanceTimersByTime(STALL_MS * 2);
-    h.manager.ack(h.id);
+    h.manager.ack(h.id, h.pauseBytes);
 
     expect(h.emitted.some((e) => e.channel === CH.ptyStallCleared)).toBe(true);
     expect(pty.paused).toBe(false);
@@ -212,7 +251,7 @@ describe("PtyManager flow control", () => {
       const size = 1 + (seed % 4096);
       pty.emit(stream.slice(cursor, cursor + size));
       cursor += size;
-      h.manager.ack(h.id);
+      h.ackAll();
     }
     vi.advanceTimersByTime(1000);
 

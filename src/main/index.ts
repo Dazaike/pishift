@@ -176,7 +176,7 @@ function registerIpc(): void {
   ipcMain.on(CH.ptyResize, (_e, id: string, cols: number, rows: number) =>
     ptys.resize(id, cols, rows),
   );
-  ipcMain.on(CH.ptyAck, (_e, id: string) => ptys.ack(id));
+  ipcMain.on(CH.ptyAck, (_e, id: string, bytes: number) => ptys.ack(id, bytes));
   ipcMain.on(CH.ptyResumeFlow, (_e, id: string) => ptys.resumeFlow(id));
   ipcMain.on(CH.ptyKill, (_e, id: string) => ptys.kill(id));
 
