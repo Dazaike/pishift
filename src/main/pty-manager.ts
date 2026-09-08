@@ -23,11 +23,16 @@ import { resolveOmpPath } from "./omp-locate";
 import { buildPtyEnv } from "./pty-env";
 
 type Session = {
+  id: string;
   pty: IPty;
   iip: IipState;
   cwd: string;
   exited: boolean;
-  /** When the PTY was paused awaiting the renderer's ack; null while flowing. */
+  /** Bytes emitted to the renderer that have not been acked yet. */
+  pending: number;
+  /** Whether the child is paused because `pending` crossed the high watermark. */
+  paused: boolean;
+  /** When the backlog pause began; null while flowing. */
   pausedAt: number | null;
   /** Reported once per stall, so the renderer is not spammed each poll. */
   stallReported: boolean;
@@ -51,6 +56,16 @@ const STALL_AFTER_MS = (() => {
 const FORCE_REAP_AFTER_MS = 2000;
 
 /**
+ * Backlog watermarks for the renderer handshake. Pausing after every chunk cost
+ * one IPC round trip per write, so a renderer busy for a few frames left omp
+ * blocked inside its own stdout write — event loop stopped, spinner frozen,
+ * keystrokes ignored. Data now flows freely until the unacked backlog is
+ * genuinely large, then pauses until the renderer has drained most of it.
+ */
+export const PAUSE_BYTES = 2_097_152;
+export const RESUME_BYTES = 524_288;
+
+/**
  * Silence after which withheld image bytes are shipped raw. omp writes an image
  * as one uninterrupted burst, so a gap this long means the sequence is never
  * terminating and every later byte would be swallowed behind it.
@@ -64,9 +79,11 @@ const IIP_FLUSH_MS = 500;
 const IIP_PARTIAL_FLUSH_MS = 50;
 
 /**
- * Owns every hosted omp process. Data flows PTY -> renderer with the xterm.js
- * flow-control handshake carried over IPC: pause on emit, resume on the
- * renderer's write callback, so a fast-streaming turn cannot outrun the parser.
+ * Owns every hosted omp process. Data flows PTY -> renderer with a watermarked
+ * flow-control handshake carried over IPC: the child keeps streaming while the
+ * renderer's unacked backlog stays under `PAUSE_BYTES`, and only then pauses
+ * until acks bring it back under `RESUME_BYTES`, so a fast-streaming turn
+ * cannot outrun the parser without throttling every ordinary chunk.
  */
 export class PtyManager {
   private readonly sessions = new Map<string, Session>();
@@ -92,10 +109,13 @@ export class PtyManager {
     });
 
     const session: Session = {
+      id,
       pty: child,
       iip: createIipState(),
       cwd,
       exited: false,
+      pending: 0,
+      paused: false,
       pausedAt: null,
       stallReported: false,
       iipFlushTimer: null,
@@ -108,10 +128,10 @@ export class PtyManager {
         // Withholding a partial IIP sequence: keep draining ConPTY at native
         // speed instead of paying an IPC round trip per image chunk. The flush
         // deadline guarantees these bytes are never withheld indefinitely.
-        this.scheduleIipFlush(id, session);
+        this.scheduleIipFlush(session);
         return;
       }
-      this.pauseAndEmit(id, session, transformed);
+      this.emitChunk(session, transformed);
     });
     child.onExit(({ exitCode }) => {
       session.exited = true;
@@ -138,31 +158,53 @@ export class PtyManager {
     }
   }
 
-  /** Renderer finished writing the previous chunk: let the PTY flow again. */
-  ack(id: string): void {
+  /**
+   * Renderer consumed `bytes` of a previously emitted chunk. Resume the child
+   * once the backlog has drained back under the low watermark; a stall banner
+   * clears with the first ack that gets there.
+   */
+  ack(id: string, bytes: number): void {
     const session = this.sessions.get(id);
     if (!session) return;
-    session.pausedAt = null;
+    session.pending = Math.max(0, session.pending - (Number.isFinite(bytes) ? bytes : 0));
     if (session.stallReported) {
+      // The renderer is alive again, whatever the watchdog had to do meanwhile.
       session.stallReported = false;
       this.emit(CH.ptyStallCleared, { id });
     }
-    session.pty.resume();
-    // Withheld bytes get no further onData while paused, so the deadline has to
-    // be re-armed here rather than left to the next chunk that may never come.
-    this.scheduleIipFlush(id, session);
+    if (session.paused && session.pending <= RESUME_BYTES) this.resume(session);
   }
 
   /**
-   * Hand a chunk to the renderer and stop the child until it acks. The pause is
-   * the whole point of the handshake, so the withhold deadline is dropped for
-   * its duration: silence while paused says nothing about the sequence.
+   * Hand a chunk to the renderer, pausing the child only once its unacked
+   * backlog crosses the high watermark. The withhold deadline is dropped while
+   * paused: silence from a paused child says nothing about the sequence.
    */
-  private pauseAndEmit(id: string, session: Session, data: string): void {
+  private emitChunk(session: Session, data: string): void {
     this.clearIipFlush(session);
-    session.pty.pause();
-    session.pausedAt = Date.now();
-    this.emit(CH.ptyData, { id, data });
+    session.pending += data.length;
+    this.emit(CH.ptyData, { id: session.id, data });
+    if (!session.paused && session.pending >= PAUSE_BYTES) {
+      session.paused = true;
+      session.pausedAt = Date.now();
+      session.pty.pause();
+      return;
+    }
+    if (!session.paused) this.scheduleIipFlush(session);
+  }
+
+  /** Let the child flow again. Banner state is owned by `ack`/`checkStalls`. */
+  private resume(session: Session): void {
+    session.paused = false;
+    session.pausedAt = null;
+    try {
+      session.pty.resume();
+    } catch {
+      // The child can exit between the ack and this call.
+    }
+    // Withheld bytes get no further onData while paused, so the deadline has to
+    // be re-armed here rather than left to the next chunk that may never come.
+    this.scheduleIipFlush(session);
   }
 
   private clearIipFlush(session: Session): void {
@@ -175,23 +217,26 @@ export class PtyManager {
    * Arm the release deadline for withheld IIP bytes. Only meaningful while the
    * child is flowing: a paused child is silent by design.
    */
-  private scheduleIipFlush(id: string, session: Session): void {
+  private scheduleIipFlush(session: Session): void {
     this.clearIipFlush(session);
     const pending = session.iip.buf.length;
-    if (!pending || session.exited || session.pausedAt !== null) return;
+    if (!pending || session.exited || session.paused) return;
     const delay = pending < MARKER.length ? IIP_PARTIAL_FLUSH_MS : IIP_FLUSH_MS;
     session.iipFlushTimer = setTimeout(() => {
       session.iipFlushTimer = null;
       if (session.exited) return;
       const raw = takeIipBuffer(session.iip);
-      if (raw) this.pauseAndEmit(id, session, raw);
+      if (raw) this.emitChunk(session, raw);
     }, delay);
     session.iipFlushTimer.unref?.();
   }
 
-  /** Manual recovery from the stall banner. */
+  /** Manual recovery from the stall banner: drop the backlog and flow again. */
   resumeFlow(id: string): void {
-    this.ack(id);
+    const session = this.sessions.get(id);
+    if (!session) return;
+    session.pending = 0;
+    this.resume(session);
   }
 
   kill(id: string): void {
@@ -262,22 +307,19 @@ export class PtyManager {
   private checkStalls(): void {
     const now = Date.now();
     for (const [id, session] of this.sessions) {
-      if (session.exited || session.pausedAt === null) continue;
+      if (session.exited || !session.paused || session.pausedAt === null) continue;
       const pausedMs = now - session.pausedAt;
       if (pausedMs < STALL_AFTER_MS) continue;
-      session.pausedAt = null;
       // The banner is announced once per episode; the recovery below runs on
       // every stall, so a renderer that never acks still gets served.
       if (!session.stallReported) {
         session.stallReported = true;
         this.emit(CH.ptyStalled, { id, pausedMs });
       }
-      try {
-        session.pty.resume();
-      } catch {
-        // Child exited between the poll and the resume.
-      }
-      this.scheduleIipFlush(id, session);
+      // The backlog is written off: acks for it may never arrive, and keeping
+      // the count would re-pause on the very next chunk.
+      session.pending = 0;
+      this.resume(session);
     }
     if (this.sessions.size === 0 && this.stallTimer) {
       clearInterval(this.stallTimer);

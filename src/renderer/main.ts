@@ -237,6 +237,10 @@ type Tab = {
   activityBackfilledKey: string | null;
   /** omp's large-paste selector is on screen, awaiting the mode we already chose. */
   pasteMenuSeen: boolean;
+  /** PTY text awaiting the coalesced status scan, newest last. */
+  statusScanBuffer: string;
+  /** Pending coalesced status scan, or null when nothing is queued. */
+  statusScanTimer: number | null;
   /** Which renderer this tab shows. The PTY runs in both modes. */
   viewMode: ViewMode;
   /** Built lazily on first switch into chat mode, then kept for instant toggling. */
@@ -1520,6 +1524,11 @@ function closeTab(tab: Tab): void {
     bySession.delete(tab.sessionId);
   }
   tab.transcriptSubscribed = false;
+  if (tab.statusScanTimer !== null) {
+    window.clearTimeout(tab.statusScanTimer);
+    tab.statusScanTimer = null;
+  }
+  tab.statusScanBuffer = "";
   tab.chat?.dispose();
   tab.chat = null;
   tab.view?.dispose();
@@ -2061,6 +2070,8 @@ function makeTab(cwd: string, customTitle?: string, colorTag?: string): Tab {
     sentMessages: [],
     activityBackfilledKey: null,
     pasteMenuSeen: false,
+    statusScanBuffer: "",
+    statusScanTimer: null,
     viewMode: defaultViewMode,
     chat: null,
     transcriptSubscribed: false,
@@ -2355,6 +2366,7 @@ async function submitDock(payload: DockPayload): Promise<void> {
         const item = bySeq.get(segment.seq)!;
         if (lead) view.type(lead);
         // Only a sighting produced by this paste may answer for it.
+        flushStatusScan(tab);
         tab.pasteMenuSeen = false;
         const pasteContent =
           item.mode === "wrapped" && !triggersPasteMenu(item.lines)
@@ -2370,6 +2382,7 @@ async function submitDock(payload: DockPayload): Promise<void> {
         view.type(lead + chunk);
         continue;
       }
+      flushStatusScan(tab);
       tab.pasteMenuSeen = false;
       view.paste(lead + segment.text);
       await sleep(EDITOR_SETTLE_MS);
@@ -2394,6 +2407,37 @@ async function submitDock(payload: DockPayload): Promise<void> {
  * cost the UI thread a multi-megabyte regex pass while the PTY waits on an ack.
  */
 const STATUS_SCAN_LIMIT = 262_144;
+
+/**
+ * Streaming turns arrive as dozens of small frames per repaint; running the
+ * status regexes on each one dominated the UI thread and delayed the PTY ack.
+ * Chunks are pooled for one frame and scanned once — concatenated text also
+ * matches across the chunk boundaries a per-chunk scan used to split.
+ */
+const STATUS_COALESCE_MS = 16;
+
+function queueStatusScan(tab: Tab, data: string): void {
+  const pooled = tab.statusScanBuffer + data;
+  tab.statusScanBuffer =
+    pooled.length > STATUS_SCAN_LIMIT ? pooled.slice(pooled.length - STATUS_SCAN_LIMIT) : pooled;
+  if (tab.statusScanTimer !== null) return;
+  tab.statusScanTimer = window.setTimeout(() => flushStatusScan(tab), STATUS_COALESCE_MS);
+}
+
+/**
+ * Scan whatever is pooled right now. Callers that are about to reset a sighting
+ * flag (the paste selector) must flush first, so text that arrived before the
+ * reset cannot answer for what happens after it.
+ */
+function flushStatusScan(tab: Tab): void {
+  if (tab.statusScanTimer !== null) {
+    window.clearTimeout(tab.statusScanTimer);
+    tab.statusScanTimer = null;
+  }
+  const text = tab.statusScanBuffer;
+  tab.statusScanBuffer = "";
+  if (text) parseStatusStream(tab, text);
+}
 
 /** Parse omp's terminal stream to extract active model, thinking level, plan state and usage metrics. */
 function parseStatusStream(tab: Tab, rawData: string): void {
@@ -2710,13 +2754,13 @@ updateKeyTargetIndicator();
 api.onData(({ id, data }) => {
   const tab = bySession.get(id);
   if (!tab?.view) {
-    // Nothing can render this chunk, but the PTY stays paused until we ack.
-    // A silent return wedges the session permanently.
-    api.ack(id);
+    // Nothing can render this chunk, but it still counts against the backlog
+    // that gates the PTY. A silent return would wedge the session.
+    api.ack(id, data.length);
     return;
   }
-  tab.view.feed(data, () => api.ack(id));
-  parseStatusStream(tab, data);
+  tab.view.feed(data, () => api.ack(id, data.length));
+  queueStatusScan(tab, data);
 });
 
 api.onStalled(({ id }) => {

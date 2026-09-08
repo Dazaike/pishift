@@ -71,13 +71,13 @@ const startupAppearance = Object.freeze({
 
 const api = {
   startupAppearance,
-  appVersion: startupArg("version") ?? "1.9.20",
+  appVersion: startupArg("version") ?? "1.9.21",
   getAppVersion: (): Promise<string> => ipcRenderer.invoke(CH.getAppVersion),
   spawn: (req: SpawnRequest): Promise<SpawnResult> => ipcRenderer.invoke(CH.ptySpawn, req),
   write: (id: string, data: string): void => ipcRenderer.send(CH.ptyWrite, id, data),
   resize: (id: string, cols: number, rows: number): void =>
     ipcRenderer.send(CH.ptyResize, id, cols, rows),
-  ack: (id: string): void => ipcRenderer.send(CH.ptyAck, id),
+  ack: (id: string, bytes: number): void => ipcRenderer.send(CH.ptyAck, id, bytes),
   kill: (id: string): void => ipcRenderer.send(CH.ptyKill, id),
   resumeFlow: (id: string): void => ipcRenderer.send(CH.ptyResumeFlow, id),
 
