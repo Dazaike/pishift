@@ -1,5 +1,4 @@
 import { FitAddon } from "@xterm/addon-fit";
-import { ImageAddon } from "@xterm/addon-image";
 import { SearchAddon } from "@xterm/addon-search";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -9,7 +8,6 @@ import { Terminal, type IDisposable, type IMarker } from "@xterm/xterm";
 import { bracketPaste } from "../shared/ipc";
 import { encodeArrow, encodeKey, type KeyLike, type KeyMode } from "../shared/kitty-keys";
 import { buildXtermTheme, FONT_FAMILY, FONT_SIZE, type ThemePreset } from "./theme";
-import { asOscEndHandler, guardOscEnd, IIP_END_GUARD_MS } from "./iip-guard";
 
 /**
  * xterm 6 syncs only the scrollable element's *dimensions* on resize; the scroll
@@ -68,6 +66,13 @@ export interface TermViewHooks {
   onReferenceSelection?(text: string): void;
   /** Fired when text is copied specifically from the terminal. */
   onCopyFromTerminal?(text: string): void;
+  /**
+   * xterm's write queue itself stopped draining (a parser handler holds its
+   * callback past RENDER_STALL_MS). `true` on stall, `false` once it drains.
+   * PTY backpressure acks keep flowing on their own deadline, so this is the
+   * only signal that the screen — not the child — is stuck.
+   */
+  onRenderStall?(stalled: boolean): void;
 }
 const PTY_RESIZE_DEBOUNCE_MS = 80;
 /**
@@ -78,6 +83,12 @@ const PTY_RESIZE_DEBOUNCE_MS = 80;
  * only relaxes backpressure; xterm still discards past its own 50 MB watermark.
  */
 const ACK_DEADLINE_MS = 1500;
+/**
+ * Longest the oldest fed chunk may wait for xterm's write callback before the
+ * queue counts as stuck. Above the image-guard timeout with margin, so a slow
+ * but working decode never trips it — only a callback that never comes.
+ */
+export const RENDER_STALL_MS = 5000;
 const MIN_FONT = 8;
 const MAX_FONT = 32;
 /** Longest a blank idle screen may hide behind the boot skeleton. */
@@ -89,15 +100,6 @@ export class TermView {
   private readonly term: Terminal;
   private readonly fit = new FitAddon();
   private readonly search = new SearchAddon();
-  private readonly image = new ImageAddon({
-    // omp only ever emits iTerm2 inline images (IIP); no capability profile maps
-    // to sixel. Size reports (CSI 14t/16t) must stay enabled — omp uses them to
-    // pick image cell dimensions.
-    sixelSupport: false,
-    iipSupport: true,
-    iipSizeLimit: 33_554_432,
-    storageLimit: 256,
-  });
   private webgl: WebglAddon | null = null;
   private observer: ResizeObserver | null = null;
   private rafHandle: number | undefined;
@@ -115,6 +117,12 @@ export class TermView {
   private lastFeedAt = 0;
   /** Armed while a fed chunk is still unacked. */
   private ackTimer: number | undefined;
+  /** Fed chunks still waiting on xterm's write callback. */
+  private pendingWrites = 0;
+  /** Fires once per episode while the write queue stays stuck. */
+  private renderStallTimer: number | undefined;
+  /** Latched until the queue drains, so the host is not spammed. */
+  private renderStallFired = false;
   private lastCols = 0;
   private lastRows = 0;
   /** DECCKM — when true, interactive TUI menus want arrow keys as SS3. */
@@ -294,8 +302,6 @@ export class TermView {
     if (!this.opened) {
       this.term.open(this.el);
       this.opened = true;
-      this.term.loadAddon(this.image);
-      this.guardImageHandler();
       this.loadWebgl();
       this.observer = new ResizeObserver(() => this.scheduleFit());
       this.observer.observe(this.el);
@@ -333,6 +339,10 @@ export class TermView {
     this.lastFeedAt = Date.now();
     if (this.ackTimer !== undefined) window.clearTimeout(this.ackTimer);
     let acked = false;
+    this.pendingWrites += 1;
+    if (this.pendingWrites === 1) {
+      this.armRenderStallTimer();
+    }
     const ackOnce = (): void => {
       if (acked) return;
       acked = true;
@@ -343,13 +353,45 @@ export class TermView {
       if (this.skeletonEl) this.maybeHideSkeleton();
       ack();
     };
+    // xterm-side only: the deadline ack above must not mask a stuck queue.
+    const consumedOnce = (): void => {
+      this.pendingWrites = Math.max(0, this.pendingWrites - 1);
+      if (this.pendingWrites === 0) {
+        this.clearRenderStallTimer();
+        if (this.renderStallFired) {
+          this.renderStallFired = false;
+          this.hooks.onRenderStall?.(false);
+        }
+      }
+    };
     this.ackTimer = window.setTimeout(ackOnce, ACK_DEADLINE_MS);
     try {
-      this.term.write(data, ackOnce);
+      this.term.write(data, () => {
+        consumedOnce();
+        ackOnce();
+      });
     } catch {
       // xterm throws past its 50 MB DISCARD_WATERMARK and on parser faults.
-      // write() throws before queueing the callback, so ack here.
+      // The chunk was dropped, not queued, so nothing is stuck behind it.
+      consumedOnce();
       ackOnce();
+    }
+  }
+
+  private armRenderStallTimer(): void {
+    if (this.renderStallTimer !== undefined) return;
+    this.renderStallTimer = window.setTimeout(() => {
+      this.renderStallTimer = undefined;
+      if (this.disposed || this.pendingWrites === 0 || this.renderStallFired) return;
+      this.renderStallFired = true;
+      this.hooks.onRenderStall?.(true);
+    }, RENDER_STALL_MS);
+  }
+
+  private clearRenderStallTimer(): void {
+    if (this.renderStallTimer !== undefined) {
+      window.clearTimeout(this.renderStallTimer);
+      this.renderStallTimer = undefined;
     }
   }
 
@@ -627,6 +669,7 @@ export class TermView {
     if (this.rafHandle) cancelAnimationFrame(this.rafHandle);
     clearTimeout(this.ptyResizeTimer);
     clearTimeout(this.ackTimer);
+    this.clearRenderStallTimer();
     clearTimeout(this.skeletonRemoveTimer);
     clearTimeout(this.skeletonFallbackTimer);
     this.observer?.disconnect();
@@ -640,27 +683,6 @@ export class TermView {
     this.jumpBtn = null;
     this.term.dispose();
     this.el.remove();
-  }
-
-  /**
-   * The IIP handler's `end()` gates xterm's write queue on a promise the addon
-   * never times out, so one wedged decode blanks the tab while the PTY keeps
-   * flowing underneath. Reaching into the pinned addon's handler table is
-   * version-coupled by design; a miss skips silently rather than breaking
-   * terminal startup.
-   */
-  private guardImageHandler(): void {
-    try {
-      const addon: unknown = this.image;
-      if (!addon || typeof addon !== "object" || !("_handlers" in addon)) return;
-      const table: unknown = addon._handlers;
-      if (!(table instanceof Map)) return;
-      const iip = asOscEndHandler(table.get("iip"));
-      if (!iip) return;
-      iip.end = guardOscEnd(iip.end.bind(iip), IIP_END_GUARD_MS);
-    } catch {
-      // Addon internals renamed under us; terminal still opens unguarded.
-    }
   }
 
   private loadWebgl(): void {

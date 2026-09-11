@@ -1,15 +1,12 @@
 /**
  * Environment for the hosted omp process.
- *
- * omp selects its terminal capability profile purely from environment variables,
- * checking `KITTY_WINDOW_ID`, `GHOSTTY_RESOURCES_DIR`, `WEZTERM_PANE`,
- * `ITERM_SESSION_ID`, `VSCODE_PID`, `ALACRITTY_WINDOW_ID`, then `TERM_PROGRAM`,
- * `TERM`, `COLORTERM` — in that order. The kitty/ghostty/wezterm profiles select
- * the kitty graphics protocol, which `@xterm/addon-image` cannot decode, and they
- * are checked *before* iterm2. So vars inherited from the launching terminal must
- * be stripped, and `ITERM_SESSION_ID` set: the iterm2 profile is exactly the
- * capability set xterm.js can honour (IIP images, truecolor, OSC 8, OSC 9, and no
- * DECCARA / text sizing / screen-to-scrollback).
+ * omp selects a terminal capability profile from environment variables. Strip
+ * identities inherited from the terminal that launched PiShift, then expose a
+ * conservative xterm profile. Explicitly do not set `ITERM_SESSION_ID`:
+ * in-terminal IIP graphics can wedge xterm's write queue on malformed image
+ * data or an unsettled decode, hiding omp's footer and every later frame. With
+ * the ordinary xterm profile, omp presents image attachments as its durable text
+ * fallback — the same behavior as Windows Terminal.
  */
 
 const STRIP: readonly string[] = [
@@ -21,6 +18,7 @@ const STRIP: readonly string[] = [
   "TERM_PROGRAM",
   "TERM_PROGRAM_VERSION",
   "WT_SESSION",
+  "ITERM_SESSION_ID",
   "WT_PROFILE_ID",
 ];
 
@@ -39,6 +37,6 @@ export function buildPtyEnv(
   env.COLORTERM = "truecolor";
   // Unique per hosted tab so control-bridge telemetry can target the right chrome.
   env.PISHIFT_SESSION_ID = sessionId;
-  env.ITERM_SESSION_ID = `w0t0p0:${sessionId}`;
+  // No ITERM_SESSION_ID: in-terminal IIP graphics are unsafe in this shell.
   return env;
 }

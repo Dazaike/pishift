@@ -5,8 +5,6 @@ import { CH } from "../src/shared/ipc";
 
 /** Deterministic watchdog window; read by pty-manager at module load. */
 const STALL_MS = 1000;
-const BEL = "\x07";
-const MARKER = "\x1b]1337;File=";
 
 /** Stands in for node-pty's IPty, recording the flow-control calls. */
 class FakePty {
@@ -102,18 +100,19 @@ afterEach(() => {
 });
 
 describe("PtyManager flow control", () => {
-  it("streams a chunked image without pausing the child", async () => {
+  it("forwards each ordinary output chunk immediately", async () => {
     const h = await spawnSession();
 
     pty.emit("before");
-    // Ordinary output never pauses: the backlog is nowhere near the watermark.
-    expect(pty.pauses).toBe(0);
-    pty.emit(`${MARKER}inline=1:aGVs`);
-    pty.emit("bG8=");
-    expect(pty.pauses).toBe(0);
-    pty.emit(BEL);
+    pty.emit("\x1b]1337;File=inline=1:aGVsbG8=\x07");
+    pty.emit("after");
 
-    expect(h.chunks()).toEqual(["before", `${MARKER}size=5;inline=1:aGVsbG8=${BEL}`]);
+    expect(h.chunks()).toEqual([
+      "before",
+      "\x1b]1337;File=inline=1:aGVsbG8=\x07",
+      "after",
+    ]);
+    expect(pty.pauses).toBe(0);
   });
 
   it("pauses only once the unacked backlog crosses the watermark", async () => {
@@ -142,57 +141,6 @@ describe("PtyManager flow control", () => {
     expect(pty.resumes).toBe(1);
   });
 
-  it("releases a sequence that never terminates instead of swallowing output", async () => {
-    const h = await spawnSession();
-
-    // A marker with no terminator: every later byte would queue behind it.
-    pty.emit(`${MARKER}inline=1:aGVs`);
-    expect(h.chunks()).toEqual([]);
-
-    vi.advanceTimersByTime(600);
-    expect(h.chunks()).toEqual([`${MARKER}inline=1:aGVs`]);
-
-    h.ackAll();
-    pty.emit("after");
-    expect(h.chunks()).toEqual([`${MARKER}inline=1:aGVs`, "after"]);
-  });
-
-  it("releases a withheld partial marker sooner than a buffered sequence", async () => {
-    const h = await spawnSession();
-
-    // A trailing ESC is a marker prefix, so it is withheld — but it is nearly
-    // always an ordinary escape sequence split on a chunk boundary, so it is
-    // released on the short deadline once the ack lets the child flow again.
-    pty.emit("tail\x1b");
-    expect(h.chunks()).toEqual(["tail"]);
-    h.ackAll();
-
-    vi.advanceTimersByTime(100);
-    expect(h.chunks()).toEqual(["tail", "\x1b"]);
-
-    // A buffered sequence with a header is a real image mid-stream, so it gets
-    // the long deadline rather than the short one.
-    h.ackAll();
-    pty.emit(`${MARKER}inline=1:aGVs`);
-    vi.advanceTimersByTime(100);
-    expect(h.chunks()).toEqual(["tail", "\x1b"]);
-    vi.advanceTimersByTime(500);
-    expect(h.chunks()).toEqual(["tail", "\x1b", `${MARKER}inline=1:aGVs`]);
-  });
-
-  it("does not flush withheld bytes while the child is paused", async () => {
-    const h = await spawnSession();
-
-    // Backlog over the watermark pauses the child; the buffered image head must
-    // not be released behind its back, since a paused child is silent by design.
-    pty.emit("x".repeat(h.pauseBytes));
-    pty.emit(`${MARKER}inline=1:aGVs`);
-    expect(pty.paused).toBe(true);
-    const before = h.chunks().length;
-
-    vi.advanceTimersByTime(600);
-    expect(h.chunks()).toHaveLength(before);
-  });
 
   it("resumes the child itself when the renderer never acks", async () => {
     const h = await spawnSession();
@@ -223,42 +171,4 @@ describe("PtyManager flow control", () => {
     expect(pty.paused).toBe(false);
   });
 
-  it("stops the flush deadline when the child exits", async () => {
-    const h = await spawnSession();
-
-    pty.emit(`${MARKER}inline=1:aGVs`);
-    pty.exit(0);
-    vi.advanceTimersByTime(2000);
-
-    expect(h.chunks()).toEqual([]);
-    expect(h.emitted.some((e) => e.channel === CH.ptyExit)).toBe(true);
-  });
-
-  it("reassembles a realistic image stream across arbitrary chunk boundaries", async () => {
-    const h = await spawnSession();
-
-    // 300 KB of base64 split the way ConPTY splits: many chunks, boundaries
-    // landing inside the marker, the header, and the payload.
-    const payload = "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyAh".repeat(7000);
-    const sequence = `${MARKER}inline=1;width=40;height=auto:${payload}${BEL}`;
-    const stream = `before\r\n${sequence}after\r\n`;
-
-    let cursor = 0;
-    let seed = 12345;
-    while (cursor < stream.length) {
-      // Deterministic pseudo-random sizes, including boundaries of 1 byte.
-      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
-      const size = 1 + (seed % 4096);
-      pty.emit(stream.slice(cursor, cursor + size));
-      cursor += size;
-      h.ackAll();
-    }
-    vi.advanceTimersByTime(1000);
-
-    const expectedSize = Math.floor((payload.length * 3) / 4);
-    expect(h.chunks().join("")).toBe(
-      `before\r\n${MARKER}size=${expectedSize};inline=1;width=40;height=auto:${payload}${BEL}after\r\n`,
-    );
-    expect(h.emitted.some((e) => e.channel === CH.ptyStalled)).toBe(false);
-  });
 });
