@@ -200,6 +200,8 @@ type Tab = {
   /** Clears stuck progressBusy if omp never sends 9;4;0. */
   progressBusyTimer: number | null;
   stallBanner: HTMLDivElement | null;
+  /** Renderer-side stall overlay; lives inside the view element, dies with it. */
+  renderStallBanner: HTMLDivElement | null;
   /** When the current non-idle activity began; null while idle. */
   activitySince: number | null;
   button: HTMLButtonElement;
@@ -1534,6 +1536,7 @@ function closeTab(tab: Tab): void {
   tab.view?.dispose();
   tab.notice?.remove();
   clearStallBanner(tab);
+  clearRenderStallBanner(tab);
   tab.button.remove();
 
   if (splitMode) {
@@ -1657,6 +1660,7 @@ async function restartSession(tab: Tab): Promise<void> {
   tab.view = null;
   tab.notice?.remove();
   tab.notice = null;
+  clearRenderStallBanner(tab);
   await startSession(tab);
   renderTabs();
 }
@@ -1892,6 +1896,64 @@ function clearStallBanner(tab: Tab): void {
   tab.stallBanner = null;
 }
 
+/**
+ * Overlay shown when xterm's own write queue stops draining. The PTY child is
+ * usually still alive (its acks keep flowing on the flow-control deadline, so
+ * the PTY watchdog never fires) — only the screen is stuck. Resetting rebuilds
+ * the terminal around the live session; a resize forces omp to repaint.
+ */
+function showRenderStallBanner(tab: Tab): void {
+  if (tab.renderStallBanner || !tab.view) return;
+  const banner = document.createElement("div");
+  banner.className = "stall-banner active";
+
+  const text = document.createElement("span");
+  text.textContent = "Terminal stopped painting — session is alive.";
+  const resetBtn = document.createElement("button");
+  resetBtn.type = "button";
+  resetBtn.textContent = "Reset view";
+  resetBtn.addEventListener("click", () => resetTerminalView(tab));
+
+  const killBtn = document.createElement("button");
+  killBtn.type = "button";
+  killBtn.className = "stall-banner-kill";
+  killBtn.textContent = "Kill session";
+  killBtn.addEventListener("click", () => {
+    clearRenderStallBanner(tab);
+    if (tab.sessionId) api.kill(tab.sessionId);
+  });
+
+  banner.append(text, resetBtn, killBtn);
+  // Child of the view element: follows it across panes/tabs, dies with it.
+  tab.view.el.appendChild(banner);
+  tab.renderStallBanner = banner;
+}
+
+function clearRenderStallBanner(tab: Tab): void {
+  const banner = tab.renderStallBanner;
+  if (!banner) return;
+  banner.remove();
+  tab.renderStallBanner = null;
+}
+
+/** Rebuild the terminal around the live PTY session; scrollback is lost. */
+function resetTerminalView(tab: Tab): void {
+  const sessionId = tab.sessionId;
+  tab.view?.dispose();
+  tab.renderStallBanner = null;
+  const view = createView(tab);
+  tab.view = view;
+  if (tab === active) {
+    const targetPane = splitMode && tab === secondaryTab ? paneSecondaryEl : panePrimaryEl;
+    view.activate(targetPane);
+  } else {
+    panePrimaryEl.appendChild(view.el);
+  }
+  if (tab.viewMode === "chat") syncViewMode(tab);
+  if (sessionId) api.resize(sessionId, view.cols, view.rows);
+  if (tab === active) dock.focus();
+}
+
 function cycleTab(step: -1 | 1): void {
   if (!active || tabs.length < 2) return;
   const index = (tabs.indexOf(active) + step + tabs.length) % tabs.length;
@@ -1935,6 +1997,10 @@ function createView(tab: Tab): TermView {
       onCopyFromTerminal: () => {
         if (tab !== active) return;
         dock.showToast("Just copied", 1300);
+      },
+      onRenderStall: (stalled) => {
+        if (stalled) showRenderStallBanner(tab);
+        else clearRenderStallBanner(tab);
       },
     },
     currentPreset,
@@ -2053,6 +2119,7 @@ function makeTab(cwd: string, customTitle?: string, colorTag?: string): Tab {
     label,
     notice: null,
     stallBanner: null,
+    renderStallBanner: null,
     activitySince: null,
     dock: undefined,
     pendingAsk: null,

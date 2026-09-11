@@ -12,20 +12,12 @@ import {
   type PtyStallCleared,
   type SpawnRequest,
 } from "../shared/ipc";
-import {
-  createIipState,
-  injectIipSize,
-  MARKER,
-  takeIipBuffer,
-  type IipState,
-} from "../shared/iip-size";
 import { resolveOmpPath } from "./omp-locate";
 import { buildPtyEnv } from "./pty-env";
 
 type Session = {
   id: string;
   pty: IPty;
-  iip: IipState;
   cwd: string;
   exited: boolean;
   /** Bytes emitted to the renderer that have not been acked yet. */
@@ -36,8 +28,6 @@ type Session = {
   pausedAt: number | null;
   /** Reported once per stall, so the renderer is not spammed each poll. */
   stallReported: boolean;
-  /** Deadline releasing withheld IIP bytes when the sequence never completes. */
-  iipFlushTimer: NodeJS.Timeout | null;
 };
 
 export type Emit = (
@@ -65,18 +55,6 @@ const FORCE_REAP_AFTER_MS = 2000;
 export const PAUSE_BYTES = 2_097_152;
 export const RESUME_BYTES = 524_288;
 
-/**
- * Silence after which withheld image bytes are shipped raw. omp writes an image
- * as one uninterrupted burst, so a gap this long means the sequence is never
- * terminating and every later byte would be swallowed behind it.
- */
-const IIP_FLUSH_MS = 500;
-/**
- * A withheld partial marker is usually just an ordinary escape sequence split on
- * a chunk boundary — the common case at the end of a burst — so it is released
- * an order of magnitude sooner to keep the last frame from lagging.
- */
-const IIP_PARTIAL_FLUSH_MS = 50;
 
 /**
  * Owns every hosted omp process. Data flows PTY -> renderer with a watermarked
@@ -111,31 +89,18 @@ export class PtyManager {
     const session: Session = {
       id,
       pty: child,
-      iip: createIipState(),
       cwd,
       exited: false,
       pending: 0,
       paused: false,
       pausedAt: null,
       stallReported: false,
-      iipFlushTimer: null,
     };
     this.sessions.set(id, session);
 
-    child.onData((data) => {
-      const transformed = injectIipSize(session.iip, data);
-      if (!transformed) {
-        // Withholding a partial IIP sequence: keep draining ConPTY at native
-        // speed instead of paying an IPC round trip per image chunk. The flush
-        // deadline guarantees these bytes are never withheld indefinitely.
-        this.scheduleIipFlush(session);
-        return;
-      }
-      this.emitChunk(session, transformed);
-    });
+    child.onData((data) => this.emitChunk(session, data));
     child.onExit(({ exitCode }) => {
       session.exited = true;
-      this.clearIipFlush(session);
       this.sessions.delete(id);
       this.emit(CH.ptyExit, { id, exitCode });
     });
@@ -177,20 +142,16 @@ export class PtyManager {
 
   /**
    * Hand a chunk to the renderer, pausing the child only once its unacked
-   * backlog crosses the high watermark. The withhold deadline is dropped while
-   * paused: silence from a paused child says nothing about the sequence.
+   * backlog crosses the high watermark.
    */
   private emitChunk(session: Session, data: string): void {
-    this.clearIipFlush(session);
     session.pending += data.length;
     this.emit(CH.ptyData, { id: session.id, data });
     if (!session.paused && session.pending >= PAUSE_BYTES) {
       session.paused = true;
       session.pausedAt = Date.now();
       session.pty.pause();
-      return;
     }
-    if (!session.paused) this.scheduleIipFlush(session);
   }
 
   /** Let the child flow again. Banner state is owned by `ack`/`checkStalls`. */
@@ -202,33 +163,6 @@ export class PtyManager {
     } catch {
       // The child can exit between the ack and this call.
     }
-    // Withheld bytes get no further onData while paused, so the deadline has to
-    // be re-armed here rather than left to the next chunk that may never come.
-    this.scheduleIipFlush(session);
-  }
-
-  private clearIipFlush(session: Session): void {
-    if (!session.iipFlushTimer) return;
-    clearTimeout(session.iipFlushTimer);
-    session.iipFlushTimer = null;
-  }
-
-  /**
-   * Arm the release deadline for withheld IIP bytes. Only meaningful while the
-   * child is flowing: a paused child is silent by design.
-   */
-  private scheduleIipFlush(session: Session): void {
-    this.clearIipFlush(session);
-    const pending = session.iip.buf.length;
-    if (!pending || session.exited || session.paused) return;
-    const delay = pending < MARKER.length ? IIP_PARTIAL_FLUSH_MS : IIP_FLUSH_MS;
-    session.iipFlushTimer = setTimeout(() => {
-      session.iipFlushTimer = null;
-      if (session.exited) return;
-      const raw = takeIipBuffer(session.iip);
-      if (raw) this.emitChunk(session, raw);
-    }, delay);
-    session.iipFlushTimer.unref?.();
   }
 
   /** Manual recovery from the stall banner: drop the backlog and flow again. */
@@ -242,7 +176,6 @@ export class PtyManager {
   kill(id: string): void {
     const session = this.sessions.get(id);
     if (!session) return;
-    this.clearIipFlush(session);
     this.sessions.delete(id);
     const pid = session.pty.pid;
     try {

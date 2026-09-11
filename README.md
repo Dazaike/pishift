@@ -50,7 +50,7 @@ No fake web-view wrappers pretending to be terminals. Just a genuine hardware-ac
 
 ### 🚀 Actual Terminal Hardware Acceleration
 - **WebGL xterm.js under the hood:** You type, it appears. Sub-millisecond. Groundbreaking concept, we know.
-- **iTerm2 Inline Graphics (IIP):** Images render *inside* the terminal. Not as a broken base64 dump, not as an ASCII smudge. Actual images.
+- **Safe Image Attachments:** OMP presents images through its durable text attachment fallback, instead of feeding raw graphics frames into an xterm parser that can freeze your live session. Actual prompts and footers stay usable.
 - **Kitty Keyboard Protocol:** Your chords and modifier keys actually work instead of getting swallowed by Windows console legacy ghosts.
 - **Watermarked PTY Flow Control:** Output streams free until the renderer is genuinely megabytes behind, instead of stopping the agent dead after every single chunk. No more sessions frozen at "Thinking · 5s" because a repaint took one frame too long.
 
@@ -130,8 +130,8 @@ No fake web-view wrappers pretending to be terminals. Just a genuine hardware-ac
 
 ### Download the binary (for people with places to be)
  Grab the latest release from the **[Releases](https://github.com/Dazaike/pishift/releases)** tab:
-- **`PiShift Setup 1.9.23.exe`** — Standard installer.
-- **`PiShift-1.9.23-win.zip`** — Portable zip if you have installer commitment issues.
+- **`PiShift Setup 1.9.24.exe`** — Standard installer.
+- **`PiShift-1.9.24-win.zip`** — Portable zip if you have installer commitment issues.
 ### Build from source (for hackers & tinkerers)
 
 ```bash

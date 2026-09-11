@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { buildPtyEnv } from "../src/main/pty-env";
 
 describe("buildPtyEnv", () => {
-  it("strips inherited terminal identity and selects the iterm2 profile", () => {
+  it("strips inherited graphics identities and keeps the safe xterm profile", () => {
     const env = buildPtyEnv(
       {
         KITTY_WINDOW_ID: "1",
@@ -14,6 +14,7 @@ describe("buildPtyEnv", () => {
         TERM_PROGRAM: "vscode",
         TERM_PROGRAM_VERSION: "1.99",
         WT_SESSION: "abc",
+        ITERM_SESSION_ID: "w0t0p0:inherited",
         WT_PROFILE_ID: "{guid}",
         PATH: "C:/Windows",
         TERM: "xterm",
@@ -31,6 +32,7 @@ describe("buildPtyEnv", () => {
       "TERM_PROGRAM",
       "TERM_PROGRAM_VERSION",
       "WT_SESSION",
+      "ITERM_SESSION_ID",
       "WT_PROFILE_ID",
     ]) {
       expect(env).not.toHaveProperty(stripped);
@@ -38,7 +40,7 @@ describe("buildPtyEnv", () => {
 
     expect(env.TERM).toBe("xterm-256color");
     expect(env.COLORTERM).toBe("truecolor");
-    expect(env.ITERM_SESSION_ID).toBe("w0t0p0:session-1");
+    expect(env).not.toHaveProperty("ITERM_SESSION_ID");
     expect(env.PISHIFT_SESSION_ID).toBe("session-1");
     expect(env).not.toHaveProperty(["OMP", "HIF_SESSION_ID"].join(""));
     expect(env.PATH).toBe("C:/Windows");
