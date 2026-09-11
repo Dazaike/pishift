@@ -9,6 +9,7 @@ import { Terminal, type IDisposable, type IMarker } from "@xterm/xterm";
 import { bracketPaste } from "../shared/ipc";
 import { encodeArrow, encodeKey, type KeyLike, type KeyMode } from "../shared/kitty-keys";
 import { buildXtermTheme, FONT_FAMILY, FONT_SIZE, type ThemePreset } from "./theme";
+import { asOscEndHandler, guardOscEnd, IIP_END_GUARD_MS } from "./iip-guard";
 
 /**
  * xterm 6 syncs only the scrollable element's *dimensions* on resize; the scroll
@@ -294,6 +295,7 @@ export class TermView {
       this.term.open(this.el);
       this.opened = true;
       this.term.loadAddon(this.image);
+      this.guardImageHandler();
       this.loadWebgl();
       this.observer = new ResizeObserver(() => this.scheduleFit());
       this.observer.observe(this.el);
@@ -638,6 +640,27 @@ export class TermView {
     this.jumpBtn = null;
     this.term.dispose();
     this.el.remove();
+  }
+
+  /**
+   * The IIP handler's `end()` gates xterm's write queue on a promise the addon
+   * never times out, so one wedged decode blanks the tab while the PTY keeps
+   * flowing underneath. Reaching into the pinned addon's handler table is
+   * version-coupled by design; a miss skips silently rather than breaking
+   * terminal startup.
+   */
+  private guardImageHandler(): void {
+    try {
+      const addon: unknown = this.image;
+      if (!addon || typeof addon !== "object" || !("_handlers" in addon)) return;
+      const table: unknown = addon._handlers;
+      if (!(table instanceof Map)) return;
+      const iip = asOscEndHandler(table.get("iip"));
+      if (!iip) return;
+      iip.end = guardOscEnd(iip.end.bind(iip), IIP_END_GUARD_MS);
+    } catch {
+      // Addon internals renamed under us; terminal still opens unguarded.
+    }
   }
 
   private loadWebgl(): void {
