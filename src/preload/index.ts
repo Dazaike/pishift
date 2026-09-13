@@ -71,7 +71,7 @@ const startupAppearance = Object.freeze({
 
 const api = {
   startupAppearance,
-  appVersion: startupArg("version") ?? "1.9.24",
+  appVersion: startupArg("version") ?? "1.9.25",
   getAppVersion: (): Promise<string> => ipcRenderer.invoke(CH.getAppVersion),
   spawn: (req: SpawnRequest): Promise<SpawnResult> => ipcRenderer.invoke(CH.ptySpawn, req),
   write: (id: string, data: string): void => ipcRenderer.send(CH.ptyWrite, id, data),

@@ -4,8 +4,10 @@
  * omp treats a paste as "large" when it exceeds 10 lines or 1000 characters,
  * and collapses it to an inline marker rather than dumping it into the editor.
  * Above `paste.largeMenuThreshold` lines (schema default 100) it first asks how
- * to attach the text. PiShift mirrors both steps in the dock so the user picks
- * before submitting, then replays the choice into omp's selector.
+ * to attach the text. PiShift mirrors both steps in the dock: 11-99 line
+ * pastes collapse straight to inline (omp offers no choice there, so PiShift
+ * promises none), while 100+ line pastes ask (or use the pinned mode) and the
+ * choice is replayed into omp's selector on submit.
  */
 
 export type PasteMode = "wrapped" | "file" | "inline";

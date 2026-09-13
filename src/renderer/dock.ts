@@ -9,6 +9,8 @@ import { SlashMenu } from "./slash-menu";
 import { ThinkingMenu } from "./thinking-menu";
 import { getThinkingIconSvg } from "./thinking-icons";
 import planIcon from "./assets/icons/plan.png";
+import terminalIcon from "./assets/icons/terminal.png";
+import chatIcon from "./assets/icons/chat.png";
 import type { PlanMode, PlanTarget } from "../shared/plan-mode";
 import { PasteMenu } from "./paste-menu";
 import {
@@ -16,6 +18,7 @@ import {
   isLargePaste,
   normalizePaste,
   pasteMarker,
+  triggersPasteMenu,
   type PasteMode,
   type PasteModeSetting,
   type PasteMarkerStyle,
@@ -519,6 +522,7 @@ export class Dock {
   }
 
   setPlanMode(mode: PlanMode, pending = this.planPending): void {
+    if (this.planMode === mode && this.planPending === pending) return;
     this.planMode = mode;
     this.planPending = pending;
     this.updatePlanButton();
@@ -532,6 +536,10 @@ export class Dock {
     this.viewModeBtn.title = chat
       ? "Back to Terminal (Ctrl+Shift+U)"
       : "Switch to Chat View (Ctrl+Shift+U)";
+    const iconEl = this.viewModeBtn.querySelector<HTMLImageElement>(".dock-view-icon");
+    if (iconEl) {
+      iconEl.src = chat ? chatIcon : terminalIcon;
+    }
     const label = this.viewModeBtn.querySelector(".dock-view-label");
     if (label) label.textContent = chat ? "Chat" : "Terminal";
   }
@@ -707,11 +715,6 @@ export class Dock {
       this.planMode === "on"
         ? "Plan mode ON — click to exit"
         : "Plan mode OFF — click to enter";
-    safeAnimate(
-      this.planBtn,
-      { scale: [0.96, 1.03, 1] },
-      springPresets.snappy as unknown as Record<string, unknown>
-    );
   }
 
   private checkSlashMenu(): void {
@@ -994,12 +997,19 @@ export class Dock {
       return;
     }
 
-    // A long text paste is collapsed to a chip + marker instead of flooding the
-    // composer, exactly as omp does with its own large pastes.
+    // Collapsed to a chip + marker to keep the composer readable. omp only
+    // asks how to attach at 100+ lines (`paste.largeMenuThreshold`); below
+    // that it always inlines with no selector, so PiShift only owes a choice
+    // when omp would ask. Smaller large pastes collapse straight to inline,
+    // matching omp instead of promising wrapped/file we cannot deliver.
     const pasted = ev.clipboardData?.getData("text/plain") ?? "";
     if (pasted && isLargePaste(pasted)) {
       ev.preventDefault();
       const lines = countPasteLines(pasted);
+      if (!triggersPasteMenu(lines)) {
+        this.commitPaste(pasted, lines, "inline");
+        return;
+      }
       const mode = this.hooks.pasteMode();
       if (mode === "ask") {
         this.pasteMenu.open(lines, (chosen) => this.commitPaste(pasted, lines, chosen));
