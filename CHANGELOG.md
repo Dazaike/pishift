@@ -3,6 +3,16 @@
 All notable changes to PiShift are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.9.27] — 2026-09-13
+
+### Added
+- Thinking-level tick marks on the horizontal and vertical sliders now show a small label above/beside each dot (Off/Min/Low/Medium/High/XHigh) so every stop is identifiable without hovering.
+- The horizontal slider fill now has four selectable animation styles (shimmer, glow, diagonal stripes, drifting bubbles) via a `data-fx` attribute for quick visual tuning.
+
+### Changed
+- Removed the redundant icon+label header row above the thinking sliders; the active tick label now carries the directional motion-blur transition that row used to show.
+- Increased top padding on the horizontal slider popover so tick labels have clear space above the top edge.
+
 ## [1.9.26] — 2026-09-13
 
 ### Added

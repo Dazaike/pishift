@@ -21,8 +21,6 @@ export class ThinkingMenu {
   private lastIdx = -1;
   private onSelectCallback: (level: string) => void;
   private listPill: { dispose: () => void; sync: (immediate?: boolean) => void } | null = null;
-  private readonly iconEl: HTMLSpanElement;
-  private readonly nameEl: HTMLSpanElement;
   private readonly trackEl: HTMLDivElement;
   private readonly sliderEl: HTMLInputElement;
   private readonly fillEl: HTMLDivElement;
@@ -34,15 +32,12 @@ export class ThinkingMenu {
     this.el = document.createElement("div");
     this.el.id = "thinking-menu-popover";
     this.el.className = "thinking-menu-popover style-horizontal";
+    this.el.dataset.fx = "bubbles";
     this.el.setAttribute("hidden", "true");
-
-    this.iconEl = document.createElement("span");
-    this.iconEl.className = "thinking-slider-icon";
-    this.nameEl = document.createElement("span");
-    this.nameEl.className = "thinking-slider-name";
 
     this.fillEl = document.createElement("div");
     this.fillEl.className = "thinking-slider-fill";
+    this.fillEl.appendChild(this.createBubbles());
 
     this.ticksEl = document.createElement("div");
     this.ticksEl.className = "thinking-slider-ticks";
@@ -82,6 +77,27 @@ export class ThinkingMenu {
     window.addEventListener("resize", () => {
       if (this.isOpen) this.position();
     });
+  }
+
+  /** Builds a container of randomized rising-bubble spans for the "bubbles" fill fx. */
+  private createBubbles(): HTMLDivElement {
+    const wrap = document.createElement("div");
+    wrap.className = "thinking-slider-bubbles";
+    const count = 4;
+    for (let i = 0; i < count; i++) {
+      const bubble = document.createElement("span");
+      bubble.className = "thinking-slider-bubble";
+      const top = 12 + Math.random() * 76;
+      const size = 2.5 + Math.random() * 2.5;
+      const duration = 1.6 + Math.random() * 1.2;
+      const delay = (i / count) * duration * -1 - Math.random() * 0.5;
+      bubble.style.setProperty("--by", `${top}%`);
+      bubble.style.setProperty("--bs", `${size.toFixed(1)}px`);
+      bubble.style.setProperty("--bd", `${duration.toFixed(2)}s`);
+      bubble.style.setProperty("--bdelay", `${delay.toFixed(2)}s`);
+      wrap.appendChild(bubble);
+    }
+    return wrap;
   }
 
   get isOpen(): boolean {
@@ -245,11 +261,6 @@ export class ThinkingMenu {
     this.listPill?.dispose();
     this.listPill = null;
     this.el.replaceChildren();
-
-    const head = document.createElement("div");
-    head.className = "thinking-slider-head";
-    head.append(this.iconEl, this.nameEl);
-
     this.sliderEl.min = "0";
     this.sliderEl.max = String(Math.max(0, count - 1));
     this.sliderEl.disabled = count <= 1;
@@ -257,13 +268,18 @@ export class ThinkingMenu {
 
     this.ticksEl.replaceChildren();
     for (let i = 0; i < count; i++) {
+      const label = formatThinkingLevel(this.levels[i]!);
       const tick = document.createElement("span");
       tick.className = "thinking-slider-tick";
-      tick.title = formatThinkingLevel(this.levels[i]!);
+      tick.title = label;
+      const tickLabel = document.createElement("span");
+      tickLabel.className = "thinking-slider-tick-label";
+      tickLabel.textContent = label;
+      tick.appendChild(tickLabel);
       this.ticksEl.appendChild(tick);
     }
 
-    this.el.append(head, this.trackEl);
+    this.el.append(this.trackEl);
     this.paint(this.current || this.levels[0] || "off");
   }
 
@@ -279,58 +295,43 @@ export class ThinkingMenu {
       return;
     }
 
-    this.iconEl.innerHTML = getThinkingIconSvg(level);
-    this.nameEl.textContent = formatThinkingLevel(level);
-
     let idx = this.levels.indexOf(level);
     if (idx < 0) idx = 0;
 
-    // Directional sliding motion blur:
-    if (this.lastIdx >= 0 && this.lastIdx !== idx) {
+    const ticks = this.ticksEl.children;
+    const activeLabel = ticks[idx]?.querySelector<HTMLElement>(".thinking-slider-tick-label");
+
+    // Directional sliding motion blur on the newly active tick label:
+    if (activeLabel && this.lastIdx >= 0 && this.lastIdx !== idx) {
       const goingUp = idx > this.lastIdx;
-      if (this.style === "vertical") {
-        const startY = goingUp ? 18 : -18;
-        if (typeof this.nameEl.animate === "function") {
-          this.nameEl.animate(
+      if (typeof activeLabel.animate === "function") {
+        if (this.style === "vertical") {
+          const startY = goingUp ? 10 : -10;
+          activeLabel.animate(
             [
-              { transform: `translateY(${startY}px)`, opacity: 0, filter: "blur(6px)" },
-              { transform: "translateY(0px)", opacity: 1, filter: "blur(0px)" },
+              { transform: `translateY(-50%) translateY(${startY}px)`, opacity: 0, filter: "blur(4px)" },
+              { transform: "translateY(-50%)", opacity: 1, filter: "blur(0px)" },
             ],
             { duration: 220, easing: "cubic-bezier(0.16, 1, 0.3, 1)" }
           );
-        }
-      } else {
-        const startX = goingUp ? -38 : 38;
-        const startSkew = goingUp ? -12 : 12;
-        const iconStartX = goingUp ? -18 : 18;
-        if (typeof this.nameEl.animate === "function") {
-          this.nameEl.animate(
+        } else {
+          const startX = goingUp ? -14 : 14;
+          activeLabel.animate(
             [
-              { transform: `translateX(${startX}px) skewX(${startSkew}deg)`, opacity: 0, filter: "blur(10px)" },
-              { transform: "translateX(0px) skewX(0deg)", opacity: 1, filter: "blur(0px)" },
+              { transform: `translateX(-50%) translateX(${startX}px)`, opacity: 0, filter: "blur(4px)" },
+              { transform: "translateX(-50%)", opacity: 1, filter: "blur(0px)" },
             ],
-            { duration: 280, easing: "cubic-bezier(0.08, 0.9, 0.2, 1)" }
-          );
-        }
-        if (typeof this.iconEl.animate === "function") {
-          this.iconEl.animate(
-            [
-              { transform: `translateX(${iconStartX}px)`, opacity: 0.1, filter: "blur(6px)" },
-              { transform: "translateX(0px)", opacity: 1, filter: "blur(0px)" },
-            ],
-            { duration: 260, easing: "cubic-bezier(0.08, 0.9, 0.2, 1)" }
+            { duration: 220, easing: "cubic-bezier(0.16, 1, 0.3, 1)" }
           );
         }
       }
     }
     this.lastIdx = idx;
-
     if (this.sliderEl.value !== String(idx)) this.sliderEl.value = String(idx);
     const count = this.levels.length;
     const progress = count > 1 ? idx / (count - 1) : 0;
     this.trackEl.style.setProperty("--thumb-progress", String(progress));
     this.sliderEl.style.setProperty("--thinking-fill", `${(progress * 100).toFixed(2)}%`);
-    const ticks = this.ticksEl.children;
     for (let i = 0; i < ticks.length; i++) {
       ticks[i]!.classList.toggle("filled", i <= idx);
       ticks[i]!.classList.toggle("current", i === idx);
