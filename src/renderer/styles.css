@@ -5741,6 +5741,44 @@ body.hide-bottom-button-labels #dock-change-dir .btn-icon {
   initial-value: 0%;
 }
 
+@keyframes thinking-fill-shimmer {
+  0% { background-position: -80% 0; }
+  100% { background-position: 180% 0; }
+}
+
+@keyframes thinking-fill-shimmer-v {
+  0% { background-position: 0 180%; }
+  100% { background-position: 0 -80%; }
+}
+
+@keyframes thinking-fill-glow {
+  0%, 100% {
+    box-shadow: inset 0 0 6px rgba(255, 255, 255, 0.1);
+    filter: brightness(1);
+  }
+  50% {
+    box-shadow: inset 0 0 14px rgba(255, 255, 255, 0.35), 0 0 12px 1px rgba(255, 185, 120, 0.55);
+    filter: brightness(1.1);
+  }
+}
+
+@keyframes thinking-fill-stripes {
+  0% { background-position: 0 0; }
+  100% { background-position: 36px 36px; }
+}
+
+@keyframes thinking-fill-pulse {
+  0%, 100% { filter: brightness(1); }
+  50% { filter: brightness(1.2); }
+}
+
+@keyframes thinking-bubble-drift {
+  0% { left: -8%; opacity: 0; transform: scale(0.5); }
+  10% { opacity: 0.6; transform: scale(1); }
+  85% { opacity: 0.5; }
+  100% { left: 108%; opacity: 0; transform: scale(0.8); }
+}
+
 #thinking-menu-popover,
 .thinking-menu-popover {
   position: fixed;
@@ -5811,35 +5849,8 @@ body.hide-bottom-button-labels #dock-change-dir .btn-icon {
 /* Mode 2: Horizontal Slider */
 .thinking-menu-popover.style-horizontal {
   width: 300px;
-  padding: 14px 16px;
+  padding: 32px 16px 14px;
   border-radius: 14px;
-}
-
-.style-horizontal .thinking-slider-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 12px;
-  font-size: 12px;
-  font-weight: 560;
-  color: var(--fg);
-  user-select: none;
-}
-
-.style-horizontal .thinking-slider-icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 15px;
-  height: 15px;
-  flex: 0 0 auto;
-  will-change: transform, opacity, filter;
-}
-
-.style-horizontal .thinking-slider-name {
-  flex: 1;
-  display: inline-block;
-  will-change: transform, opacity, filter;
 }
 
 .style-horizontal .thinking-slider-track {
@@ -5861,10 +5872,70 @@ body.hide-bottom-button-labels #dock-change-dir .btn-icon {
   width: calc((100% - 32px) * var(--thumb-progress, 0) + 32px);
   border-radius: 999px;
   background: var(--accent);
+  overflow: hidden;
   pointer-events: none;
   z-index: 0;
   will-change: width;
   transition: width 340ms cubic-bezier(0.34, 1.45, 0.64, 1), opacity 150ms ease;
+}
+
+.thinking-menu-popover.style-horizontal[data-fx="shimmer"] .thinking-slider-fill::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.4), transparent);
+  background-size: 60% 100%;
+  background-repeat: no-repeat;
+  animation: thinking-fill-shimmer 2.4s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.thinking-menu-popover[data-fx="glow"] .thinking-slider-fill {
+  animation: thinking-fill-glow 2.2s ease-in-out infinite;
+}
+
+.thinking-menu-popover[data-fx="stripes"] .thinking-slider-fill::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: repeating-linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.3) 0px,
+    rgba(255, 255, 255, 0.3) 8px,
+    transparent 8px,
+    transparent 18px
+  );
+  background-size: 200% 200%;
+  animation: thinking-fill-stripes 1s linear infinite;
+  pointer-events: none;
+}
+
+.thinking-menu-popover[data-fx="pulse"] .thinking-slider-fill {
+  animation: thinking-fill-pulse 1.8s ease-in-out infinite;
+}
+
+.thinking-slider-bubbles {
+  display: none;
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.thinking-menu-popover[data-fx="bubbles"] .thinking-slider-bubbles {
+  display: block;
+}
+
+.thinking-slider-bubble {
+  position: absolute;
+  top: var(--by, 50%);
+  left: -8%;
+  width: var(--bs, 4px);
+  height: var(--bs, 4px);
+  margin-top: calc(var(--bs, 4px) / -2);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.5);
+  box-shadow: 0 0 4px rgba(255, 255, 255, 0.35), 0 0 8px rgba(255, 255, 255, 0.18);
+  animation: thinking-bubble-drift var(--bd, 2s) linear var(--bdelay, 0s) infinite;
 }
 
 .style-horizontal .thinking-slider {
@@ -5936,39 +6007,7 @@ body.hide-bottom-button-labels #dock-change-dir .btn-icon {
   display: flex;
   flex-direction: column;
   align-items: center;
-}
-
-.style-vertical .thinking-slider-head {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  margin-bottom: 12px;
-  font-size: 11.5px;
-  font-weight: 600;
-  color: var(--fg);
-  user-select: none;
-  text-align: center;
-}
-
-.style-vertical .thinking-slider-icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  flex: 0 0 auto;
-  will-change: opacity, filter;
-}
-
-.style-vertical .thinking-slider-name {
-  display: block;
-  max-width: 60px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  will-change: transform, opacity, filter;
+  overflow: visible;
 }
 
 .style-vertical .thinking-slider-track {
@@ -5989,10 +6028,22 @@ body.hide-bottom-button-labels #dock-change-dir .btn-icon {
   height: calc((100% - 36px) * var(--thumb-progress, 0) + 36px);
   border-radius: 999px;
   background: var(--accent);
+  overflow: hidden;
   pointer-events: none;
   z-index: 0;
   will-change: height;
   transition: height 340ms cubic-bezier(0.34, 1.45, 0.64, 1), opacity 150ms ease;
+}
+
+.thinking-menu-popover.style-vertical[data-fx="shimmer"] .thinking-slider-fill::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(0deg, transparent, rgba(255, 255, 255, 0.4), transparent);
+  background-size: 100% 60%;
+  background-repeat: no-repeat;
+  animation: thinking-fill-shimmer-v 2.4s ease-in-out infinite;
+  pointer-events: none;
 }
 
 .style-vertical .thinking-slider {
@@ -6056,6 +6107,7 @@ body.hide-bottom-button-labels #dock-change-dir .btn-icon {
 }
 
 .thinking-slider-tick {
+  position: relative;
   width: 7px;
   height: 7px;
   border-radius: 999px;
@@ -6074,6 +6126,37 @@ body.hide-bottom-button-labels #dock-change-dir .btn-icon {
   background: #ffffff;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
   transform: scale(1.2);
+}
+
+.thinking-slider-tick-label {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 13px);
+  transform: translateX(-50%);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: rgba(255, 255, 255, 0.4);
+  white-space: nowrap;
+  pointer-events: none;
+  transition: color 200ms ease, transform 200ms ease;
+}
+
+.thinking-slider-tick.current .thinking-slider-tick-label {
+  color: #ffffff;
+  transform: translateX(-50%) translateY(-1px);
+}
+
+.style-vertical .thinking-slider-tick-label {
+  left: auto;
+  bottom: auto;
+  right: calc(100% + 8px);
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.style-vertical .thinking-slider-tick.current .thinking-slider-tick-label {
+  transform: translateY(-50%) translateX(-1px);
 }
 
 /* Settings Segmented Button Group */
