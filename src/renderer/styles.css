@@ -8591,8 +8591,3 @@ body[data-view-mode="chat"] .term-selection-action {
 #dock-view-mode.view-chat {
   color: var(--fg);
 }
-
-.dock-view-icon {
-  font-size: 12px;
-  line-height: 1;
-}

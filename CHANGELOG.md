@@ -3,6 +3,15 @@
 All notable changes to PiShift are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.9.25] — 2026-09-12
+
+### Changed
+- Bottom dock view toggle now uses dedicated terminal and chat icons (`terminal.png` and `chat.png`) instead of a static glyph.
+- Clarified long paste behavior and settings: omp only prompts for paste attachment mode on 100+ lines, so smaller pastes always collapse directly to inline.
+
+### Fixed
+- Fixed dock plan button randomly re-triggering its scale bounce animation on background agent and control-bridge status updates.
+
 ## [1.9.24] — 2026-09-11
 
 ### Fixed

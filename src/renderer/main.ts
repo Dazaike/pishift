@@ -2435,11 +2435,12 @@ async function submitDock(payload: DockPayload): Promise<void> {
         // Only a sighting produced by this paste may answer for it.
         flushStatusScan(tab);
         tab.pasteMenuSeen = false;
-        const pasteContent =
-          item.mode === "wrapped" && !triggersPasteMenu(item.lines)
-            ? `<attachment>\n${item.text}\n</attachment>`
-            : item.text;
-        view.paste(pasteContent);
+        // Under omp's menu threshold (<100 lines) the dock only ever commits
+        // inline, so raw text is correct: omp inlines with no selector. At
+        // 100+ lines the mode is replayed by answering omp's own selector
+        // below — never by pre-wrapping tags (omp would store those tags as
+        // literal pasted content, not as a wrapper).
+        view.paste(item.text);
         await sleep(EDITOR_SETTLE_MS);
         await answerPasteMenu(tab, item.mode, triggersPasteMenu(item.lines));
         continue;

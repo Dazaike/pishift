@@ -949,15 +949,18 @@ export class SettingsModal {
     scrollHead.append(scrollLabel, scrollValue);
     scrollRow.append(scrollHead, scrollInput);
 
-    // Option 8: How long pastes attach
+    // Option 8: How 100+ line pastes attach (smaller large pastes always
+    // inline — omp offers no selector below `paste.largeMenuThreshold`).
     const pasteRow = document.createElement("div");
     pasteRow.className = "settings-pos-row";
     const pasteLabel = document.createElement("label");
     pasteLabel.className = "settings-pos-label";
-    pasteLabel.textContent = "Long Paste";
+    pasteLabel.textContent = "Long Paste (100+ lines)";
+    pasteLabel.title = "Below 100 lines omp always pastes inline with no menu, so this only applies when the paste menu would appear.";
 
     const pasteSelect = document.createElement("select");
     pasteSelect.className = "settings-select";
+    pasteSelect.title = pasteLabel.title;
     const pasteOptions: { id: PasteModeSetting; label: string }[] = [
       { id: "ask", label: "Ask Each Time" },
       { id: "wrapped", label: "Always Attach as a Wrapped Block" },
