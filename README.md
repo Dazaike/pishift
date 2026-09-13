@@ -130,8 +130,8 @@ No fake web-view wrappers pretending to be terminals. Just a genuine hardware-ac
 
 ### Download the binary (for people with places to be)
  Grab the latest release from the **[Releases](https://github.com/Dazaike/pishift/releases)** tab:
-- **`PiShift Setup 1.9.25.exe`** — Standard installer.
-- **`PiShift-1.9.25-win.zip`** — Portable zip if you have installer commitment issues.
+- **`PiShift Setup 1.9.26.exe`** — Standard installer.
+- **`PiShift-1.9.26-win.zip`** — Portable zip if you have installer commitment issues.
 ### Build from source (for hackers & tinkerers)
 
 ```bash

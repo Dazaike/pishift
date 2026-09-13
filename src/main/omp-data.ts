@@ -12,6 +12,7 @@ import type {
   SessionMessage,
 } from "../shared/ipc";
 import { resolveOmpPath } from "./omp-locate";
+import { formatLimitLabel } from "../shared/usage-tracker";
 
 const OMP_DIR = join(homedir(), ".omp");
 
@@ -166,7 +167,7 @@ export async function queryOmpUsage(): Promise<ProviderUsageReport[]> {
           limits?: {
             label: string;
             amount?: { used?: number; limit?: number; remaining?: number; unit?: string; usedFraction?: number };
-            window?: { resetsAt?: number };
+            window?: { label?: string; resetsAt?: number };
           }[];
         }[];
       };
@@ -189,7 +190,7 @@ export async function queryOmpUsage(): Promise<ProviderUsageReport[]> {
           const resetsIn = resetsAt && resetsAt > now ? formatDuration(resetsAt - now) : undefined;
 
           return {
-            label: l.label,
+            label: formatLimitLabel(l.label, l.window?.label),
             used,
             limit,
             remaining,

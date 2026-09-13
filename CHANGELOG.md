@@ -3,6 +3,19 @@
 All notable changes to PiShift are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.9.26] — 2026-09-13
+
+### Added
+- Added horizontal and vertical thinking-effort sliders alongside the original list control. The horizontal slider is the launch default; all three modes are selectable in Settings.
+- Fresh installs now start from the curated Vesper configuration, including model favorites, usage-tracker presets, activity colors, terminal presentation, and layout defaults without copying local paths or session state.
+
+### Changed
+- Usage quota labels now include their reporting window where needed, so otherwise identical provider quotas remain distinguishable.
+
+### Fixed
+- Usage-tracker preset matching now falls back to the provider and base quota label when the reporting window changes.
+- Moved the provider-usage popover out of the dock’s composited layer so its frosted-glass backdrop renders correctly and follows its dock or header trigger.
+
 ## [1.9.25] — 2026-09-12
 
 ### Changed

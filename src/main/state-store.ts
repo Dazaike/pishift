@@ -2,12 +2,17 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import type { PersistedState, TabState } from "../shared/ipc";
+import { DEFAULT_PERSISTED_SETTINGS } from "../shared/defaults";
 import {
   normalizeSettingsSectionCollapsed,
   normalizeUsageTrackerSettings,
 } from "../shared/usage-tracker";
 import { clampTabRailHoverReachPx, isTabLayout, isTabRailSide } from "../shared/tab-layout";
-
+import {
+  isPasteMarkerPaint,
+  isPasteMarkerStyle,
+  isPasteModeSetting,
+} from "../shared/paste-attach";
 const DEBOUNCE_MS = 500;
 
 /** Window bounds, tab list and settings, persisted to `userData/state.json`. */
@@ -22,7 +27,21 @@ export class StateStore {
   }
 
   private read(): PersistedState {
+    const defaults = DEFAULT_PERSISTED_SETTINGS;
     try {
+      if (!existsSync(this.file)) {
+        const initial: PersistedState = {
+          ...defaults,
+          tabs: [{ cwd: this.homeDir }],
+          activeIndex: 0,
+        };
+        try {
+          mkdirSync(dirname(this.file), { recursive: true });
+          writeFileSync(this.file, JSON.stringify(initial, null, 2), "utf8");
+        } catch {}
+        return initial;
+      }
+
       const raw = JSON.parse(readFileSync(this.file, "utf8")) as Partial<PersistedState>;
       const tabs = Array.isArray(raw.tabs)
         ? raw.tabs
@@ -41,71 +60,119 @@ export class StateStore {
         bounds: raw.bounds,
         ompPath: raw.ompPath,
         autoUpdateOmpOnOpen:
-          typeof raw.autoUpdateOmpOnOpen === "boolean" ? raw.autoUpdateOmpOnOpen : undefined,
-        themeName: raw.themeName,
+          typeof raw.autoUpdateOmpOnOpen === "boolean"
+            ? raw.autoUpdateOmpOnOpen
+            : defaults.autoUpdateOmpOnOpen,
+        themeName: raw.themeName ?? defaults.themeName,
         theme: raw.theme,
-        fontFamily: typeof raw.fontFamily === "string" ? raw.fontFamily : undefined,
+        fontFamily: typeof raw.fontFamily === "string" ? raw.fontFamily : defaults.fontFamily,
         fontSize:
           typeof raw.fontSize === "number" && Number.isFinite(raw.fontSize)
             ? raw.fontSize
-            : undefined,
-        // Whitelisted read: keys omitted here are silently dropped on restart.
+            : defaults.fontSize,
         scrollSteps:
           typeof raw.scrollSteps === "number" && Number.isFinite(raw.scrollSteps)
             ? raw.scrollSteps
-            : undefined,
+            : defaults.scrollSteps,
         defaultViewMode:
           raw.defaultViewMode === "chat" || raw.defaultViewMode === "terminal"
             ? raw.defaultViewMode
-            : undefined,
+            : defaults.defaultViewMode,
         autoExpandTools:
-          typeof raw.autoExpandTools === "boolean" ? raw.autoExpandTools : undefined,
+          typeof raw.autoExpandTools === "boolean"
+            ? raw.autoExpandTools
+            : defaults.autoExpandTools,
         autoExpandReasoning:
-          typeof raw.autoExpandReasoning === "boolean" ? raw.autoExpandReasoning : undefined,
+          typeof raw.autoExpandReasoning === "boolean"
+            ? raw.autoExpandReasoning
+            : defaults.autoExpandReasoning,
         doneSoundEnabled:
-          typeof raw.doneSoundEnabled === "boolean" ? raw.doneSoundEnabled : undefined,
+          typeof raw.doneSoundEnabled === "boolean"
+            ? raw.doneSoundEnabled
+            : defaults.doneSoundEnabled,
         doneSoundVolume:
           typeof raw.doneSoundVolume === "number" && Number.isFinite(raw.doneSoundVolume)
             ? raw.doneSoundVolume
-            : undefined,
-        favoriteModels: Array.isArray(raw.favoriteModels) ? raw.favoriteModels : undefined,
-        customModels: Array.isArray(raw.customModels) ? raw.customModels : undefined,
-        showFavoritesOnly: raw.showFavoritesOnly,
-        showUsageInHeader: raw.showUsageInHeader,
-        activityColors: raw.activityColors,
-        activityColorsOnTabs: raw.activityColorsOnTabs,
-        todoPanelVisible: raw.todoPanelVisible,
-        todoPanelMode: raw.todoPanelMode,
+            : defaults.doneSoundVolume,
+        favoriteModels: Array.isArray(raw.favoriteModels)
+          ? raw.favoriteModels
+          : defaults.favoriteModels,
+        customModels: Array.isArray(raw.customModels) ? raw.customModels : defaults.customModels,
+        showFavoritesOnly:
+          typeof raw.showFavoritesOnly === "boolean"
+            ? raw.showFavoritesOnly
+            : defaults.showFavoritesOnly,
+        showUsageInHeader:
+          typeof raw.showUsageInHeader === "boolean"
+            ? raw.showUsageInHeader
+            : defaults.showUsageInHeader,
+        activityColors: raw.activityColors ?? defaults.activityColors,
+        activityColorsOnTabs:
+          typeof raw.activityColorsOnTabs === "boolean"
+            ? raw.activityColorsOnTabs
+            : defaults.activityColorsOnTabs,
+        todoPanelVisible:
+          typeof raw.todoPanelVisible === "boolean"
+            ? raw.todoPanelVisible
+            : defaults.todoPanelVisible,
+        todoPanelMode: raw.todoPanelMode ?? defaults.todoPanelMode,
         recentFolders: Array.isArray(raw.recentFolders)
           ? raw.recentFolders.filter((f): f is string => typeof f === "string" && existsSync(f))
           : undefined,
-        hideTopButtonLabels: typeof raw.hideTopButtonLabels === "boolean" ? raw.hideTopButtonLabels : undefined,
-        hideBottomButtonLabels: typeof raw.hideBottomButtonLabels === "boolean" ? raw.hideBottomButtonLabels : undefined,
-        collapseTopBarToMenu: typeof raw.collapseTopBarToMenu === "boolean" ? raw.collapseTopBarToMenu : undefined,
+        hideTopButtonLabels:
+          typeof raw.hideTopButtonLabels === "boolean"
+            ? raw.hideTopButtonLabels
+            : defaults.hideTopButtonLabels,
+        hideBottomButtonLabels:
+          typeof raw.hideBottomButtonLabels === "boolean"
+            ? raw.hideBottomButtonLabels
+            : defaults.hideBottomButtonLabels,
+        collapseTopBarToMenu:
+          typeof raw.collapseTopBarToMenu === "boolean"
+            ? raw.collapseTopBarToMenu
+            : defaults.collapseTopBarToMenu,
         panelPosition:
           raw.panelPosition === "center" ||
           raw.panelPosition === "top-center" ||
           raw.panelPosition === "bottom-center" ||
           raw.panelPosition === "top-right"
             ? raw.panelPosition
-            : undefined,
-        tabPreviews: typeof raw.tabPreviews === "boolean" ? raw.tabPreviews : undefined,
-        tabLayout: isTabLayout(raw.tabLayout) ? raw.tabLayout : undefined,
-        tabRailSide: isTabRailSide(raw.tabRailSide) ? raw.tabRailSide : undefined,
+            : defaults.panelPosition,
+        tabPreviews:
+          typeof raw.tabPreviews === "boolean" ? raw.tabPreviews : defaults.tabPreviews,
+        tabLayout: isTabLayout(raw.tabLayout) ? raw.tabLayout : defaults.tabLayout,
+        tabRailSide: isTabRailSide(raw.tabRailSide) ? raw.tabRailSide : defaults.tabRailSide,
         tabRailHoverReachPx:
           raw.tabRailHoverReachPx !== undefined
             ? clampTabRailHoverReachPx(raw.tabRailHoverReachPx)
-            : undefined,
+            : defaults.tabRailHoverReachPx,
+        thinkingControlStyle:
+          raw.thinkingControlStyle === "horizontal" ||
+          raw.thinkingControlStyle === "vertical" ||
+          raw.thinkingControlStyle === "list"
+            ? raw.thinkingControlStyle
+            : defaults.thinkingControlStyle,
+        pasteMode: isPasteModeSetting(raw.pasteMode) ? raw.pasteMode : defaults.pasteMode,
+        pasteMarkerStyle: isPasteMarkerStyle(raw.pasteMarkerStyle)
+          ? raw.pasteMarkerStyle
+          : defaults.pasteMarkerStyle,
+        pasteMarkerPaint: isPasteMarkerPaint(raw.pasteMarkerPaint)
+          ? raw.pasteMarkerPaint
+          : defaults.pasteMarkerPaint,
+        pasteMarkerPulse:
+          typeof raw.pasteMarkerPulse === "boolean"
+            ? raw.pasteMarkerPulse
+            : defaults.pasteMarkerPulse,
         splitRatio:
           typeof raw.splitRatio === "number" && raw.splitRatio >= 0.1 && raw.splitRatio <= 0.9
             ? raw.splitRatio
             : undefined,
         usageTracker: raw.usageTracker
           ? normalizeUsageTrackerSettings(raw.usageTracker)
-          : undefined,
+          : defaults.usageTracker,
         settingsSectionCollapsed: raw.settingsSectionCollapsed
           ? normalizeSettingsSectionCollapsed(raw.settingsSectionCollapsed)
-          : undefined,
+          : defaults.settingsSectionCollapsed,
         tabs,
         activeIndex: Math.min(
           Math.max(raw.activeIndex ?? 0, 0),
@@ -113,7 +180,11 @@ export class StateStore {
         ),
       };
     } catch {
-      return { tabs: [], activeIndex: 0 };
+      return {
+        ...defaults,
+        tabs: [{ cwd: this.homeDir }],
+        activeIndex: 0,
+      };
     }
   }
 

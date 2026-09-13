@@ -873,9 +873,7 @@ export const THEME_PRESETS: readonly ThemePreset[] = [
     },
   },
 ];
-
-export const DEFAULT_THEME_NAME = "Tokyo Night";
-
+export const DEFAULT_THEME_NAME = "Vesper";
 export function getThemeByName(name?: string): ThemePreset {
   const found = THEME_PRESETS.find((t) => t.name.toLowerCase() === (name ?? "").toLowerCase());
   return found ?? THEME_PRESETS[0]!;
