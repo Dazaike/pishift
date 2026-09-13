@@ -67,6 +67,21 @@ export function usageTrackerQuotaKey(quota: Pick<UsageTrackerQuota, "provider" |
   return `${quota.provider}\u0000${quota.account ?? ""}\u0000${quota.label}`;
 }
 
+/**
+ * Format limit labels to disambiguate identical labels (e.g. Google Antigravity's
+ * multiple "Usage (Google)" quotas for 5-hour vs weekly windows).
+ * Appends window label in parentheses if not already present in the label.
+ */
+export function formatLimitLabel(label: string, windowLabel?: string): string {
+  const cleanLabel = (label || "").trim();
+  const cleanWindow = (windowLabel || "").trim();
+  if (!cleanWindow) return cleanLabel;
+  if (cleanLabel.toLowerCase().includes(cleanWindow.toLowerCase())) {
+    return cleanLabel;
+  }
+  return `${cleanLabel} (${cleanWindow})`;
+}
+
 export function isUsageTrackerStyle(value: unknown): value is UsageTrackerStyle {
   return value === "bar" || value === "circle" || value === "battery";
 }

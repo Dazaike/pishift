@@ -131,7 +131,19 @@ export class UsageTracker {
       }
     }
     return this.settings.quotas.flatMap((quota) => {
-      const matched = limits.get(usageTrackerQuotaKey(quota));
+      let matched = limits.get(usageTrackerQuotaKey(quota));
+      if (!matched) {
+        for (const candidate of limits.values()) {
+          if (
+            candidate.report.provider === quota.provider &&
+            (candidate.report.account ?? "") === (quota.account ?? "") &&
+            candidate.limit.label.startsWith(`${quota.label} (`)
+          ) {
+            matched = candidate;
+            break;
+          }
+        }
+      }
       return quota.enabled && matched ? [{ quota, ...matched }] : [];
     });
   }

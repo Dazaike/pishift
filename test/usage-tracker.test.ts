@@ -6,6 +6,7 @@ import type { ProviderUsageReport } from "../src/shared/ipc";
 import {
   DEFAULT_USAGE_TRACKER_SETTINGS,
   MIN_USAGE_TRACKER_REFRESH_MS,
+  formatLimitLabel,
   normalizeSettingsSectionCollapsed,
   normalizeUsageTrackerSettings,
   usageTrackerDelay,
@@ -57,6 +58,31 @@ describe("usage tracker settings", () => {
     expect(normalizeUsageTrackerSettings({ orientation: "auto" }).orientation).toBe("auto");
     expect(normalizeUsageTrackerSettings({ orientation: "invalid" as unknown as "auto" }).orientation).toBe("auto");
     expect(normalizeUsageTrackerSettings({}).orientation).toBe("auto");
+  });
+});
+
+describe("formatLimitLabel", () => {
+  it("returns clean label when windowLabel is absent or empty", () => {
+    expect(formatLimitLabel("Usage (Google)")).toBe("Usage (Google)");
+    expect(formatLimitLabel("Usage (Google)", "")).toBe("Usage (Google)");
+    expect(formatLimitLabel("Usage (Google)", "   ")).toBe("Usage (Google)");
+  });
+
+  it("keeps label unchanged when it already includes the window label", () => {
+    expect(formatLimitLabel("Claude 5 Hour", "5 Hour")).toBe("Claude 5 Hour");
+    expect(formatLimitLabel("Claude 7 Day", "7 Day")).toBe("Claude 7 Day");
+    expect(formatLimitLabel("5 hours", "5 hours")).toBe("5 hours");
+    expect(formatLimitLabel("SuperGrok Weekly Credits", "Weekly")).toBe("SuperGrok Weekly Credits");
+    expect(formatLimitLabel("Grok Build (Weekly)", "Weekly")).toBe("Grok Build (Weekly)");
+    expect(formatLimitLabel("Claude 5 hour", "5 Hour")).toBe("Claude 5 hour");
+  });
+
+  it("appends window label in parentheses when not in the label", () => {
+    expect(formatLimitLabel("Usage (Google)", "5 Hour")).toBe("Usage (Google) (5 Hour)");
+    expect(formatLimitLabel("Usage (Google)", "Weekly")).toBe("Usage (Google) (Weekly)");
+    expect(formatLimitLabel("Usage (Anthropic)", "Weekly")).toBe("Usage (Anthropic) (Weekly)");
+    expect(formatLimitLabel("Usage (Anthropic)", "5 Hour")).toBe("Usage (Anthropic) (5 Hour)");
+    expect(formatLimitLabel("Usage (OpenAI)", "5 Hour")).toBe("Usage (OpenAI) (5 Hour)");
   });
 });
 
@@ -400,5 +426,68 @@ describe("usage tracker vertical orientation", () => {
     expect(tracker.el.classList.contains("vertical")).toBe(false);
 
     tracker.destroy();
+  });
+});
+
+describe("windowed quota matching and differentiation", () => {
+  it("differentiates 5 Hour and Weekly quotas for Google Antigravity and supports legacy fallback", async () => {
+    const sampleReports: ProviderUsageReport[] = [
+      {
+        provider: "google-antigravity",
+        providerName: "Google Antigravity",
+        limits: [
+          { label: "Usage (Google) (5 Hour)", used: 39.3, limit: 100, remaining: 60.7, unit: "percent", usedPercent: 39 },
+          { label: "Usage (Google) (Weekly)", used: 6.6, limit: 100, remaining: 93.4, unit: "percent", usedPercent: 7 },
+        ],
+      },
+    ];
+
+    // 1. Explicit selection of 5 Hour vs Weekly
+    const tracker = new UsageTracker({
+      getProviderUsage: async () => sampleReports,
+      settings: {
+        enabled: true,
+        refreshIntervalMs: null,
+        quotas: [
+          { provider: "google-antigravity", label: "Usage (Google) (5 Hour)", enabled: true, style: "bar" },
+          { provider: "google-antigravity", label: "Usage (Google) (Weekly)", enabled: true, style: "bar" },
+        ],
+        providerIconUrls: {},
+        iconPlacement: "inside",
+        showPercent: true,
+        orientation: "horizontal",
+      },
+      onReports: vi.fn(),
+    });
+
+    await tracker.refresh();
+    const items = tracker.el.querySelectorAll(".usage-tracker-item");
+    expect(items.length).toBe(2);
+    expect(items[0].getAttribute("aria-label")).toContain("Usage (Google) (5 Hour): 39% used");
+    expect(items[1].getAttribute("aria-label")).toContain("Usage (Google) (Weekly): 7% used");
+    tracker.destroy();
+
+    // 2. Legacy un-windowed quota fallback matches 5 Hour (first candidate)
+    const legacyTracker = new UsageTracker({
+      getProviderUsage: async () => sampleReports,
+      settings: {
+        enabled: true,
+        refreshIntervalMs: null,
+        quotas: [
+          { provider: "google-antigravity", label: "Usage (Google)", enabled: true, style: "bar" },
+        ],
+        providerIconUrls: {},
+        iconPlacement: "inside",
+        showPercent: true,
+        orientation: "horizontal",
+      },
+      onReports: vi.fn(),
+    });
+
+    await legacyTracker.refresh();
+    const legacyItems = legacyTracker.el.querySelectorAll(".usage-tracker-item");
+    expect(legacyItems.length).toBe(1);
+    expect(legacyItems[0].getAttribute("aria-label")).toContain("Usage (Google) (5 Hour): 39% used");
+    legacyTracker.destroy();
   });
 });

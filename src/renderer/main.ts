@@ -18,6 +18,7 @@ import {
   type PendingAsk,
   type ProviderUsageReport,
   type TabState,
+  type ThinkingControlStyle,
   type ViewMode,
   type TodoPhase,
 } from "../shared/ipc";
@@ -44,6 +45,7 @@ import {
   type PasteMarkerPaint,
   type PasteMarkerStyle,
 } from "../shared/paste-attach";
+import { DEFAULT_PERSISTED_SETTINGS } from "../shared/defaults";
 import {
   FONT_FAMILY,
   FONT_SIZE,
@@ -256,52 +258,56 @@ let sessionCounter = 0;
 const bySession = new Map<string, Tab>();
 let active: Tab | null = null;
 let draggedTab: Tab | null = null;
-let currentPreset: ThemePreset = getThemeByName(startupAppearance.themeName);
-let favoriteModels: string[] = ["gemini-3.7-flash", "claude-3-7-sonnet", "gpt-4o"];
-let customModels: CustomModelConfig[] = [];
+let currentPreset: ThemePreset = getThemeByName(startupAppearance.themeName ?? DEFAULT_PERSISTED_SETTINGS.themeName);
+let favoriteModels: string[] = [...(DEFAULT_PERSISTED_SETTINGS.favoriteModels ?? ["gemini-3.7-flash", "claude-3-7-sonnet", "gpt-4o"])];
+let customModels: CustomModelConfig[] = [...(DEFAULT_PERSISTED_SETTINGS.customModels ?? [])];
 let installedModels: InstalledModel[] = [];
-let showFavoritesOnly = false;
-let showUsageInHeader = startupAppearance.showUsageInHeader;
-let customFontFamily = "";
+let showFavoritesOnly = DEFAULT_PERSISTED_SETTINGS.showFavoritesOnly ?? false;
+let showUsageInHeader = startupAppearance.showUsageInHeader ?? DEFAULT_PERSISTED_SETTINGS.showUsageInHeader ?? false;
+let customFontFamily = DEFAULT_PERSISTED_SETTINGS.fontFamily ?? "";
 /** Terminal zoom (xterm font px); restored across app restarts. */
-let terminalFontSize = FONT_SIZE;
+let terminalFontSize = DEFAULT_PERSISTED_SETTINGS.fontSize ?? FONT_SIZE;
 const KNOWN_ACTIVITIES: readonly ControlBridgeActivity[] = ["idle", ...GLOW_ACTIVITIES];
-let activityColors: Record<GlowActivity, string> = { ...DEFAULT_ACTIVITY_COLORS };
-let activityColorsOnTabs = false;
-let todoPanelVisible = false;
-let todoPanelMode: TodoPanelMode = "overlay";
+let activityColors: Record<GlowActivity, string> = { ...DEFAULT_ACTIVITY_COLORS, ...(DEFAULT_PERSISTED_SETTINGS.activityColors ?? {}) };
+let activityColorsOnTabs = DEFAULT_PERSISTED_SETTINGS.activityColorsOnTabs ?? true;
+let todoPanelVisible = DEFAULT_PERSISTED_SETTINGS.todoPanelVisible ?? false;
+let todoPanelMode: TodoPanelMode = DEFAULT_PERSISTED_SETTINGS.todoPanelMode ?? "overlay";
 const ELAPSED_MIN_MS = 5000;
-let hideTopButtonLabels = startupAppearance.hideTopButtonLabels;
-let hideBottomButtonLabels = startupAppearance.hideBottomButtonLabels;
-let collapseTopBarToMenu = startupAppearance.collapseTopBarToMenu;
-let autoUpdateOmpOnOpen = false;
+let hideTopButtonLabels = startupAppearance.hideTopButtonLabels ?? DEFAULT_PERSISTED_SETTINGS.hideTopButtonLabels ?? false;
+let hideBottomButtonLabels = startupAppearance.hideBottomButtonLabels ?? DEFAULT_PERSISTED_SETTINGS.hideBottomButtonLabels ?? false;
+let collapseTopBarToMenu = startupAppearance.collapseTopBarToMenu ?? DEFAULT_PERSISTED_SETTINGS.collapseTopBarToMenu ?? true;
+let autoUpdateOmpOnOpen = DEFAULT_PERSISTED_SETTINGS.autoUpdateOmpOnOpen ?? false;
 let ompUpdateAvailable = false;
 let ompLatestVersion: string | null = null;
 let ompUpdating = false;
-let panelPosition: PanelPosition = "top-right";
+let panelPosition: PanelPosition = DEFAULT_PERSISTED_SETTINGS.panelPosition ?? "top-right";
 /** View mode new tabs open in; per-tab mode diverges freely from it. */
-let defaultViewMode: ViewMode = "terminal";
+let defaultViewMode: ViewMode = DEFAULT_PERSISTED_SETTINGS.defaultViewMode ?? "terminal";
+/** Thinking level selector presentation: horizontal slider (default), vertical slider, or original list menu. */
+let thinkingControlStyle: ThinkingControlStyle = "horizontal";
 /** Whether chat tool groups open automatically. */
-let autoExpandTools = false;
+let autoExpandTools = DEFAULT_PERSISTED_SETTINGS.autoExpandTools ?? true;
 /** Whether completed transcript reasoning rows open automatically. */
-let autoExpandReasoning = true;
-let terminalScrollSteps = DEFAULT_SCROLL_STEPS;
-let pasteMode: PasteModeSetting = "ask";
-let pasteMarkerStyle: PasteMarkerStyle = "content";
-let pasteMarkerPaint: PasteMarkerPaint = "pill";
-let pasteMarkerPulse = true;
-let doneSoundEnabled = true;
-let doneSoundVolume = DEFAULT_DONE_SOUND_VOLUME;
-let tabPreviewsEnabled = startupAppearance.tabPreviews ?? true;
-let usageTrackerSettings: UsageTrackerSettings = {
-  ...DEFAULT_USAGE_TRACKER_SETTINGS,
-  quotas: [],
-  providerIconUrls: {},
-  iconPlacement: "inside",
-  showPercent: false,
-};
+let autoExpandReasoning = DEFAULT_PERSISTED_SETTINGS.autoExpandReasoning ?? true;
+let terminalScrollSteps = DEFAULT_PERSISTED_SETTINGS.scrollSteps ?? DEFAULT_SCROLL_STEPS;
+let pasteMode: PasteModeSetting = DEFAULT_PERSISTED_SETTINGS.pasteMode ?? "ask";
+let pasteMarkerStyle: PasteMarkerStyle = DEFAULT_PERSISTED_SETTINGS.pasteMarkerStyle ?? "content";
+let pasteMarkerPaint: PasteMarkerPaint = DEFAULT_PERSISTED_SETTINGS.pasteMarkerPaint ?? "pill";
+let pasteMarkerPulse = DEFAULT_PERSISTED_SETTINGS.pasteMarkerPulse ?? true;
+let doneSoundEnabled = DEFAULT_PERSISTED_SETTINGS.doneSoundEnabled ?? true;
+let doneSoundVolume = DEFAULT_PERSISTED_SETTINGS.doneSoundVolume ?? DEFAULT_DONE_SOUND_VOLUME;
+let tabPreviewsEnabled = startupAppearance.tabPreviews ?? DEFAULT_PERSISTED_SETTINGS.tabPreviews ?? true;
+let usageTrackerSettings: UsageTrackerSettings = DEFAULT_PERSISTED_SETTINGS.usageTracker
+  ? { ...DEFAULT_PERSISTED_SETTINGS.usageTracker }
+  : {
+      ...DEFAULT_USAGE_TRACKER_SETTINGS,
+      quotas: [],
+      providerIconUrls: {},
+      iconPlacement: "inside",
+      showPercent: false,
+    };
 let settingsSectionCollapsed: Partial<Record<SettingsSectionId, boolean>> = {
-  ...DEFAULT_SETTINGS_SECTION_COLLAPSED,
+  ...DEFAULT_PERSISTED_SETTINGS.settingsSectionCollapsed,
 };
 let splitMode = false;
 let activePane: "primary" | "secondary" = "primary";
@@ -325,9 +331,9 @@ function applyPasteMarkerPaint(): void {
   document.body.dataset.pastePaint = pasteMarkerPaint;
 }
 
-let tabLayout: TabLayout = "vertical";
-let tabRailSide: TabRailSide = DEFAULT_TAB_RAIL_SIDE;
-let tabRailHoverReachPx = DEFAULT_TAB_RAIL_HOVER_REACH_PX;
+let tabLayout: TabLayout = DEFAULT_PERSISTED_SETTINGS.tabLayout ?? "vertical";
+let tabRailSide: TabRailSide = DEFAULT_PERSISTED_SETTINGS.tabRailSide ?? DEFAULT_TAB_RAIL_SIDE;
+let tabRailHoverReachPx = DEFAULT_PERSISTED_SETTINGS.tabRailHoverReachPx ?? DEFAULT_TAB_RAIL_HOVER_REACH_PX;
 
 function applyTabLayout(layout: TabLayout): void {
   tabLayout = layout;
@@ -943,6 +949,7 @@ function persist(): void {
     todoPanelVisible,
     panelPosition,
     defaultViewMode,
+    thinkingControlStyle,
     autoExpandTools,
     autoExpandReasoning,
     collapseTopBarToMenu,
@@ -2624,14 +2631,6 @@ const dock = new Dock({
         },
         () => usageTracker!.refresh(),
       );
-      const usageWrap = document.getElementById("dock-usage-wrap");
-      if (usageWrap) {
-        usageWrap.appendChild(usageModal.el);
-      } else {
-        const dockControls = document.getElementById("dock-controls");
-        if (dockControls) dockControls.appendChild(usageModal.el);
-        else document.body.appendChild(usageModal.el);
-      }
     }
     usageModal.toggle();
   },
@@ -3070,14 +3069,6 @@ function dockHooksUsage(): void {
       },
       () => usageTracker!.refresh(),
     );
-    const usageWrap = document.getElementById("dock-usage-wrap");
-    if (usageWrap) {
-      usageWrap.appendChild(usageModal.el);
-    } else {
-      const dockControls = document.getElementById("dock-controls");
-      if (dockControls) dockControls.appendChild(usageModal.el);
-      else document.body.appendChild(usageModal.el);
-    }
   }
   usageModal.toggle();
 }
@@ -3239,6 +3230,12 @@ function openSettingsModal(): void {
         defaultViewMode = mode;
         persist();
       },
+      thinkingControlStyle,
+      onThinkingControlStyleChange: (style) => {
+        thinkingControlStyle = style;
+        dock.setThinkingControlStyle(style);
+        persist();
+      },
       onToggleAutoExpandTools: (enabled) => {
         autoExpandTools = enabled;
         for (const tab of tabs) tab.chat?.setAutoExpandTools(enabled);
@@ -3339,6 +3336,7 @@ function openSettingsModal(): void {
     collapseTopBarToMenu,
     panelPosition,
     defaultViewMode,
+    thinkingControlStyle,
     autoExpandTools,
     autoExpandReasoning,
     tabPreviews: tabPreviewsEnabled,
@@ -3606,6 +3604,9 @@ async function boot(): Promise<void> {
   if (state.defaultViewMode === "chat" || state.defaultViewMode === "terminal") {
     defaultViewMode = state.defaultViewMode;
   }
+  // Launching the app defaults to horizontal slider per user requirement
+  thinkingControlStyle = "horizontal";
+  dock.setThinkingControlStyle("horizontal");
   if (typeof state.autoExpandTools === "boolean") {
     autoExpandTools = state.autoExpandTools;
   }

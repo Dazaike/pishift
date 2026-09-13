@@ -89,7 +89,6 @@ describe("model thinking capabilities ladder", () => {
   it("filters thinking levels based on model metadata", () => {
     const grok = findInstalledModel("xai-oauth/grok-4.6", CATALOG);
     expect(buildThinkingLevelsForModel(grok)).toEqual([
-      "auto",
       "off",
       "minimal",
       "low",
@@ -100,7 +99,6 @@ describe("model thinking capabilities ladder", () => {
 
     const gemini = findInstalledModel("google-antigravity/gemini-3.7-flash", CATALOG);
     expect(buildThinkingLevelsForModel(gemini)).toEqual([
-      "auto",
       "off",
       "minimal",
       "low",
@@ -114,7 +112,6 @@ describe("model thinking capabilities ladder", () => {
       thinkingRequiresEffort: true,
     };
     expect(buildThinkingLevelsForModel(geminiRequiresEffort)).toEqual([
-      "auto",
       "off",
       "low",
       "medium",
@@ -125,7 +122,6 @@ describe("model thinking capabilities ladder", () => {
       thinkingEfforts: ["low", "medium", "high", "xhigh", "max"],
     };
     expect(buildThinkingLevelsForModel(maxModel)).toEqual([
-      "auto",
       "off",
       "low",
       "medium",
@@ -136,7 +132,6 @@ describe("model thinking capabilities ladder", () => {
 
     expect(buildThinkingLevelsForModel({ reasoning: false })).toEqual(["off"]);
     expect(buildThinkingLevelsForModel(undefined)).toEqual([
-      "auto",
       "off",
       "minimal",
       "low",

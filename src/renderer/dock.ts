@@ -1,4 +1,4 @@
-import { IMAGE_EXT, type ControlBridgeActivity, type ImagePreview, type ViewMode } from "../shared/ipc";
+import { IMAGE_EXT, type ControlBridgeActivity, type ImagePreview, type ThinkingControlStyle, type ViewMode } from "../shared/ipc";
 import type { KeyLike } from "../shared/kitty-keys";
 import { DockGlow } from "./dock-glow";
 import { filePaths } from "./dnd";
@@ -67,7 +67,6 @@ export type PastePayload = Omit<PasteItem, "id" | "marker">;
 
 /** Universal thinking ladder exposed for every model. */
 export const DEFAULT_THINKING_LEVELS = [
-  "auto",
   "off",
   "minimal",
   "low",
@@ -135,7 +134,7 @@ export function buildThinkingLevelsForModel(opts?: {
       supportedTokens.add(normalizeThinkingToken(raw));
     }
 
-    const out: string[] = ["auto", "off"];
+    const out: string[] = ["off"];
 
     const ladder = ["minimal", "low", "medium", "high", "xhigh", "max"] as const;
     for (const step of ladder) {
@@ -169,6 +168,7 @@ export function clampThinkingToLevels(level: string, levels: readonly string[]):
 
   // Only when the preferred token is absent from this model's ladder.
   const fallbacks: Record<string, string[]> = {
+    auto: ["off", "minimal", "low"],
     max: ["xhigh", "high", "medium", "low"],
     maximum: ["max", "xhigh", "high", "medium", "low"],
     xhigh: ["high", "medium", "low", "max"],
@@ -183,7 +183,7 @@ export function clampThinkingToLevels(level: string, levels: readonly string[]):
   }
 
   // Nearest by global rank.
-  const rank = ["auto", "off", "minimal", "low", "medium", "high", "xhigh", "max"];
+  const rank = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
   const want = rank.indexOf(token);
   if (want < 0) return levels[Math.min(1, levels.length - 1)] ?? levels[0]!;
   let best = levels[0]!;
@@ -549,7 +549,7 @@ export class Dock {
     this.lightbox.open(src, "Attachment");
   }
 
-  /** Update supported thinking ladder for the active model (used by cycle). */
+  /** Update supported thinking ladder for the active model (used by the slider). */
   setThinkingLevels(levels: readonly string[], current?: string): void {
     const next = levels.length > 0 ? [...levels] : ["off"];
     this.thinkingLevels = next;
@@ -557,7 +557,7 @@ export class Dock {
     this.thinkingBtn.title =
       next.length <= 1
         ? "This model has no adjustable thinking levels"
-        : `Click to cycle · ${next.map(formatThinkingLevel).join(" → ")}`;
+        : `Click to open · drag to set · ${next.map(formatThinkingLevel).join(" → ")}`;
     this.setThinkingLevel(current ?? this.thinkingLevel);
   }
 
@@ -565,6 +565,9 @@ export class Dock {
     return this.thinkingLevels;
   }
 
+  setThinkingControlStyle(style: ThinkingControlStyle): void {
+    this.thinkingMenu.setStyle(style);
+  }
   setThinkingLevel(level: string): void {
     if (!level && level !== "off") return;
     const token = clampThinkingToLevels(level, this.thinkingLevels);

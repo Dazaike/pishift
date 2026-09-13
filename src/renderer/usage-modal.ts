@@ -25,7 +25,7 @@ export class UsageModal {
     this.el.hidden = true;
     this.buildChrome();
     this.paintBody({ entrance: false });
-
+    document.body.appendChild(this.el);
     document.addEventListener("mousedown", (ev) => {
       if (!this.el.hidden && !this.el.contains(ev.target as Node)) {
         const usageBtn = document.getElementById("dock-usage-btn");
@@ -43,6 +43,10 @@ export class UsageModal {
     document.addEventListener("keydown", (ev) => {
       if (!this.el.hidden && ev.key === "Escape") this.close();
     });
+
+    window.addEventListener("resize", () => {
+      if (this.isOpen) this.position();
+    });
   }
 
   get isOpen(): boolean {
@@ -58,12 +62,40 @@ export class UsageModal {
   }
 
   async open(): Promise<void> {
+    this.position();
+    requestAnimationFrame(() => this.position());
     popoverMotion.animatePopoverOpen(this.el);
     if (!this.hasLoaded) {
       await this.refresh();
     } else {
       this.paintBody({ entrance: true });
     }
+    requestAnimationFrame(() => this.position());
+  }
+
+  private position(): void {
+    const dockBtn = document.getElementById("dock-usage-btn");
+    const headerBtn = document.getElementById("header-usage");
+    const anchor = (dockBtn && dockBtn.offsetParent !== null) ? dockBtn : headerBtn;
+    if (!anchor) return;
+
+    const anchorRect = anchor.getBoundingClientRect();
+    const menuW = this.el.offsetWidth || 340;
+    const menuH = this.el.offsetHeight || 380;
+
+    let left = anchorRect.left + (anchorRect.width - menuW) / 2;
+    left = Math.max(8, Math.min(left, window.innerWidth - menuW - 8));
+
+    let top: number;
+    if (anchorRect.top < window.innerHeight / 2) {
+      top = anchorRect.bottom + 10;
+    } else {
+      top = anchorRect.top - menuH - 10;
+      if (top < 8) top = Math.min(anchorRect.bottom + 10, window.innerHeight - menuH - 8);
+    }
+
+    this.el.style.left = `${Math.round(left)}px`;
+    this.el.style.top = `${Math.round(top)}px`;
   }
 
   updateReports(reports: ProviderUsageReport[]): void {

@@ -7,6 +7,7 @@ import {
   type OmpUpdateCheckResult,
   type ProviderLimit,
   type ProviderUsageReport,
+  type ThinkingControlStyle,
   type ViewMode,
 } from "../shared/ipc";
 import {
@@ -71,6 +72,8 @@ export class SettingsModal {
   private tabLayout: TabLayout;
   private tabRailSide: TabRailSide;
   private tabRailHoverReachPx: number;
+  private thinkingControlStyle: ThinkingControlStyle;
+  private onThinkingControlStyleChange: (style: ThinkingControlStyle) => void;
   private usageTracker: UsageTrackerSettings;
   private usageReports: ProviderUsageReport[];
   private settingsSectionCollapsed: Partial<Record<SettingsSectionId, boolean>>;
@@ -153,6 +156,8 @@ export class SettingsModal {
     onTabRailSideChange: (side: TabRailSide) => void;
     tabRailHoverReachPx?: number | undefined;
     onTabRailHoverReachChange: (px: number) => void;
+    thinkingControlStyle?: ThinkingControlStyle | undefined;
+    onThinkingControlStyleChange: (style: ThinkingControlStyle) => void;
     initialScrollSteps: number | undefined;
     onScrollStepsChange: (steps: number) => void;
     pasteMode: PasteModeSetting | undefined;
@@ -218,6 +223,8 @@ export class SettingsModal {
     this.onTabLayoutChange = opts.onTabLayoutChange;
     this.onTabRailSideChange = opts.onTabRailSideChange;
     this.onTabRailHoverReachChange = opts.onTabRailHoverReachChange;
+    this.thinkingControlStyle = opts.thinkingControlStyle ?? "horizontal";
+    this.onThinkingControlStyleChange = opts.onThinkingControlStyleChange;
     this.scrollSteps = clampScrollSteps(opts.initialScrollSteps ?? DEFAULT_SCROLL_STEPS);
     this.onScrollStepsChange = opts.onScrollStepsChange;
     this.pasteMode = opts.pasteMode ?? "ask";
@@ -302,6 +309,7 @@ export class SettingsModal {
     usageTracker?: UsageTrackerSettings;
     usageReports?: ProviderUsageReport[];
     settingsSectionCollapsed?: Partial<Record<SettingsSectionId, boolean>>;
+    thinkingControlStyle?: ThinkingControlStyle;
   }): void {
     if (state.themeName) {
       this.currentPreset = getThemeByName(state.themeName);
@@ -383,6 +391,9 @@ export class SettingsModal {
     }
     if (state.settingsSectionCollapsed) {
       this.settingsSectionCollapsed = state.settingsSectionCollapsed;
+    }
+    if (state.thinkingControlStyle) {
+      this.thinkingControlStyle = state.thinkingControlStyle;
     }
   }
 
@@ -783,7 +794,41 @@ export class SettingsModal {
       this.onDefaultViewModeChange(this.defaultViewMode);
     });
     viewModeRow.append(viewModeLabel, viewModeSelect);
-    // Option 5c: Tab Layout presentation (Vertical Session Rail vs Horizontal Strip)
+
+    // Option 5b2: Thinking Level Control presentation toggles
+    const thinkingStyleRow = document.createElement("div");
+    thinkingStyleRow.className = "settings-pos-row";
+    const thinkingStyleLabel = document.createElement("label");
+    thinkingStyleLabel.className = "settings-pos-label";
+    thinkingStyleLabel.textContent = "Thinking Control";
+    thinkingStyleLabel.title = "Choose how the thinking level control is presented: original list menu, horizontal slider (default), or vertical slider.";
+
+    const thinkingStyleToggles = document.createElement("div");
+    thinkingStyleToggles.className = "settings-segmented-group";
+
+    const thinkingModes: { id: ThinkingControlStyle; label: string }[] = [
+      { id: "list", label: "Original List" },
+      { id: "horizontal", label: "Horizontal Slider" },
+      { id: "vertical", label: "Vertical Slider" },
+    ];
+
+    for (const mode of thinkingModes) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = `settings-segmented-btn${this.thinkingControlStyle === mode.id ? " active" : ""}`;
+      btn.textContent = mode.label;
+      btn.addEventListener("click", () => {
+        if (this.thinkingControlStyle === mode.id) return;
+        this.thinkingControlStyle = mode.id;
+        for (const sibling of thinkingStyleToggles.children) {
+          sibling.classList.remove("active");
+        }
+        btn.classList.add("active");
+        this.onThinkingControlStyleChange(mode.id);
+      });
+      thinkingStyleToggles.appendChild(btn);
+    }
+    thinkingStyleRow.append(thinkingStyleLabel, thinkingStyleToggles);
     const tabLayoutRow = document.createElement("div");
     tabLayoutRow.className = "settings-pos-row";
     const tabLayoutLabel = document.createElement("label");
@@ -1113,8 +1158,8 @@ export class SettingsModal {
       ompCheckRow,
       posRow,
       viewModeRow,
+      thinkingStyleRow,
       autoExpandToolsLabel,
-      tabLayoutRow,
       tabRailSideRow,
       tabRailHoverRow,
       autoExpandReasoningLabel,
@@ -1415,10 +1460,26 @@ export class SettingsModal {
 
     for (const quota of this.usageTracker.quotas) {
       const key = usageTrackerQuotaKey(quota);
-      const match = reportQuotas.get(key);
+      let match = reportQuotas.get(key);
+      let matchedKey = key;
+      if (!match) {
+        for (const [candKey, candidate] of reportQuotas) {
+          if (
+            !seenKeys.has(candKey) &&
+            candidate.report.provider === quota.provider &&
+            (candidate.report.account ?? "") === (quota.account ?? "") &&
+            candidate.limit.label.startsWith(`${quota.label} (`)
+          ) {
+            match = candidate;
+            matchedKey = candKey;
+            quota.label = candidate.limit.label;
+            break;
+          }
+        }
+      }
       if (match) {
-        orderedItems.push({ key, quota: { ...quota }, report: match.report, limit: match.limit });
-        seenKeys.add(key);
+        orderedItems.push({ key: matchedKey, quota: { ...quota }, report: match.report, limit: match.limit });
+        seenKeys.add(matchedKey);
       }
     }
 

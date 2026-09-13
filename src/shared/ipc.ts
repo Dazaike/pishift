@@ -114,11 +114,11 @@ export const GLOW_ACTIVITY_LABELS: Record<GlowActivity, string> = {
 };
 
 export const DEFAULT_ACTIVITY_COLORS: Record<GlowActivity, string> = {
-  waiting: "#94a3b8",
+  waiting: "#ff0059",
   thinking: "#c084fc",
-  responding: "#7aa2f7",
+  responding: "#f778d5",
   reading: "#38bdf8",
-  editing: "#fb923c",
+  editing: "#80ff00",
   running: "#4ade80",
   working: "#7aa2f7",
 };
@@ -399,9 +399,13 @@ export type PersistedState = {
   usageTracker?: UsageTrackerSettings;
   /** Persisted state of Settings accordion groups. */
   settingsSectionCollapsed?: Partial<Record<SettingsSectionId, boolean>>;
+  /** Thinking effort selector presentation: horizontal slider (default), vertical slider, or original list menu. */
+  thinkingControlStyle?: ThinkingControlStyle;
   tabs: TabState[];
   activeIndex: number;
 };
+
+export type ThinkingControlStyle = "horizontal" | "vertical" | "list";
 
 /** Downscaled preview of an attachment, produced in the main process. */
 export type ImagePreview = { dataUrl: string; width: number; height: number };
