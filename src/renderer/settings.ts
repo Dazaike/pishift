@@ -45,6 +45,7 @@ import {
   type PasteModeSetting,
 } from "../shared/paste-attach";
 import {
+  buildCombinedReports,
   MIN_USAGE_TRACKER_REFRESH_MS,
   USAGE_TRACKER_REFRESH_PRESETS,
   type SettingsSectionId,
@@ -1353,7 +1354,18 @@ export class SettingsModal {
     percentText.textContent = "Show percentage beside each tracker";
     percentLabel.append(percent, percentText);
 
-
+    const combineLabel = document.createElement("label");
+    combineLabel.className = "settings-check-label";
+    const combine = document.createElement("input");
+    combine.type = "checkbox";
+    combine.checked = this.usageTracker.combineAccounts ?? false;
+    combine.addEventListener("change", () => {
+      this.updateUsageTracker({ ...this.usageTracker, combineAccounts: combine.checked });
+      this.render();
+    });
+    const combineText = document.createElement("span");
+    combineText.textContent = "Combine multi-account usage (e.g. Anthropic, OpenAI)";
+    combineLabel.append(combine, combineText);
 
     const intervalRow = document.createElement("div");
     intervalRow.className = "settings-pos-row";
@@ -1429,14 +1441,19 @@ export class SettingsModal {
       orientationRow,
       iconPlacementRow,
       percentLabel,
+      combineLabel,
       intervalRow,
       customRow,
       refreshButton,
     );
 
+    const effectiveReports = this.usageTracker.combineAccounts
+      ? buildCombinedReports(this.usageReports)
+      : this.usageReports;
+
     // Collect all available quotas from reports
     const reportQuotas = new Map<string, { report: ProviderUsageReport; limit: ProviderLimit }>();
-    for (const report of this.usageReports) {
+    for (const report of effectiveReports) {
       if (report.limits.length === 0) continue;
       for (const limit of report.limits) {
         const key = usageTrackerQuotaKey({
@@ -1447,6 +1464,8 @@ export class SettingsModal {
         reportQuotas.set(key, { report, limit });
       }
     }
+
+    // Collect all available quotas from reports
 
     type QuotaItem = {
       key: string;
@@ -1462,6 +1481,20 @@ export class SettingsModal {
       const key = usageTrackerQuotaKey(quota);
       let match = reportQuotas.get(key);
       let matchedKey = key;
+      if (!match && this.usageTracker.combineAccounts) {
+        for (const [candKey, candidate] of reportQuotas) {
+          if (
+            !seenKeys.has(candKey) &&
+            candidate.report.provider === quota.provider &&
+            (candidate.limit.label === quota.label || candidate.limit.label.startsWith(`${quota.label} (`))
+          ) {
+            match = candidate;
+            matchedKey = candKey;
+            quota.label = candidate.limit.label;
+            break;
+          }
+        }
+      }
       if (!match) {
         for (const [candKey, candidate] of reportQuotas) {
           if (

@@ -164,6 +164,12 @@ export async function queryOmpUsage(): Promise<ProviderUsageReport[]> {
           provider: string;
           status?: string;
           account?: string;
+          metadata?: {
+            email?: string;
+            orgName?: string;
+            planType?: string;
+            accountId?: string;
+          };
           limits?: {
             label: string;
             amount?: { used?: number; limit?: number; remaining?: number; unit?: string; usedFraction?: number };
@@ -204,7 +210,10 @@ export async function queryOmpUsage(): Promise<ProviderUsageReport[]> {
           provider: r.provider,
           providerName: formatProviderName(r.provider),
           status: r.status,
-          account: r.account,
+          account: r.account ?? r.metadata?.email ?? r.metadata?.accountId,
+          email: r.metadata?.email,
+          orgName: r.metadata?.orgName,
+          planType: r.metadata?.planType,
           limits,
         };
       });

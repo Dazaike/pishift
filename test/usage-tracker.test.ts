@@ -6,6 +6,7 @@ import type { ProviderUsageReport } from "../src/shared/ipc";
 import {
   DEFAULT_USAGE_TRACKER_SETTINGS,
   MIN_USAGE_TRACKER_REFRESH_MS,
+  buildCombinedReports,
   formatLimitLabel,
   normalizeSettingsSectionCollapsed,
   normalizeUsageTrackerSettings,
@@ -489,5 +490,101 @@ describe("windowed quota matching and differentiation", () => {
     expect(legacyItems.length).toBe(1);
     expect(legacyItems[0].getAttribute("aria-label")).toContain("Usage (Google) (5 Hour): 39% used");
     legacyTracker.destroy();
+  });
+});
+
+describe("multi-account usage and combined accounts", () => {
+  const sampleReports: ProviderUsageReport[] = [
+    {
+      provider: "anthropic",
+      providerName: "Anthropic",
+      account: "dazaike@proton.me",
+      limits: [
+        { label: "Claude 5 Hour", used: 0, limit: 100, remaining: 100, unit: "percent", usedPercent: 0 },
+        { label: "Claude 7 Day", used: 38, limit: 100, remaining: 62, unit: "percent", usedPercent: 38 },
+      ],
+    },
+    {
+      provider: "anthropic",
+      providerName: "Anthropic",
+      account: "biancam.tomlins@gmail.com",
+      limits: [
+        { label: "Claude 5 Hour", used: 0, limit: 100, remaining: 100, unit: "percent", usedPercent: 0 },
+        { label: "Claude 7 Day", used: 4, limit: 100, remaining: 96, unit: "percent", usedPercent: 4 },
+      ],
+    },
+  ];
+
+  it("buildCombinedReports combines multiple accounts for the same provider", () => {
+    const combined = buildCombinedReports(sampleReports);
+    expect(combined.length).toBe(1);
+    expect(combined[0].provider).toBe("anthropic");
+    expect(combined[0].account).toContain("2 accounts");
+    expect(combined[0].account).toContain("dazaike@proton.me");
+    expect(combined[0].account).toContain("biancam.tomlins@gmail.com");
+
+    const fiveHour = combined[0].limits.find((l) => l.label === "Claude 5 Hour");
+    expect(fiveHour).toBeDefined();
+    expect(fiveHour?.usedPercent).toBe(0);
+
+    const sevenDay = combined[0].limits.find((l) => l.label === "Claude 7 Day");
+    expect(sevenDay).toBeDefined();
+    // Average of 38% and 4% is 21%
+    expect(sevenDay?.usedPercent).toBe(21);
+  });
+
+  it("renders combined quota when combineAccounts is enabled", async () => {
+    const tracker = new UsageTracker({
+      getProviderUsage: async () => sampleReports,
+      settings: {
+        enabled: true,
+        refreshIntervalMs: null,
+        combineAccounts: true,
+        quotas: [
+          { provider: "anthropic", label: "Claude 7 Day", enabled: true, style: "bar" },
+        ],
+        providerIconUrls: {},
+        iconPlacement: "inside",
+        showPercent: true,
+        orientation: "horizontal",
+      },
+      onReports: vi.fn(),
+    });
+
+    await tracker.refresh();
+    const items = tracker.el.querySelectorAll(".usage-tracker-item");
+    expect(items.length).toBe(1);
+    expect(items[0].getAttribute("aria-label")).toContain("21% used");
+    expect(items[0].getAttribute("aria-label")).toContain("2 accounts");
+    tracker.destroy();
+  });
+
+  it("differentiates individual accounts when combineAccounts is false", async () => {
+    const tracker = new UsageTracker({
+      getProviderUsage: async () => sampleReports,
+      settings: {
+        enabled: true,
+        refreshIntervalMs: null,
+        combineAccounts: false,
+        quotas: [
+          { provider: "anthropic", account: "dazaike@proton.me", label: "Claude 7 Day", enabled: true, style: "bar" },
+          { provider: "anthropic", account: "biancam.tomlins@gmail.com", label: "Claude 7 Day", enabled: true, style: "bar" },
+        ],
+        providerIconUrls: {},
+        iconPlacement: "inside",
+        showPercent: true,
+        orientation: "horizontal",
+      },
+      onReports: vi.fn(),
+    });
+
+    await tracker.refresh();
+    const items = tracker.el.querySelectorAll(".usage-tracker-item");
+    expect(items.length).toBe(2);
+    expect(items[0].getAttribute("aria-label")).toContain("dazaike@proton.me");
+    expect(items[0].getAttribute("aria-label")).toContain("38% used");
+    expect(items[1].getAttribute("aria-label")).toContain("biancam.tomlins@gmail.com");
+    expect(items[1].getAttribute("aria-label")).toContain("4% used");
+    tracker.destroy();
   });
 });

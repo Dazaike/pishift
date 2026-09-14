@@ -2,6 +2,12 @@
 
 All notable changes to PiShift are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+## [1.9.28] — 2026-09-14
+
+### Added
+- Multi-account differentiation: Provider quotas in the popover and side panel now display the account email or account ID alongside provider names instead of showing duplicate bare titles.
+- Combined multi-account usage option: Added a "Combine multi-account usage (e.g. Anthropic, OpenAI)" setting under Settings → Usage Tracker that aggregates usage across multiple accounts into a single average quota indicator for the top bar and settings list.
+- Account details in top bar usage tooltips and accessibility labels for unambiguous identification.
 
 ## [1.9.27] — 2026-09-13
 
