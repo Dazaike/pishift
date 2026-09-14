@@ -3,6 +3,7 @@ import {
   type UsageTrackerQuota,
   type UsageTrackerSettings,
   buildCombinedReports,
+  usagePercentOfMax,
   usageTrackerDelay,
   usageTrackerQuotaKey,
 } from "../shared/usage-tracker";
@@ -27,10 +28,6 @@ type MatchedQuota = {
   report: ProviderUsageReport;
   limit: ProviderLimit;
 };
-
-function clampPercent(value: number): number {
-  return Math.min(100, Math.max(0, Number.isFinite(value) ? value : 0));
-}
 
 /** Owns the single provider-usage request pipeline and compact chrome surface. */
 export class UsageTracker {
@@ -189,12 +186,12 @@ export class UsageTracker {
   }
 
   private renderGauge(entry: MatchedQuota): HTMLElement {
-    const usedPercent = clampPercent(entry.limit.usedPercent);
-    const tier = usedPercent >= 80 ? "high" : usedPercent >= 50 ? "med" : "low";
+    const fillPercent = usagePercentOfMax(entry.limit);
+    const tier = fillPercent >= 80 ? "high" : fillPercent >= 50 ? "med" : "low";
     const gauge = document.createElement("span");
-    gauge.style.setProperty("--usage-fill", `${usedPercent}%`);
-    gauge.style.setProperty("--usage-remaining-fill", `${100 - usedPercent}%`);
-    gauge.style.setProperty("--usage-ring-offset", String(94.25 * (1 - usedPercent / 100)));
+    gauge.style.setProperty("--usage-fill", `${fillPercent}%`);
+    gauge.style.setProperty("--usage-remaining-fill", `${100 - fillPercent}%`);
+    gauge.style.setProperty("--usage-ring-offset", String(94.25 * (1 - fillPercent / 100)));
     gauge.className = `usage-tracker-gauge usage-tracker-${entry.quota.style} ${tier}`;
     if (entry.quota.style === "circle") {
       const ring = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -232,13 +229,14 @@ export class UsageTracker {
     const items = document.createElement("div");
     items.className = "usage-tracker-items";
     for (const entry of entries) {
-      const usedPercent = Math.round(clampPercent(entry.limit.usedPercent));
+      const usedPercent = Math.round(Math.max(0, entry.limit.usedPercent));
+      const fillPercent = Math.round(usagePercentOfMax(entry.limit));
       const item = document.createElement("div");
       item.className = "usage-tracker-item";
-      const tier = usedPercent >= 80 ? "high" : usedPercent >= 50 ? "med" : "low";
+      const tier = fillPercent >= 80 ? "high" : fillPercent >= 50 ? "med" : "low";
       item.classList.add(tier);
-      item.style.setProperty("--usage-fill", `${usedPercent}%`);
-      item.style.setProperty("--usage-remaining-fill", `${100 - usedPercent}%`);
+      item.style.setProperty("--usage-fill", `${fillPercent}%`);
+      item.style.setProperty("--usage-remaining-fill", `${100 - fillPercent}%`);
       const accountTag = entry.report.account ? ` (${entry.report.account})` : "";
       item.setAttribute(
         "aria-label",

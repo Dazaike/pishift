@@ -90,7 +90,9 @@ export function formatLimitLabel(label: string, windowLabel?: string): string {
  * Builds combined provider reports when `combineAccounts` is active or for
  * providers that have multiple accounts.
  * For providers with multiple reports/accounts, limits sharing the same label
- * are aggregated (usedPercent averaged across accounts).
+ * are aggregated by summing `usedPercent` across accounts (each account
+ * contributes up to 100%, so N combined accounts raise the ceiling to
+ * `100 * N` — two accounts at 100% and 30% combine to 130% used out of 200%).
  */
 export function buildCombinedReports(reports: readonly ProviderUsageReport[]): ProviderUsageReport[] {
   const providerGroups = new Map<string, ProviderUsageReport[]>();
@@ -127,7 +129,6 @@ export function buildCombinedReports(reports: readonly ProviderUsageReport[]): P
     const combinedLimits: ProviderLimit[] = [];
     for (const [label, limits] of limitMap) {
       const totalUsedPercent = limits.reduce((sum, l) => sum + l.usedPercent, 0);
-      const avgUsedPercent = Math.round(totalUsedPercent / limits.length);
       const totalUsed = limits.reduce((sum, l) => sum + l.used, 0);
       const totalLimit = limits.reduce((sum, l) => sum + l.limit, 0);
       const totalRemaining = limits.reduce((sum, l) => sum + l.remaining, 0);
@@ -135,7 +136,8 @@ export function buildCombinedReports(reports: readonly ProviderUsageReport[]): P
 
       combinedLimits.push({
         label,
-        usedPercent: avgUsedPercent,
+        usedPercent: totalUsedPercent,
+        maxPercent: 100 * limits.length,
         used: totalUsed,
         limit: totalLimit,
         remaining: totalRemaining,
@@ -154,6 +156,19 @@ export function buildCombinedReports(reports: readonly ProviderUsageReport[]): P
   }
 
   return result;
+}
+
+/**
+ * Scales `usedPercent` against `maxPercent` (default 100) into a 0-100 fill
+ * fraction, for gauges/bars/tier coloring. Combined accounts raise
+ * `maxPercent` above 100, so a raw `usedPercent` of 130 out of 200 renders as
+ * a 65% full bar rather than clipping to a maxed-out 100%.
+ */
+export function usagePercentOfMax(limit: Pick<ProviderLimit, "usedPercent" | "maxPercent">): number {
+  const max = limit.maxPercent ?? 100;
+  if (!Number.isFinite(max) || max <= 0) return 0;
+  const value = Number.isFinite(limit.usedPercent) ? limit.usedPercent : 0;
+  return Math.min(100, Math.max(0, (value / max) * 100));
 }
 
 export function isUsageTrackerStyle(value: unknown): value is UsageTrackerStyle {

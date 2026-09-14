@@ -526,11 +526,35 @@ describe("multi-account usage and combined accounts", () => {
     const fiveHour = combined[0].limits.find((l) => l.label === "Claude 5 Hour");
     expect(fiveHour).toBeDefined();
     expect(fiveHour?.usedPercent).toBe(0);
+    expect(fiveHour?.maxPercent).toBe(200);
 
     const sevenDay = combined[0].limits.find((l) => l.label === "Claude 7 Day");
     expect(sevenDay).toBeDefined();
-    // Average of 38% and 4% is 21%
-    expect(sevenDay?.usedPercent).toBe(21);
+    // Sum of 38% and 4% is 42%, out of a combined 200% ceiling (100% per account)
+    expect(sevenDay?.usedPercent).toBe(42);
+    expect(sevenDay?.maxPercent).toBe(200);
+  });
+
+  it("sums usage across two accounts to 130% out of a 200% max (100% + 30%)", () => {
+    const reports: ProviderUsageReport[] = [
+      {
+        provider: "openai",
+        providerName: "OpenAI",
+        account: "acct-a",
+        limits: [{ label: "Weekly", used: 100, limit: 100, remaining: 0, unit: "percent", usedPercent: 100 }],
+      },
+      {
+        provider: "openai",
+        providerName: "OpenAI",
+        account: "acct-b",
+        limits: [{ label: "Weekly", used: 30, limit: 100, remaining: 70, unit: "percent", usedPercent: 30 }],
+      },
+    ];
+
+    const combined = buildCombinedReports(reports);
+    const weekly = combined[0].limits.find((l) => l.label === "Weekly");
+    expect(weekly?.usedPercent).toBe(130);
+    expect(weekly?.maxPercent).toBe(200);
   });
 
   it("renders combined quota when combineAccounts is enabled", async () => {
@@ -554,7 +578,7 @@ describe("multi-account usage and combined accounts", () => {
     await tracker.refresh();
     const items = tracker.el.querySelectorAll(".usage-tracker-item");
     expect(items.length).toBe(1);
-    expect(items[0].getAttribute("aria-label")).toContain("21% used");
+    expect(items[0].getAttribute("aria-label")).toContain("42% used");
     expect(items[0].getAttribute("aria-label")).toContain("2 accounts");
     tracker.destroy();
   });

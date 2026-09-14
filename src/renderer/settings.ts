@@ -52,6 +52,7 @@ import {
   type UsageTrackerQuota,
   type UsageTrackerSettings,
   type UsageTrackerStyle,
+  usagePercentOfMax,
   usageTrackerQuotaKey,
 } from "../shared/usage-tracker";
 
@@ -1588,12 +1589,13 @@ export class SettingsModal {
           chip.append(this.renderMiniIcon(item.report.provider));
         }
 
-        const usedPercent = Math.min(100, Math.max(0, item.limit.usedPercent));
-        const tier = usedPercent >= 80 ? "high" : usedPercent >= 50 ? "med" : "low";
+        const rawPercent = Math.max(0, item.limit.usedPercent);
+        const fillPercent = usagePercentOfMax(item.limit);
+        const tier = fillPercent >= 80 ? "high" : fillPercent >= 50 ? "med" : "low";
         if (this.usageTracker.showPercent) {
           const percent = document.createElement("span");
           percent.className = `usage-tracker-percent ${tier}`;
-          percent.textContent = `${Math.round(usedPercent)}%`;
+          percent.textContent = `${Math.round(rawPercent)}%`;
           chip.append(percent);
         }
 
@@ -1788,7 +1790,7 @@ export class SettingsModal {
     limit: ProviderLimit,
     provider: string,
   ): HTMLElement {
-    const usedPercent = Math.min(100, Math.max(0, limit.usedPercent));
+    const usedPercent = usagePercentOfMax(limit);
     const tier = usedPercent >= 80 ? "high" : usedPercent >= 50 ? "med" : "low";
     const gauge = document.createElement("span");
     gauge.className = `usage-tracker-gauge usage-tracker-${quota.style} ${tier}`;
