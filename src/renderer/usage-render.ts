@@ -1,9 +1,6 @@
 import type { ProviderUsageReport } from "../shared/ipc";
+import { usagePercentOfMax } from "../shared/usage-tracker";
 import { safeAnimate, springPresets } from "./motion-utils";
-
-function usedScale(usedPercent: number): number {
-  return Math.min(1, Math.max(0.02, usedPercent / 100));
-}
 
 /** Renders provider usage/quota rows shared by the Usage popover and the side panel. */
 export function renderUsageCards(container: HTMLElement, reports: ProviderUsageReport[]): void {
@@ -49,7 +46,9 @@ export function renderUsageCards(container: HTMLElement, reports: ProviderUsageR
       limitList.className = "usage-limit-list";
 
       for (const lim of rep.limits) {
-        const tier = lim.usedPercent >= 80 ? "high" : lim.usedPercent >= 50 ? "med" : "low";
+        const maxPercent = lim.maxPercent ?? 100;
+        const fillPercent = usagePercentOfMax(lim);
+        const tier = fillPercent >= 80 ? "high" : fillPercent >= 50 ? "med" : "low";
         const limRow = document.createElement("div");
         limRow.className = "usage-limit-row";
 
@@ -63,7 +62,7 @@ export function renderUsageCards(container: HTMLElement, reports: ProviderUsageR
         const remaining = document.createElement("span");
         remaining.className = "usage-limit-remaining";
         remaining.classList.add(tier);
-        remaining.textContent = `${Math.max(0, 100 - lim.usedPercent)}%`;
+        remaining.textContent = `${Math.max(0, maxPercent - lim.usedPercent)}%`;
 
         limTop.append(limLabel, remaining);
 
@@ -73,8 +72,9 @@ export function renderUsageCards(container: HTMLElement, reports: ProviderUsageR
         fill.className = "usage-bar-fill";
         if (tier !== "low") fill.classList.add(tier);
         fill.dataset.used = String(lim.usedPercent);
+        fill.dataset.max = String(maxPercent);
         fill.style.transformOrigin = "left center";
-        fill.style.transform = `scaleX(${usedScale(lim.usedPercent)})`;
+        fill.style.transform = `scaleX(${Math.min(1, Math.max(0.02, lim.usedPercent / maxPercent))})`;
         track.appendChild(fill);
 
         const limSub = document.createElement("div");
@@ -143,6 +143,7 @@ export function animateUsageReveal(container: HTMLElement): void {
 
   container.querySelectorAll<HTMLElement>(".usage-bar-fill").forEach((fill) => {
     const used = Number(fill.dataset.used ?? "0");
-    safeAnimate(fill, { scaleX: [0, usedScale(used)] }, springPresets.smooth);
+    const max = Number(fill.dataset.max ?? "100");
+    safeAnimate(fill, { scaleX: [0, Math.min(1, Math.max(0.02, used / max))] }, springPresets.smooth);
   });
 }

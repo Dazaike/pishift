@@ -271,6 +271,8 @@ export type ProviderLimit = {
   remaining: number;
   unit: string;
   usedPercent: number;
+  /** Upper bound for `usedPercent` when combining accounts (100 per account, e.g. 200 for 2 combined accounts). Absent means 100. */
+  maxPercent?: number;
   resetsIn?: string;
 };
 

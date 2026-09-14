@@ -2,6 +2,11 @@
 
 All notable changes to PiShift are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+## [1.9.29] — 2026-09-14
+
+### Changed
+- Combined multi-account usage now sums each account's percentage instead of averaging it. Combining accounts raises the ceiling by 100% per account (two accounts → 200% max), so one account at 100% plus another at 30% now correctly shows 130% used out of 200% instead of a misleading 21% average. Bars, rings, and tier coloring scale against the new per-combo ceiling instead of clipping at 100%.
+
 ## [1.9.28] — 2026-09-14
 
 ### Added
