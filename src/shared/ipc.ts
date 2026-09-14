@@ -279,6 +279,9 @@ export type ProviderUsageReport = {
   providerName: string;
   status?: string;
   account?: string;
+  email?: string;
+  orgName?: string;
+  planType?: string;
   limits: ProviderLimit[];
   rawText?: string;
 };

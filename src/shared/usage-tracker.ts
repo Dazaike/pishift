@@ -1,3 +1,5 @@
+import type { ProviderLimit, ProviderUsageReport } from "./ipc";
+
 export type UsageTrackerStyle = "bar" | "circle" | "battery";
 export type UsageTrackerIconPlacement = "inside" | "beside";
 export type UsageTrackerOrientation = "auto" | "horizontal" | "vertical";
@@ -18,6 +20,7 @@ export type UsageTrackerSettings = {
   iconPlacement: UsageTrackerIconPlacement;
   showPercent: boolean;
   orientation?: UsageTrackerOrientation;
+  combineAccounts?: boolean;
 };
 
 export const USAGE_TRACKER_REFRESH_PRESETS = [
@@ -41,6 +44,7 @@ export const DEFAULT_USAGE_TRACKER_SETTINGS: UsageTrackerSettings = {
   iconPlacement: "inside",
   showPercent: false,
   orientation: "auto",
+  combineAccounts: false,
 };
 
 export type SettingsSectionId =
@@ -80,6 +84,76 @@ export function formatLimitLabel(label: string, windowLabel?: string): string {
     return cleanLabel;
   }
   return `${cleanLabel} (${cleanWindow})`;
+}
+
+/**
+ * Builds combined provider reports when `combineAccounts` is active or for
+ * providers that have multiple accounts.
+ * For providers with multiple reports/accounts, limits sharing the same label
+ * are aggregated (usedPercent averaged across accounts).
+ */
+export function buildCombinedReports(reports: readonly ProviderUsageReport[]): ProviderUsageReport[] {
+  const providerGroups = new Map<string, ProviderUsageReport[]>();
+  for (const rep of reports) {
+    const list = providerGroups.get(rep.provider) ?? [];
+    list.push(rep);
+    providerGroups.set(rep.provider, list);
+  }
+
+  const result: ProviderUsageReport[] = [];
+
+  for (const [provider, reps] of providerGroups) {
+    if (reps.length <= 1) {
+      result.push(...reps);
+      continue;
+    }
+
+    // Multiple accounts for this provider -> synthesize a combined report
+    const first = reps[0]!;
+    const accountCount = reps.length;
+    const accounts = reps.map((r) => r.account ?? r.email).filter(Boolean);
+    const accountSummary = `${accountCount} accounts${accounts.length > 0 ? ` (${accounts.join(", ")})` : ""}`;
+
+    // Group limits by label
+    const limitMap = new Map<string, ProviderLimit[]>();
+    for (const rep of reps) {
+      for (const lim of rep.limits) {
+        const list = limitMap.get(lim.label) ?? [];
+        list.push(lim);
+        limitMap.set(lim.label, list);
+      }
+    }
+
+    const combinedLimits: ProviderLimit[] = [];
+    for (const [label, limits] of limitMap) {
+      const totalUsedPercent = limits.reduce((sum, l) => sum + l.usedPercent, 0);
+      const avgUsedPercent = Math.round(totalUsedPercent / limits.length);
+      const totalUsed = limits.reduce((sum, l) => sum + l.used, 0);
+      const totalLimit = limits.reduce((sum, l) => sum + l.limit, 0);
+      const totalRemaining = limits.reduce((sum, l) => sum + l.remaining, 0);
+      const resetsIn = limits.find((l) => l.resetsIn)?.resetsIn;
+
+      combinedLimits.push({
+        label,
+        usedPercent: avgUsedPercent,
+        used: totalUsed,
+        limit: totalLimit,
+        remaining: totalRemaining,
+        unit: limits[0]?.unit ?? "percent",
+        resetsIn,
+      });
+    }
+
+    result.push({
+      provider,
+      providerName: first.providerName,
+      status: first.status,
+      account: accountSummary,
+      limits: combinedLimits,
+    });
+  }
+
+  return result;
 }
 
 export function isUsageTrackerStyle(value: unknown): value is UsageTrackerStyle {
@@ -156,6 +230,10 @@ export function normalizeUsageTrackerSettings(value: unknown): UsageTrackerSetti
       candidate.orientation === "horizontal" || candidate.orientation === "vertical"
         ? candidate.orientation
         : DEFAULT_USAGE_TRACKER_SETTINGS.orientation,
+    combineAccounts:
+      typeof candidate.combineAccounts === "boolean"
+        ? candidate.combineAccounts
+        : DEFAULT_USAGE_TRACKER_SETTINGS.combineAccounts,
   };
 }
 

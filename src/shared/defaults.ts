@@ -183,6 +183,7 @@ export const DEFAULT_PERSISTED_SETTINGS: Omit<PersistedState, "tabs" | "activeIn
     iconPlacement: "beside",
     showPercent: true,
     orientation: "auto",
+    combineAccounts: false,
   },
   settingsSectionCollapsed: {
     appearance: true,

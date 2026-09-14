@@ -32,8 +32,13 @@ export function renderUsageCards(container: HTMLElement, reports: ProviderUsageR
     const name = document.createElement("div");
     name.className = "usage-provider-name";
     name.textContent = rep.providerName;
+    if (rep.account) {
+      const acct = document.createElement("span");
+      acct.className = "usage-provider-account";
+      acct.textContent = rep.account;
+      name.appendChild(acct);
+    }
     section.appendChild(name);
-
     if (rep.limits.length === 0) {
       const noLimits = document.createElement("div");
       noLimits.className = "usage-no-limits";

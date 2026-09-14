@@ -2,6 +2,7 @@ import type { ProviderLimit, ProviderUsageReport } from "../shared/ipc";
 import {
   type UsageTrackerQuota,
   type UsageTrackerSettings,
+  buildCombinedReports,
   usageTrackerDelay,
   usageTrackerQuotaKey,
 } from "../shared/usage-tracker";
@@ -121,8 +122,12 @@ export class UsageTracker {
   }
 
   private matchingQuotas(): MatchedQuota[] {
+    const effectiveReports = this.settings.combineAccounts
+      ? buildCombinedReports(this.reports)
+      : this.reports;
+
     const limits = new Map<string, { report: ProviderUsageReport; limit: ProviderLimit }>();
-    for (const report of this.reports) {
+    for (const report of effectiveReports) {
       for (const limit of report.limits) {
         limits.set(
           usageTrackerQuotaKey({ provider: report.provider, account: report.account, label: limit.label }),
@@ -132,6 +137,18 @@ export class UsageTracker {
     }
     return this.settings.quotas.flatMap((quota) => {
       let matched = limits.get(usageTrackerQuotaKey(quota));
+      if (!matched && this.settings.combineAccounts) {
+        // When combined is toggled on, match by provider and label ignoring specific account
+        for (const candidate of limits.values()) {
+          if (
+            candidate.report.provider === quota.provider &&
+            (candidate.limit.label === quota.label || candidate.limit.label.startsWith(`${quota.label} (`))
+          ) {
+            matched = candidate;
+            break;
+          }
+        }
+      }
       if (!matched) {
         for (const candidate of limits.values()) {
           if (
@@ -222,11 +239,12 @@ export class UsageTracker {
       item.classList.add(tier);
       item.style.setProperty("--usage-fill", `${usedPercent}%`);
       item.style.setProperty("--usage-remaining-fill", `${100 - usedPercent}%`);
+      const accountTag = entry.report.account ? ` (${entry.report.account})` : "";
       item.setAttribute(
         "aria-label",
-        `${entry.report.providerName} ${entry.limit.label}: ${usedPercent}% used`,
+        `${entry.report.providerName}${accountTag} ${entry.limit.label}: ${usedPercent}% used`,
       );
-      item.title = `${entry.report.providerName} · ${entry.limit.label} · ${usedPercent}% used`;
+      item.title = `${entry.report.providerName}${accountTag} · ${entry.limit.label} · ${usedPercent}% used`;
       const besideIcon =
         this.settings.iconPlacement === "beside"
           ? this.renderIcon(entry.report.provider)
