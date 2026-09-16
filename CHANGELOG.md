@@ -2,6 +2,11 @@
 
 All notable changes to PiShift are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+## [1.9.30] — 2026-09-16
+
+### Added
+- "Combined scale" setting under Settings → Usage Tracker → Combine multi-account usage, letting you choose how combined quotas are capped: **100%** (averages accounts down to a flat 0-100 scale, the original math) or **200%** (sums each account's percentage and raises the ceiling by 100 per account, the current default from 1.9.29).
+
 ## [1.9.29] — 2026-09-14
 
 ### Changed

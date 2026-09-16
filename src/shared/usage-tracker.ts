@@ -21,6 +21,12 @@ export type UsageTrackerSettings = {
   showPercent: boolean;
   orientation?: UsageTrackerOrientation;
   combineAccounts?: boolean;
+  /**
+   * Ceiling used when combining multi-account usage: `100` averages accounts
+   * down to a flat 0-100 scale (legacy math); `200` sums each account's
+   * percent and raises the ceiling by 100 per account (current default).
+   */
+  combineAccountsMax?: 100 | 200;
 };
 
 export const USAGE_TRACKER_REFRESH_PRESETS = [
@@ -45,6 +51,7 @@ export const DEFAULT_USAGE_TRACKER_SETTINGS: UsageTrackerSettings = {
   showPercent: false,
   orientation: "auto",
   combineAccounts: false,
+  combineAccountsMax: 200,
 };
 
 export type SettingsSectionId =
@@ -90,11 +97,17 @@ export function formatLimitLabel(label: string, windowLabel?: string): string {
  * Builds combined provider reports when `combineAccounts` is active or for
  * providers that have multiple accounts.
  * For providers with multiple reports/accounts, limits sharing the same label
- * are aggregated by summing `usedPercent` across accounts (each account
- * contributes up to 100%, so N combined accounts raise the ceiling to
- * `100 * N` — two accounts at 100% and 30% combine to 130% used out of 200%).
+ * are aggregated. When `max` is `200` (default, matches current behavior),
+ * `usedPercent` is summed across accounts and `maxPercent` raised to `100 *
+ * accountCount` — two accounts at 100% and 30% combine to 130% used out of
+ * 200%. When `max` is `100` (legacy math), `usedPercent` is instead averaged
+ * across accounts and `maxPercent` stays flat at 100 — the same two accounts
+ * combine to 65% used out of 100%.
  */
-export function buildCombinedReports(reports: readonly ProviderUsageReport[]): ProviderUsageReport[] {
+export function buildCombinedReports(
+  reports: readonly ProviderUsageReport[],
+  max: 100 | 200 = 200,
+): ProviderUsageReport[] {
   const providerGroups = new Map<string, ProviderUsageReport[]>();
   for (const rep of reports) {
     const list = providerGroups.get(rep.provider) ?? [];
@@ -136,8 +149,8 @@ export function buildCombinedReports(reports: readonly ProviderUsageReport[]): P
 
       combinedLimits.push({
         label,
-        usedPercent: totalUsedPercent,
-        maxPercent: 100 * limits.length,
+        usedPercent: max === 100 ? Math.round(totalUsedPercent / limits.length) : totalUsedPercent,
+        maxPercent: max === 100 ? 100 : 100 * limits.length,
         used: totalUsed,
         limit: totalLimit,
         remaining: totalRemaining,
@@ -249,6 +262,10 @@ export function normalizeUsageTrackerSettings(value: unknown): UsageTrackerSetti
       typeof candidate.combineAccounts === "boolean"
         ? candidate.combineAccounts
         : DEFAULT_USAGE_TRACKER_SETTINGS.combineAccounts,
+    combineAccountsMax:
+      candidate.combineAccountsMax === 100 || candidate.combineAccountsMax === 200
+        ? candidate.combineAccountsMax
+        : DEFAULT_USAGE_TRACKER_SETTINGS.combineAccountsMax,
   };
 }
 
