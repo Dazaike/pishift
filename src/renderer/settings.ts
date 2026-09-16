@@ -1362,11 +1362,39 @@ export class SettingsModal {
     combine.checked = this.usageTracker.combineAccounts ?? false;
     combine.addEventListener("change", () => {
       this.updateUsageTracker({ ...this.usageTracker, combineAccounts: combine.checked });
+      combineMaxRow.hidden = !combine.checked;
       this.render();
     });
     const combineText = document.createElement("span");
     combineText.textContent = "Combine multi-account usage (e.g. Anthropic, OpenAI)";
     combineLabel.append(combine, combineText);
+
+    const combineMaxRow = document.createElement("div");
+    combineMaxRow.className = "settings-pos-row";
+    combineMaxRow.hidden = !combine.checked;
+    const combineMaxLabel = document.createElement("label");
+    combineMaxLabel.className = "settings-pos-label";
+    combineMaxLabel.textContent = "Combined scale";
+    const combineMax = document.createElement("select");
+    combineMax.className = "settings-select";
+    for (const [value, label] of [
+      ["100", "Cap at 100% (average accounts)"] as const,
+      ["200", "Cap at 200% (sum accounts, current)"] as const,
+    ]) {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = label;
+      option.selected = String(this.usageTracker.combineAccountsMax ?? 200) === value;
+      combineMax.append(option);
+    }
+    combineMax.addEventListener("change", () => {
+      this.updateUsageTracker({
+        ...this.usageTracker,
+        combineAccountsMax: combineMax.value === "100" ? 100 : 200,
+      });
+      this.render();
+    });
+    combineMaxRow.append(combineMaxLabel, combineMax);
 
     const intervalRow = document.createElement("div");
     intervalRow.className = "settings-pos-row";
@@ -1443,13 +1471,14 @@ export class SettingsModal {
       iconPlacementRow,
       percentLabel,
       combineLabel,
+      combineMaxRow,
       intervalRow,
       customRow,
       refreshButton,
     );
 
     const effectiveReports = this.usageTracker.combineAccounts
-      ? buildCombinedReports(this.usageReports)
+      ? buildCombinedReports(this.usageReports, this.usageTracker.combineAccountsMax ?? 200)
       : this.usageReports;
 
     // Collect all available quotas from reports

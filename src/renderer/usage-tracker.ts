@@ -120,7 +120,7 @@ export class UsageTracker {
 
   private matchingQuotas(): MatchedQuota[] {
     const effectiveReports = this.settings.combineAccounts
-      ? buildCombinedReports(this.reports)
+      ? buildCombinedReports(this.reports, this.settings.combineAccountsMax ?? 200)
       : this.reports;
 
     const limits = new Map<string, { report: ProviderUsageReport; limit: ProviderLimit }>();

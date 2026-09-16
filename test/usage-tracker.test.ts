@@ -10,6 +10,7 @@ import {
   formatLimitLabel,
   normalizeSettingsSectionCollapsed,
   normalizeUsageTrackerSettings,
+  usagePercentOfMax,
   usageTrackerDelay,
   usageTrackerQuotaKey,
 } from "../src/shared/usage-tracker";
@@ -59,6 +60,52 @@ describe("usage tracker settings", () => {
     expect(normalizeUsageTrackerSettings({ orientation: "auto" }).orientation).toBe("auto");
     expect(normalizeUsageTrackerSettings({ orientation: "invalid" as unknown as "auto" }).orientation).toBe("auto");
     expect(normalizeUsageTrackerSettings({}).orientation).toBe("auto");
+  });
+  it("normalizes combineAccountsMax, defaulting to 200 for invalid or missing values", () => {
+    expect(normalizeUsageTrackerSettings({ combineAccountsMax: 100 }).combineAccountsMax).toBe(100);
+    expect(normalizeUsageTrackerSettings({ combineAccountsMax: 200 }).combineAccountsMax).toBe(200);
+    expect(normalizeUsageTrackerSettings({ combineAccountsMax: 150 as unknown as 100 }).combineAccountsMax).toBe(200);
+    expect(normalizeUsageTrackerSettings({}).combineAccountsMax).toBe(200);
+  });
+});
+
+describe("buildCombinedReports max scale", () => {
+  const twoAccountReports: ProviderUsageReport[] = [
+    {
+      provider: "anthropic",
+      providerName: "Anthropic",
+      status: "ok",
+      account: "one",
+      limits: [{ label: "Weekly", usedPercent: 100, used: 100, limit: 100, remaining: 0, unit: "percent" }],
+    },
+    {
+      provider: "anthropic",
+      providerName: "Anthropic",
+      status: "ok",
+      account: "two",
+      limits: [{ label: "Weekly", usedPercent: 30, used: 30, limit: 100, remaining: 70, unit: "percent" }],
+    },
+  ];
+
+  it("defaults to summing usedPercent with a 100-per-account ceiling", () => {
+    const [combined] = buildCombinedReports(twoAccountReports);
+    expect(combined!.limits[0]!.usedPercent).toBe(130);
+    expect(combined!.limits[0]!.maxPercent).toBe(200);
+    expect(usagePercentOfMax(combined!.limits[0]!)).toBe(65);
+  });
+
+  it("caps at 200 explicitly, matching default behavior", () => {
+    const [combined] = buildCombinedReports(twoAccountReports, 200);
+    expect(combined!.limits[0]!.usedPercent).toBe(130);
+    expect(combined!.limits[0]!.maxPercent).toBe(200);
+    expect(usagePercentOfMax(combined!.limits[0]!)).toBe(65);
+  });
+
+  it("averages usedPercent with a flat 100 ceiling when capped at 100", () => {
+    const [combined] = buildCombinedReports(twoAccountReports, 100);
+    expect(combined!.limits[0]!.usedPercent).toBe(65);
+    expect(combined!.limits[0]!.maxPercent).toBe(100);
+    expect(usagePercentOfMax(combined!.limits[0]!)).toBe(65);
   });
 });
 
