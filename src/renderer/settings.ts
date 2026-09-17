@@ -1180,6 +1180,7 @@ export class SettingsModal {
       activitySection,
       this.renderUsageTrackerSection(),
       interfaceSection,
+      this.renderBackupSection(),
     );
 
     // Fixed Footer
@@ -1258,6 +1259,87 @@ export class SettingsModal {
 
     section.append(heading);
     if (!this.settingsSectionCollapsed.composer) this.appendSectionBody(section, grid, tabsToggle);
+    return section;
+  }
+
+  private renderBackupSection(): HTMLElement {
+    const section = document.createElement("section");
+    section.className = "settings-section";
+    section.append(
+      this.sectionHeader(
+        "backup",
+        "Backup & Restore",
+        "Export settings to a file, or import settings saved from another machine.",
+      ),
+    );
+    if (this.settingsSectionCollapsed.backup) return section;
+
+    const exportRow = document.createElement("div");
+    exportRow.className = "settings-action-row";
+    const exportBtn = document.createElement("button");
+    exportBtn.type = "button";
+    exportBtn.className = "settings-action-btn";
+    exportBtn.textContent = "Export Settings\u2026";
+    const exportStatus = document.createElement("span");
+    exportStatus.className = "settings-desc settings-action-status";
+    exportStatus.textContent = "Save your themes, models, and preferences to a JSON file.";
+    exportBtn.addEventListener("click", async () => {
+      exportBtn.disabled = true;
+      try {
+        const res = await window.pishift.exportSettings();
+        exportStatus.style.color = "var(--fg-dim)";
+        exportStatus.textContent = res.canceled
+          ? "Save your themes, models, and preferences to a JSON file."
+          : `Exported to ${res.path}`;
+      } catch (err) {
+        exportStatus.style.color = "#f7768e";
+        exportStatus.textContent = `Export failed: ${err instanceof Error ? err.message : String(err)}`;
+      } finally {
+        exportBtn.disabled = false;
+      }
+    });
+    exportRow.append(exportBtn, exportStatus);
+
+    const importRow = document.createElement("div");
+    importRow.className = "settings-action-row";
+    const importBtn = document.createElement("button");
+    importBtn.type = "button";
+    importBtn.className = "settings-action-btn";
+    importBtn.textContent = "Import Settings\u2026";
+    const importStatus = document.createElement("span");
+    importStatus.className = "settings-desc settings-action-status";
+    importStatus.textContent = "Load settings from a previously exported JSON file.";
+    const relaunchBtn = document.createElement("button");
+    relaunchBtn.type = "button";
+    relaunchBtn.className = "settings-action-btn";
+    relaunchBtn.textContent = "Relaunch Now";
+    relaunchBtn.hidden = true;
+    relaunchBtn.addEventListener("click", () => window.pishift.relaunchApp());
+    importBtn.addEventListener("click", async () => {
+      importBtn.disabled = true;
+      try {
+        const res = await window.pishift.importSettings();
+        if (res.canceled) {
+          importStatus.style.color = "var(--fg-dim)";
+          importStatus.textContent = "Load settings from a previously exported JSON file.";
+        } else if ("error" in res) {
+          importStatus.style.color = "#f7768e";
+          importStatus.textContent = `Import failed: ${res.error}`;
+        } else {
+          importStatus.style.color = "#f59e0b";
+          importStatus.textContent = "Settings imported. Relaunch to apply.";
+          relaunchBtn.hidden = false;
+        }
+      } catch (err) {
+        importStatus.style.color = "#f7768e";
+        importStatus.textContent = `Import failed: ${err instanceof Error ? err.message : String(err)}`;
+      } finally {
+        importBtn.disabled = false;
+      }
+    });
+    importRow.append(importBtn, importStatus, relaunchBtn);
+
+    this.appendSectionBody(section, exportRow, importRow);
     return section;
   }
 

@@ -58,13 +58,15 @@ export type SettingsSectionId =
   | "appearance"
   | "composer"
   | "usage-tracker"
-  | "interface";
+  | "interface"
+  | "backup";
 
 export const SETTINGS_SECTION_IDS: readonly SettingsSectionId[] = [
   "appearance",
   "composer",
   "usage-tracker",
   "interface",
+  "backup",
 ];
 
 export const DEFAULT_SETTINGS_SECTION_COLLAPSED: Record<SettingsSectionId, boolean> = {
@@ -72,6 +74,7 @@ export const DEFAULT_SETTINGS_SECTION_COLLAPSED: Record<SettingsSectionId, boole
   composer: false,
   "usage-tracker": false,
   interface: false,
+  backup: false,
 };
 
 export function usageTrackerQuotaKey(quota: Pick<UsageTrackerQuota, "provider" | "account" | "label">): string {

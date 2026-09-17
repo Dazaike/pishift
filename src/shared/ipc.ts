@@ -73,6 +73,8 @@ export const CH = {
   checkOmpUpdate: "app:check-omp-update",
   performOmpUpdate: "app:perform-omp-update",
   getAppVersion: "app:get-version",
+  exportSettings: "app:export-settings",
+  importSettings: "app:import-settings",
 } as const;
 
 export interface OmpUpdateCheckResult {
@@ -87,6 +89,13 @@ export interface OmpUpdateResult {
   output?: string;
   error?: string;
 }
+
+export type ExportSettingsResult = { canceled: true } | { canceled: false; path: string };
+
+export type ImportSettingsResult =
+  | { canceled: true }
+  | { canceled: false; error: string }
+  | { canceled: false; imported: true };
 
 export type ControlBridgeActivity = AgentActivity;
 

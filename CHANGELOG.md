@@ -2,6 +2,12 @@
 
 All notable changes to PiShift are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+
+## [1.9.31] — 2026-09-17
+
+### Added
+- "Backup & Restore" section in Settings: **Export Settings** saves your theme, fonts, models, activity colors, interface layout, paste, and usage-tracker preferences to a JSON file; **Import Settings** loads them back in (from this machine or another). Window position, the active tab list, recent folders, and the local omp executable path are never included — only portable preferences travel.
+
 ## [1.9.30] — 2026-09-16
 
 ### Added
