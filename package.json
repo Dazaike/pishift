@@ -3,6 +3,7 @@
   "productName": "PiShift",
   "version": "1.9.30",
   "author": "Dazaike",
+  "desktopName": "dev.ohmypi.pishift.desktop",
   "private": true,
   "description": "PiShift — Desktop terminal shell for Oh My Pi (omp)",
   "main": "out/main/index.js",
@@ -12,7 +13,8 @@
     "start": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
-    "dist": "electron-vite build && electron-builder --win --publish never"
+    "dist": "electron-vite build && electron-builder --win --publish never",
+    "dist:linux": "electron-vite build && electron-builder --linux --publish never"
   },
   "dependencies": {
     "animejs": "4.5.0",
