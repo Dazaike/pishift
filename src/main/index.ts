@@ -21,7 +21,9 @@ app.commandLine.appendSwitch("disable-features", "FluentScrollbar,OverlayScrollb
 
 import {
   CH,
+  type ExportSettingsResult,
   type ImagePreview,
+  type ImportSettingsResult,
   type KillJobRequest,
   type PersistedState,
   type PtyData,
@@ -189,6 +191,48 @@ function registerIpc(): void {
       ? await dialog.showOpenDialog(win, options)
       : await dialog.showOpenDialog(options);
     return result.canceled ? (null) : (result.filePaths[0] ?? null);
+  });
+
+  ipcMain.handle(CH.exportSettings, async (): Promise<ExportSettingsResult> => {
+    const options = {
+      title: "Export PiShift Settings",
+      defaultPath: "pishift-settings.json",
+      filters: [{ name: "JSON", extensions: ["json"] }],
+    };
+    const result = win
+      ? await dialog.showSaveDialog(win, options)
+      : await dialog.showSaveDialog(options);
+    if (result.canceled || !result.filePath) return { canceled: true };
+    const payload = {
+      app: "PiShift",
+      exportedAt: new Date().toISOString(),
+      version: app.getVersion(),
+      settings: store.exportSettings(),
+    };
+    await writeFile(result.filePath, JSON.stringify(payload, null, 2), "utf8");
+    return { canceled: false, path: result.filePath };
+  });
+
+  ipcMain.handle(CH.importSettings, async (): Promise<ImportSettingsResult> => {
+    const options = {
+      title: "Import PiShift Settings",
+      properties: ["openFile" as const],
+      filters: [{ name: "JSON", extensions: ["json"] }],
+    };
+    const result = win
+      ? await dialog.showOpenDialog(win, options)
+      : await dialog.showOpenDialog(options);
+    const filePath = result.canceled ? undefined : result.filePaths[0];
+    if (!filePath) return { canceled: true };
+    try {
+      const parsed: unknown = JSON.parse(await readFile(filePath, "utf8"));
+      const settings =
+        parsed && typeof parsed === "object" && "settings" in parsed ? parsed.settings : parsed;
+      store.importSettings(settings);
+      return { canceled: false, imported: true };
+    } catch (err) {
+      return { canceled: false, error: err instanceof Error ? err.message : String(err) };
+    }
   });
 
   ipcMain.on(CH.notify, (_e, title: string, body: string) => {

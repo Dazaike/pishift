@@ -13,6 +13,129 @@ import {
   isPasteMarkerStyle,
   isPasteModeSetting,
 } from "../shared/paste-attach";
+
+/** The subset of `PersistedState` that is a portable "setting" — excludes window
+ * bounds, the local omp executable path, recent folders, and the active tab list,
+ * all of which are machine/session-specific and never travel with export/import. */
+export type PersistedSettings = Omit<
+  PersistedState,
+  "tabs" | "activeIndex" | "bounds" | "ompPath" | "recentFolders"
+>;
+
+/** Normalizes an arbitrary (partial, possibly malformed) object into a full settings
+ * payload, falling back field-by-field to `defaults`. Shared by disk-load, export and
+ * import so all three paths reject the same malformed shapes the same way. */
+export function normalizeSettings(
+  raw: Partial<PersistedState>,
+  defaults: typeof DEFAULT_PERSISTED_SETTINGS,
+): PersistedSettings {
+  return {
+    autoUpdateOmpOnOpen:
+      typeof raw.autoUpdateOmpOnOpen === "boolean"
+        ? raw.autoUpdateOmpOnOpen
+        : defaults.autoUpdateOmpOnOpen,
+    themeName: raw.themeName ?? defaults.themeName,
+    theme: raw.theme,
+    fontFamily: typeof raw.fontFamily === "string" ? raw.fontFamily : defaults.fontFamily,
+    fontSize:
+      typeof raw.fontSize === "number" && Number.isFinite(raw.fontSize)
+        ? raw.fontSize
+        : defaults.fontSize,
+    scrollSteps:
+      typeof raw.scrollSteps === "number" && Number.isFinite(raw.scrollSteps)
+        ? raw.scrollSteps
+        : defaults.scrollSteps,
+    defaultViewMode:
+      raw.defaultViewMode === "chat" || raw.defaultViewMode === "terminal"
+        ? raw.defaultViewMode
+        : defaults.defaultViewMode,
+    autoExpandTools:
+      typeof raw.autoExpandTools === "boolean" ? raw.autoExpandTools : defaults.autoExpandTools,
+    autoExpandReasoning:
+      typeof raw.autoExpandReasoning === "boolean"
+        ? raw.autoExpandReasoning
+        : defaults.autoExpandReasoning,
+    doneSoundEnabled:
+      typeof raw.doneSoundEnabled === "boolean"
+        ? raw.doneSoundEnabled
+        : defaults.doneSoundEnabled,
+    doneSoundVolume:
+      typeof raw.doneSoundVolume === "number" && Number.isFinite(raw.doneSoundVolume)
+        ? raw.doneSoundVolume
+        : defaults.doneSoundVolume,
+    favoriteModels: Array.isArray(raw.favoriteModels) ? raw.favoriteModels : defaults.favoriteModels,
+    customModels: Array.isArray(raw.customModels) ? raw.customModels : defaults.customModels,
+    showFavoritesOnly:
+      typeof raw.showFavoritesOnly === "boolean"
+        ? raw.showFavoritesOnly
+        : defaults.showFavoritesOnly,
+    showUsageInHeader:
+      typeof raw.showUsageInHeader === "boolean"
+        ? raw.showUsageInHeader
+        : defaults.showUsageInHeader,
+    activityColors: raw.activityColors ?? defaults.activityColors,
+    activityColorsOnTabs:
+      typeof raw.activityColorsOnTabs === "boolean"
+        ? raw.activityColorsOnTabs
+        : defaults.activityColorsOnTabs,
+    todoPanelVisible:
+      typeof raw.todoPanelVisible === "boolean" ? raw.todoPanelVisible : defaults.todoPanelVisible,
+    todoPanelMode: raw.todoPanelMode ?? defaults.todoPanelMode,
+    hideTopButtonLabels:
+      typeof raw.hideTopButtonLabels === "boolean"
+        ? raw.hideTopButtonLabels
+        : defaults.hideTopButtonLabels,
+    hideBottomButtonLabels:
+      typeof raw.hideBottomButtonLabels === "boolean"
+        ? raw.hideBottomButtonLabels
+        : defaults.hideBottomButtonLabels,
+    collapseTopBarToMenu:
+      typeof raw.collapseTopBarToMenu === "boolean"
+        ? raw.collapseTopBarToMenu
+        : defaults.collapseTopBarToMenu,
+    panelPosition:
+      raw.panelPosition === "center" ||
+      raw.panelPosition === "top-center" ||
+      raw.panelPosition === "bottom-center" ||
+      raw.panelPosition === "top-right"
+        ? raw.panelPosition
+        : defaults.panelPosition,
+    tabPreviews: typeof raw.tabPreviews === "boolean" ? raw.tabPreviews : defaults.tabPreviews,
+    tabLayout: isTabLayout(raw.tabLayout) ? raw.tabLayout : defaults.tabLayout,
+    tabRailSide: isTabRailSide(raw.tabRailSide) ? raw.tabRailSide : defaults.tabRailSide,
+    tabRailHoverReachPx:
+      raw.tabRailHoverReachPx !== undefined
+        ? clampTabRailHoverReachPx(raw.tabRailHoverReachPx)
+        : defaults.tabRailHoverReachPx,
+    thinkingControlStyle:
+      raw.thinkingControlStyle === "horizontal" ||
+      raw.thinkingControlStyle === "vertical" ||
+      raw.thinkingControlStyle === "list"
+        ? raw.thinkingControlStyle
+        : defaults.thinkingControlStyle,
+    pasteMode: isPasteModeSetting(raw.pasteMode) ? raw.pasteMode : defaults.pasteMode,
+    pasteMarkerStyle: isPasteMarkerStyle(raw.pasteMarkerStyle)
+      ? raw.pasteMarkerStyle
+      : defaults.pasteMarkerStyle,
+    pasteMarkerPaint: isPasteMarkerPaint(raw.pasteMarkerPaint)
+      ? raw.pasteMarkerPaint
+      : defaults.pasteMarkerPaint,
+    pasteMarkerPulse:
+      typeof raw.pasteMarkerPulse === "boolean"
+        ? raw.pasteMarkerPulse
+        : defaults.pasteMarkerPulse,
+    splitRatio:
+      typeof raw.splitRatio === "number" && raw.splitRatio >= 0.1 && raw.splitRatio <= 0.9
+        ? raw.splitRatio
+        : undefined,
+    usageTracker: raw.usageTracker
+      ? normalizeUsageTrackerSettings(raw.usageTracker)
+      : defaults.usageTracker,
+    settingsSectionCollapsed: raw.settingsSectionCollapsed
+      ? normalizeSettingsSectionCollapsed(raw.settingsSectionCollapsed)
+      : defaults.settingsSectionCollapsed,
+  };
+}
 const DEBOUNCE_MS = 500;
 
 /** Window bounds, tab list and settings, persisted to `userData/state.json`. */
@@ -59,120 +182,10 @@ export class StateStore {
       return {
         bounds: raw.bounds,
         ompPath: raw.ompPath,
-        autoUpdateOmpOnOpen:
-          typeof raw.autoUpdateOmpOnOpen === "boolean"
-            ? raw.autoUpdateOmpOnOpen
-            : defaults.autoUpdateOmpOnOpen,
-        themeName: raw.themeName ?? defaults.themeName,
-        theme: raw.theme,
-        fontFamily: typeof raw.fontFamily === "string" ? raw.fontFamily : defaults.fontFamily,
-        fontSize:
-          typeof raw.fontSize === "number" && Number.isFinite(raw.fontSize)
-            ? raw.fontSize
-            : defaults.fontSize,
-        scrollSteps:
-          typeof raw.scrollSteps === "number" && Number.isFinite(raw.scrollSteps)
-            ? raw.scrollSteps
-            : defaults.scrollSteps,
-        defaultViewMode:
-          raw.defaultViewMode === "chat" || raw.defaultViewMode === "terminal"
-            ? raw.defaultViewMode
-            : defaults.defaultViewMode,
-        autoExpandTools:
-          typeof raw.autoExpandTools === "boolean"
-            ? raw.autoExpandTools
-            : defaults.autoExpandTools,
-        autoExpandReasoning:
-          typeof raw.autoExpandReasoning === "boolean"
-            ? raw.autoExpandReasoning
-            : defaults.autoExpandReasoning,
-        doneSoundEnabled:
-          typeof raw.doneSoundEnabled === "boolean"
-            ? raw.doneSoundEnabled
-            : defaults.doneSoundEnabled,
-        doneSoundVolume:
-          typeof raw.doneSoundVolume === "number" && Number.isFinite(raw.doneSoundVolume)
-            ? raw.doneSoundVolume
-            : defaults.doneSoundVolume,
-        favoriteModels: Array.isArray(raw.favoriteModels)
-          ? raw.favoriteModels
-          : defaults.favoriteModels,
-        customModels: Array.isArray(raw.customModels) ? raw.customModels : defaults.customModels,
-        showFavoritesOnly:
-          typeof raw.showFavoritesOnly === "boolean"
-            ? raw.showFavoritesOnly
-            : defaults.showFavoritesOnly,
-        showUsageInHeader:
-          typeof raw.showUsageInHeader === "boolean"
-            ? raw.showUsageInHeader
-            : defaults.showUsageInHeader,
-        activityColors: raw.activityColors ?? defaults.activityColors,
-        activityColorsOnTabs:
-          typeof raw.activityColorsOnTabs === "boolean"
-            ? raw.activityColorsOnTabs
-            : defaults.activityColorsOnTabs,
-        todoPanelVisible:
-          typeof raw.todoPanelVisible === "boolean"
-            ? raw.todoPanelVisible
-            : defaults.todoPanelVisible,
-        todoPanelMode: raw.todoPanelMode ?? defaults.todoPanelMode,
         recentFolders: Array.isArray(raw.recentFolders)
           ? raw.recentFolders.filter((f): f is string => typeof f === "string" && existsSync(f))
           : undefined,
-        hideTopButtonLabels:
-          typeof raw.hideTopButtonLabels === "boolean"
-            ? raw.hideTopButtonLabels
-            : defaults.hideTopButtonLabels,
-        hideBottomButtonLabels:
-          typeof raw.hideBottomButtonLabels === "boolean"
-            ? raw.hideBottomButtonLabels
-            : defaults.hideBottomButtonLabels,
-        collapseTopBarToMenu:
-          typeof raw.collapseTopBarToMenu === "boolean"
-            ? raw.collapseTopBarToMenu
-            : defaults.collapseTopBarToMenu,
-        panelPosition:
-          raw.panelPosition === "center" ||
-          raw.panelPosition === "top-center" ||
-          raw.panelPosition === "bottom-center" ||
-          raw.panelPosition === "top-right"
-            ? raw.panelPosition
-            : defaults.panelPosition,
-        tabPreviews:
-          typeof raw.tabPreviews === "boolean" ? raw.tabPreviews : defaults.tabPreviews,
-        tabLayout: isTabLayout(raw.tabLayout) ? raw.tabLayout : defaults.tabLayout,
-        tabRailSide: isTabRailSide(raw.tabRailSide) ? raw.tabRailSide : defaults.tabRailSide,
-        tabRailHoverReachPx:
-          raw.tabRailHoverReachPx !== undefined
-            ? clampTabRailHoverReachPx(raw.tabRailHoverReachPx)
-            : defaults.tabRailHoverReachPx,
-        thinkingControlStyle:
-          raw.thinkingControlStyle === "horizontal" ||
-          raw.thinkingControlStyle === "vertical" ||
-          raw.thinkingControlStyle === "list"
-            ? raw.thinkingControlStyle
-            : defaults.thinkingControlStyle,
-        pasteMode: isPasteModeSetting(raw.pasteMode) ? raw.pasteMode : defaults.pasteMode,
-        pasteMarkerStyle: isPasteMarkerStyle(raw.pasteMarkerStyle)
-          ? raw.pasteMarkerStyle
-          : defaults.pasteMarkerStyle,
-        pasteMarkerPaint: isPasteMarkerPaint(raw.pasteMarkerPaint)
-          ? raw.pasteMarkerPaint
-          : defaults.pasteMarkerPaint,
-        pasteMarkerPulse:
-          typeof raw.pasteMarkerPulse === "boolean"
-            ? raw.pasteMarkerPulse
-            : defaults.pasteMarkerPulse,
-        splitRatio:
-          typeof raw.splitRatio === "number" && raw.splitRatio >= 0.1 && raw.splitRatio <= 0.9
-            ? raw.splitRatio
-            : undefined,
-        usageTracker: raw.usageTracker
-          ? normalizeUsageTrackerSettings(raw.usageTracker)
-          : defaults.usageTracker,
-        settingsSectionCollapsed: raw.settingsSectionCollapsed
-          ? normalizeSettingsSectionCollapsed(raw.settingsSectionCollapsed)
-          : defaults.settingsSectionCollapsed,
+        ...normalizeSettings(raw, defaults),
         tabs,
         activeIndex: Math.min(
           Math.max(raw.activeIndex ?? 0, 0),
@@ -201,6 +214,24 @@ export class StateStore {
   }
   get recentFolders(): string[] {
     return this.state.recentFolders ?? [];
+  }
+
+  /** Sanitized settings payload for export — excludes window bounds, the local omp
+   * path, recent folders, and the active tab list, none of which are portable. */
+  exportSettings(): PersistedSettings {
+    return normalizeSettings(this.state, DEFAULT_PERSISTED_SETTINGS);
+  }
+
+  /** Merges an imported settings payload (as produced by `exportSettings`) into the
+   * store. Field-by-field normalization rejects malformed/foreign JSON the same way
+   * a corrupt `state.json` would be rejected on load. Persists immediately. */
+  importSettings(raw: unknown): void {
+    if (typeof raw !== "object" || raw === null) {
+      throw new Error("Settings file must contain a JSON object");
+    }
+    const settings = normalizeSettings(raw as Partial<PersistedState>, DEFAULT_PERSISTED_SETTINGS);
+    this.patch(settings);
+    this.flush();
   }
 
   addRecentFolder(folder: string): string[] {

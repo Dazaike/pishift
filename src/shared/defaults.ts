@@ -190,6 +190,7 @@ export const DEFAULT_PERSISTED_SETTINGS: Omit<PersistedState, "tabs" | "activeIn
     composer: true,
     "usage-tracker": false,
     interface: true,
+    backup: true,
   },
   pasteMode: "ask" as PasteModeSetting,
   pasteMarkerStyle: "content" as PasteMarkerStyle,
