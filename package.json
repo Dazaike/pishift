@@ -3,7 +3,7 @@
   "productName": "PiShift",
   "version": "1.9.30",
   "author": "Dazaike",
-  "desktopName": "dev.ohmypi.pishift.desktop",
+  "desktopName": "dev.ohmypi.pishift",
   "private": true,
   "description": "PiShift — Desktop terminal shell for Oh My Pi (omp)",
   "main": "out/main/index.js",
