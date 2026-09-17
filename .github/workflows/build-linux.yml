@@ -1,0 +1,52 @@
+name: Build Linux Installer
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to attach the Linux artifacts to (e.g. v1.9.31). Defaults to the pushed tag on tag-push runs."
+        required: false
+        type: string
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build Linux artifacts (AppImage + deb)
+        run: bun run dist:linux
+
+      - name: Resolve release tag
+        id: tag
+        run: |
+          if [ -n "${{ inputs.tag }}" ]; then
+            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload artifacts to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          files: |
+            release/*.AppImage
+            release/*.deb
