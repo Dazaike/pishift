@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag to attach the Linux artifacts to (e.g. v1.9.31). Defaults to the pushed tag on tag-push runs."
+        description: "Release tag to attach the Linux artifacts to (e.g. v1.9.31). Builds from the branch/ref that triggered this run; only the upload target is affected."
         required: false
         type: string
   push:
@@ -20,8 +20,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.tag || github.ref }}
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
