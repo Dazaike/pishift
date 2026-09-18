@@ -37,3 +37,4 @@ nsis:
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
+  differentialPackage: false
