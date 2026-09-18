@@ -507,11 +507,17 @@ interface BridgeState {
   updatedAt: string;
 }
 
-const STATUS_FILE = join(
+/**
+ * One file per `PISHIFT_SESSION_ID`, not a single shared file: concurrent omp
+ * sessions (two PiShift instances, or two tabs) used to clobber each other's
+ * durable status here with last-writer-wins. PiShift's `pty-manager.ts`
+ * deletes each session's file when its PTY exits.
+ */
+const STATUS_DIR = join(
   homedir(),
   ".omp",
   "agent",
-  "runtime-status.json",
+  "runtime-status",
 );
 
 const CANCEL_REQUEST_FILE = join(
@@ -522,7 +528,8 @@ const CANCEL_REQUEST_FILE = join(
 );
 
 const UDP_HOST = "127.0.0.1";
-const UDP_PORT = 37991;
+/** Used only when the host predates per-instance port negotiation. */
+const FALLBACK_UDP_PORT = 37991;
 const THINKING_LEVELS: Record<string, ThinkingLevel> = {
   off: (ThinkingLevel?.Off ?? "off") as ThinkingLevel,
 
@@ -583,6 +590,10 @@ function normalizeAskQuestions(raw: unknown): PendingAskQuestion[] {
 export default function controlBridge(pi: ExtensionAPI) {
   const sessionId = process.env.PISHIFT_SESSION_ID?.trim() || null;
   if (!sessionId) return;
+  const statusFile = join(STATUS_DIR, `${sessionId}.json`);
+  const envPort = process.env.PISHIFT_CONTROL_BRIDGE_PORT?.trim();
+  const udpPort =
+    envPort && /^\d+$/.test(envPort) ? Number(envPort) : FALLBACK_UDP_PORT;
 
   let activity: AgentActivity = "idle";
   const tracker = new ActivityTracker();
@@ -734,7 +745,7 @@ export default function controlBridge(pi: ExtensionAPI) {
     const json = JSON.stringify(state);
 
     if (writeFile) {
-      mkdirSync(dirname(STATUS_FILE), {
+      mkdirSync(dirname(statusFile), {
         recursive: true,
       });
 
@@ -742,7 +753,7 @@ export default function controlBridge(pi: ExtensionAPI) {
       // the file is the backstop for durable state, not for in-flight text.
       const { stream: _stream, ...durableState } = state;
       writeFileSync(
-        STATUS_FILE,
+        statusFile,
         JSON.stringify(durableState, null, 2),
         "utf8",
       );
@@ -755,7 +766,7 @@ export default function controlBridge(pi: ExtensionAPI) {
 
         socket.send(
           Buffer.from(json),
-          UDP_PORT,
+          udpPort,
           UDP_HOST,
         );
       } catch {

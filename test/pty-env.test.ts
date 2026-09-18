@@ -21,6 +21,7 @@ describe("buildPtyEnv", () => {
         COLORTERM: "",
       },
       "session-1",
+      54210,
     );
 
     for (const stripped of [
@@ -42,15 +43,21 @@ describe("buildPtyEnv", () => {
     expect(env.COLORTERM).toBe("truecolor");
     expect(env).not.toHaveProperty("ITERM_SESSION_ID");
     expect(env.PISHIFT_SESSION_ID).toBe("session-1");
+    expect(env.PISHIFT_CONTROL_BRIDGE_PORT).toBe("54210");
     expect(env).not.toHaveProperty(["OMP", "HIF_SESSION_ID"].join(""));
     expect(env.PATH).toBe("C:/Windows");
   });
 
   it("drops undefined values and never returns the caller's object", () => {
     const base = { A: "1", B: undefined };
-    const env = buildPtyEnv(base, "id");
+    const env = buildPtyEnv(base, "id", null);
     expect(env).not.toHaveProperty("B");
     expect(env.A).toBe("1");
     expect(base).not.toHaveProperty("ITERM_SESSION_ID");
+  });
+
+  it("omits the control-bridge port entirely when none is bound yet", () => {
+    const env = buildPtyEnv({}, "session-2", null);
+    expect(env).not.toHaveProperty("PISHIFT_CONTROL_BRIDGE_PORT");
   });
 });

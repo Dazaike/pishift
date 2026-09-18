@@ -13,6 +13,7 @@ import {
   isPasteMarkerStyle,
   isPasteModeSetting,
 } from "../shared/paste-attach";
+import { isToolDensity } from "../shared/tool-summary";
 
 /** The subset of `PersistedState` that is a portable "setting" — excludes window
  * bounds, the local omp executable path, recent folders, and the active tab list,
@@ -45,16 +46,20 @@ export function normalizeSettings(
       typeof raw.scrollSteps === "number" && Number.isFinite(raw.scrollSteps)
         ? raw.scrollSteps
         : defaults.scrollSteps,
+    chatZoom:
+      typeof raw.chatZoom === "number" && Number.isFinite(raw.chatZoom)
+        ? raw.chatZoom
+        : defaults.chatZoom,
     defaultViewMode:
       raw.defaultViewMode === "chat" || raw.defaultViewMode === "terminal"
         ? raw.defaultViewMode
         : defaults.defaultViewMode,
-    autoExpandTools:
-      typeof raw.autoExpandTools === "boolean" ? raw.autoExpandTools : defaults.autoExpandTools,
-    autoExpandReasoning:
-      typeof raw.autoExpandReasoning === "boolean"
-        ? raw.autoExpandReasoning
-        : defaults.autoExpandReasoning,
+    collapseReasoningOnReply:
+      typeof raw.collapseReasoningOnReply === "boolean"
+        ? raw.collapseReasoningOnReply
+        : defaults.collapseReasoningOnReply,
+    rawTextOnExpand:
+      typeof raw.rawTextOnExpand === "boolean" ? raw.rawTextOnExpand : defaults.rawTextOnExpand,
     doneSoundEnabled:
       typeof raw.doneSoundEnabled === "boolean"
         ? raw.doneSoundEnabled
@@ -114,6 +119,7 @@ export function normalizeSettings(
         ? raw.thinkingControlStyle
         : defaults.thinkingControlStyle,
     pasteMode: isPasteModeSetting(raw.pasteMode) ? raw.pasteMode : defaults.pasteMode,
+    toolDensity: isToolDensity(raw.toolDensity) ? raw.toolDensity : defaults.toolDensity,
     pasteMarkerStyle: isPasteMarkerStyle(raw.pasteMarkerStyle)
       ? raw.pasteMarkerStyle
       : defaults.pasteMarkerStyle,

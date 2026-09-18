@@ -72,7 +72,7 @@ const TOOL_PRIORITY: Record<AgentActivity, number> = {
 };
 
 /** `mcp__server__tool` -> `tool`; `Read`/`fs/read` -> `read`. */
-function normalizeToolKey(raw: string): string {
+export function normalizeToolKey(raw: string): string {
   let name = raw.toLowerCase();
   if (name.startsWith("mcp__")) {
     const sep = name.indexOf("__", 5);

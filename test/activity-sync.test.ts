@@ -41,4 +41,13 @@ describe("PiShift session environment contract", () => {
       expect(text).not.toContain(["OMP", "HIF_SESSION_ID"].join(""));
     }
   });
+
+  it("uses PISHIFT_CONTROL_BRIDGE_PORT in both the PTY host and standalone extension", () => {
+    const host = readFileSync(new URL("../src/main/pty-env.ts", import.meta.url), "utf8");
+    const extension = readFileSync(new URL("../extensions/control-bridge.ts", import.meta.url), "utf8");
+
+    for (const text of [host, extension]) {
+      expect(text).toContain("PISHIFT_CONTROL_BRIDGE_PORT");
+    }
+  });
 });

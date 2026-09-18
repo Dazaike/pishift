@@ -303,7 +303,7 @@ function registerIpc(): void {
   ipcMain.handle(CH.defaultCwd, () => getDefaultCwd());
   ipcMain.handle(CH.getModels, () => loadInstalledModels());
   ipcMain.handle(CH.getProviderUsage, () => queryOmpUsage());
-  ipcMain.handle(CH.readControlBridgeStatus, () => bridgeListener?.currentState ?? null);
+  ipcMain.handle(CH.readControlBridgeStatus, () => bridgeListener?.currentStates ?? []);
   ipcMain.handle(CH.checkOmpUpdate, () => checkOmpUpdate(store.ompPath));
   ipcMain.handle(CH.performOmpUpdate, () => performOmpUpdate(store.ompPath));
   ipcMain.handle(CH.getRecentFolders, () => loadRecentFolders(store.recentFolders));
@@ -465,7 +465,7 @@ if (!hasLock) {
     await ensureControlBridgeInstalled();
     nativeTheme.themeSource = "dark";
     store = new StateStore(app.getPath("userData"), getDefaultCwd());
-    ptys = new PtyManager(send, () => store.ompPath);
+    ptys = new PtyManager(send, () => store.ompPath, () => bridgeListener?.port ?? null);
     bridgeListener = new ControlBridgeListener((channel, payload) => {
       if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
     });

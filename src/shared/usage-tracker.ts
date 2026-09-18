@@ -58,6 +58,7 @@ export type SettingsSectionId =
   | "appearance"
   | "composer"
   | "usage-tracker"
+  | "chat-view"
   | "interface"
   | "backup";
 
@@ -65,6 +66,7 @@ export const SETTINGS_SECTION_IDS: readonly SettingsSectionId[] = [
   "appearance",
   "composer",
   "usage-tracker",
+  "chat-view",
   "interface",
   "backup",
 ];
@@ -73,6 +75,7 @@ export const DEFAULT_SETTINGS_SECTION_COLLAPSED: Record<SettingsSectionId, boole
   appearance: false,
   composer: false,
   "usage-tracker": false,
+  "chat-view": false,
   interface: false,
   backup: false,
 };

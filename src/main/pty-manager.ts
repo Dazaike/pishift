@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, unlinkSync } from "node:fs";
+import { join } from "node:path";
 import type { IPty } from "node-pty";
 import { spawn as ptySpawn } from "node-pty";
 
@@ -12,6 +13,7 @@ import {
   type PtyStallCleared,
   type SpawnRequest,
 } from "../shared/ipc";
+import { STATUS_DIR } from "./control-bridge-listener";
 import { resolveOmpPath } from "./omp-locate";
 import { buildPtyEnv } from "./pty-env";
 
@@ -69,6 +71,7 @@ export class PtyManager {
   constructor(
     private readonly emit: Emit,
     private readonly ompPath: () => string | undefined,
+    private readonly controlBridgePort: () => number | null,
   ) {}
 
   spawn(req: SpawnRequest): { id: string; pid: number } {
@@ -81,7 +84,7 @@ export class PtyManager {
       cols: Math.max(req.cols, 2),
       rows: Math.max(req.rows, 2),
       cwd,
-      env: buildPtyEnv(process.env, id),
+      env: buildPtyEnv(process.env, id, this.controlBridgePort()),
       useConpty: true,
       useConptyDll: process.platform === "win32",
     });
@@ -102,6 +105,13 @@ export class PtyManager {
     child.onExit(({ exitCode }) => {
       session.exited = true;
       this.sessions.delete(id);
+      // Best effort: leaves nothing behind for control-bridge-listener to ever
+      // mistake for a still-running session.
+      try {
+        unlinkSync(join(STATUS_DIR, `${id}.json`));
+      } catch {
+        // No status file was ever written for this session — nothing to clean up.
+      }
       this.emit(CH.ptyExit, { id, exitCode });
     });
 
