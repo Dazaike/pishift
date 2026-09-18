@@ -66,9 +66,9 @@ No fake web-view wrappers pretending to be terminals. Just a genuine hardware-ac
 - **Clickable Workspace Path:** Click the current folder path in the dock to open it in File Explorer. Because copying paths into Explorer like it's 2008 was always a bad plan.
 
 ### 🧠 Model & Reasoning Control for the Indecisive
-- **Model Switcher:** Grid view, list view, drag-and-drop reordering. Put your favorites at the top where they belong.
-- **One-Click Thinking Effort Cycle:** Stop typing `/m high` like a caveman. Just click through `Auto → Off → Min → Low → Medium → High → XHigh → Max`.
-- **Honest Plan Mode:** One click always drives toward ON or OFF, but the button shows what omp is *actually* in — emerald `Plan: ON`, amber `Plan: PAUSED`, or `Plan: OFF` — and follows a `/plan` typed straight into the terminal. No optimistic lying.
+- **Model Switcher:** Grid view, list view, drag-and-drop reordering to put your most-used models at the top.
+- **Thinking Effort Popover:** Stop typing `/m high` like a caveman. Click the thinking button to open a quick selector: `Off → Min → Low → Medium → High → XHigh → Max`.
+- **Honest Plan Mode:** One click always drives toward ON or OFF, but the button shows what omp is *actually* in — emerald `Plan: ON`, or `Plan: OFF` — amber-colored when omp is actually paused — and follows a `/plan` typed straight into the terminal. No optimistic lying.
 
 ### 🗂️ Tabs That Don’t Make You Want to Alt+F4
 - **Right-Click Power Context Menu:**
@@ -93,25 +93,26 @@ No fake web-view wrappers pretending to be terminals. Just a genuine hardware-ac
 
 ### 📊 It Reads omp's Own Databases
 - **Installed models**, grouped by provider, pulled from omp's model database — not a hardcoded list that rots in a week.
-- **Token and cost usage** with provider limits, optionally pinned in the header so you can watch the money leave.
+- **Provider quota usage** with live limit gauges, optionally pinned in the header so you always know where you stand.
 - **Recent folders and recent chats** sourced from real session history, not a guess.
 - **Transcript backfill on resume:** reopen a past session and your earlier messages come back, instead of an empty scrollback pretending nothing happened.
-- **Chat View:** Toggle each tab between raw xterm and a structured conversation view with live reasoning/text, grouped tool activity, transcript backfill, and per-view expansion controls. Because terminal scrollback is a terrible chat client.
+- **Chat View:** Toggle each tab between raw xterm and a structured conversation view with live reasoning/text, transcript backfill, and per-view expansion controls. Because terminal scrollback is a terrible chat client.
+- **Tool Density:** Two modes, one design. **Compact** (default) keeps every activity section, tool call, and thought folded; **Detailed** opens them all on arrival. Nothing else changes — expanded work looks identical either way, because shipping two different expanded layouts would be an admission of indecision. Compact also offers **Show Raw Text on Expand** for people who want the literal payload instead of the polished card.
 
 ### 🎨 28 Themes Because Aesthetics Matter
 - 28 built-in palettes (Tokyo Night, Catppuccin, Gruvbox, Nord, Cyberpunk, Rose Pine, Synthwave...).
-- Syncs the entire Windows titlebar overlay and frame colors so your dark mode doesn't get ruined by a blinding white caption bar.
+- Syncs the window background and frame color to your active theme so your dark mode doesn't get ruined by a blinding white caption bar.
 
 ### ⚙️ Settings That Actually Have Settings
 - **Themes & Settings** in one modal: palette picker, **Terminal Font Family** override, and interface toggles that persist.
 - **Composer Glow Colors:** pick a glow per agent activity, optionally color the tab busy indicators to match, and **Reset to defaults** when your palette experiment goes badly.
-- **Live Provider Quotas & Usage Tracker:** Pin live provider limits directly in the top bar with customizable gauge styles (Bar, Battery, Circle), tier-colored percentages (green/yellow/red), draggable/clickable order swapping, and custom refresh intervals.
+- **Live Provider Quotas & Usage Tracker:** Pin live provider limits directly in the top bar with customizable gauge styles (Bar, Battery, Circle), tier-colored percentages (green/yellow/red), clickable order swapping (◀/▶ and ▲/▼ buttons), and custom refresh intervals.
 - **Interface Options:** pin token/cost usage in the header, go icons-only in the top bar or the dock, collapse the top bar into a burger menu (☰), set **Recent Menus Placement** (Top Right, Center Screen, Top Center, Bottom Center), live **Hover Tab Previews** to peek at inactive session buffers, and tune **Scroll Wheel Steps**.
 - **Tab Layout:** pick how sessions live — **Vertical Rail (Docked Icons)** (48px left strip of glyphs that expands titles on hover, with glowing busy sweeps on background tabs), **Vertical Rail (Floating / Auto-hide)** (edge pill that blooms into the full rail), or **Horizontal (Compact)** (tiny top-bar tabs with wheel/nudge overflow).
 - **Long Paste behavior:** *Ask Each Time* by default, or lock it to always attach as a wrapped block, always attach as a local file, or always paste inline.
 - **Completion chime:** play a sound when the agent finishes working, with a volume slider and a **Test** button so you can pick something that won't make you hate your job.
 ### 🗃️ Quick-Switch Everything
-- **Recent Chats Popover:** Fuzzy-search and resume any past session by working directory without leaving the keyboard.
+- **Recent Chats Popover:** Search and resume any past session by working directory without leaving the keyboard.
 - **Recent Folders Popover:** Jump straight to any workspace you've opened before.
 - **App Menu Popover:** The old "Usage" window is now a fast vertical popover (Todo, Settings, Split Screen, Relaunch, Quit) instead of a separate window — matches the Model/Thinking menu feel.
 - **Native-Feeling Ask & Confirm Dialogs:** In-app modals replace blocking OS prompts for destructive actions and quick input.
@@ -130,10 +131,10 @@ No fake web-view wrappers pretending to be terminals. Just a genuine hardware-ac
 
 ### Download the binary (for people with places to be)
  Grab the latest release from the **[Releases](https://github.com/Dazaike/pishift/releases)** tab:
-- **`PiShift Setup 1.9.31.exe`** — Standard installer (Windows).
-- **`PiShift-1.9.31-win.zip`** — Portable zip if you have installer commitment issues (Windows).
-- **`PiShift-1.9.31.AppImage`** — Portable, no install needed (Linux, x64).
-- **`pishift_1.9.31_amd64.deb`** — Debian/Ubuntu package (Linux, x64).
+- **`PiShift Setup 1.9.32.exe`** — Standard installer (Windows).
+- **`PiShift-1.9.32-win.zip`** — Portable zip if you have installer commitment issues (Windows).
+- **`PiShift-1.9.32.AppImage`** — Portable, no install needed (Linux, x64).
+- **`pishift_1.9.32_amd64.deb`** — Debian/Ubuntu package (Linux, x64).
 ### Build from source (for hackers & tinkerers)
 
 ```bash

@@ -109,7 +109,7 @@ const api = {
   onControlBridgeStatus: (fn: (state: ControlBridgeState) => void): void => {
     ipcRenderer.on(CH.controlBridgeStatus, (_e, state: ControlBridgeState) => fn(state));
   },
-  readControlBridgeStatus: (): Promise<ControlBridgeState | null> =>
+  readControlBridgeStatus: (): Promise<ControlBridgeState[]> =>
     ipcRenderer.invoke(CH.readControlBridgeStatus),
 
   subscribeTranscript: (

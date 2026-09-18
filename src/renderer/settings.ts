@@ -45,8 +45,14 @@ import {
   type PasteModeSetting,
 } from "../shared/paste-attach";
 import {
+  isToolDensity,
+  TOOL_DENSITIES,
+  type ToolDensity,
+} from "../shared/tool-summary";
+import {
   buildCombinedReports,
   MIN_USAGE_TRACKER_REFRESH_MS,
+  SETTINGS_SECTION_IDS,
   USAGE_TRACKER_REFRESH_PRESETS,
   type SettingsSectionId,
   type UsageTrackerQuota,
@@ -55,6 +61,36 @@ import {
   usagePercentOfMax,
   usageTrackerQuotaKey,
 } from "../shared/usage-tracker";
+
+/** Sidebar label per section, in `SETTINGS_SECTION_IDS` order. */
+const SECTION_LABELS: Record<SettingsSectionId, string> = {
+  appearance: "Appearance",
+  composer: "Composer",
+  "usage-tracker": "Usage Tracker",
+  "chat-view": "Chat View",
+  interface: "Interface",
+  backup: "Backup & Restore",
+};
+
+/** Slider stop labels, in `TOOL_DENSITIES` order. */
+const TOOL_DENSITY_LABELS: Record<ToolDensity, string> = {
+  compact: "Compact",
+  detailed: "Detailed",
+};
+
+/**
+ * Sidebar glyph per section. Inline SVG rather than an icon font so it inherits
+ * `currentColor` and needs no asset loading; all paths are 16×16, stroke-only.
+ */
+const SECTION_ICONS: Record<SettingsSectionId, string> = {
+  appearance:
+    '<circle cx="8" cy="8" r="6"/><circle cx="6" cy="6" r="1.1" fill="currentColor" stroke="none"/><circle cx="10.4" cy="6.4" r="1.1" fill="currentColor" stroke="none"/><circle cx="6.4" cy="10.4" r="1.1" fill="currentColor" stroke="none"/>',
+  composer: '<path d="M2 4h12M2 8h8M2 12h5"/><path d="M11.5 12.5 14 10l1.2 1.2-2.5 2.5-1.4.3z"/>',
+  "usage-tracker": '<path d="M3 13V8M8 13V4M13 13v-3"/><path d="M1.5 14h13"/>',
+  "chat-view": '<path d="M14 9.5a2 2 0 0 1-2 2H6l-3.5 2.5V4a2 2 0 0 1 2-2h7.5a2 2 0 0 1 2 2z"/>',
+  interface: '<path d="M2.5 5h11M2.5 11h11"/><circle cx="6" cy="5" r="1.7"/><circle cx="10.5" cy="11" r="1.7"/>',
+  backup: '<path d="M8 2.5v7m0 0L5.3 6.8M8 9.5l2.7-2.7"/><path d="M2.5 11v1.5a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1V11"/>',
+};
 
 export class SettingsModal {
   readonly el: HTMLDivElement;
@@ -68,9 +104,10 @@ export class SettingsModal {
   private collapseTopBarToMenu: boolean;
   private panelPosition: PanelPosition;
   private defaultViewMode: ViewMode;
-  private autoExpandTools: boolean;
-  private autoExpandReasoning: boolean;
+  private toolDensity: ToolDensity;
+  private collapseReasoningOnReply: boolean;
   private tabPreviews: boolean;
+  private rawTextOnExpand: boolean;
   private tabLayout: TabLayout;
   private tabRailSide: TabRailSide;
   private tabRailHoverReachPx: number;
@@ -79,6 +116,10 @@ export class SettingsModal {
   private usageTracker: UsageTrackerSettings;
   private usageReports: ProviderUsageReport[];
   private settingsSectionCollapsed: Partial<Record<SettingsSectionId, boolean>>;
+  /** Section shown in the pane; the sidebar selects it. */
+  private activeSection: SettingsSectionId = "appearance";
+  /** Non-empty search text shows every matching row across all sections. */
+  private searchQuery = "";
   private usageIconError = "";
   private onSelectCallback: (preset: ThemePreset) => void;
   private onToggleUsageHeader: (show: boolean) => void;
@@ -94,9 +135,10 @@ export class SettingsModal {
   private onOmpUpdateChecked?: (res: OmpUpdateCheckResult) => void;
   private onPanelPositionChange: (pos: PanelPosition) => void;
   private onDefaultViewModeChange: (mode: ViewMode) => void;
-  private onToggleAutoExpandTools: (enabled: boolean) => void;
-  private onToggleAutoExpandReasoning: (enabled: boolean) => void;
+  private onToolDensityChange: (density: ToolDensity) => void;
+  private onToggleCollapseReasoningOnReply: (enabled: boolean) => void;
   private onToggleTabPreviews: (enabled: boolean) => void;
+  private onToggleRawTextOnExpand: (enabled: boolean) => void;
   private onTabLayoutChange: (layout: TabLayout) => void;
   private onTabRailSideChange: (side: TabRailSide) => void;
   private onTabRailHoverReachChange: (px: number) => void;
@@ -132,9 +174,10 @@ export class SettingsModal {
     collapseTopBarToMenu: boolean | undefined;
     panelPosition: PanelPosition | undefined;
     defaultViewMode: ViewMode | undefined;
-    autoExpandTools: boolean | undefined;
-    autoExpandReasoning: boolean | undefined;
+    toolDensity: ToolDensity | undefined;
+    collapseReasoningOnReply: boolean | undefined;
     onSelect: (preset: ThemePreset) => void;
+    rawTextOnExpand: boolean | undefined;
     onToggleUsageHeader: (show: boolean) => void;
     onFontChange: (family: string) => void;
     onActivityColorChange: (key: GlowActivity, color: string) => void;
@@ -148,9 +191,10 @@ export class SettingsModal {
     onPanelPositionChange: (pos: PanelPosition) => void;
     onOmpUpdateChecked?: (res: OmpUpdateCheckResult) => void;
     onDefaultViewModeChange: (mode: ViewMode) => void;
-    onToggleAutoExpandTools: (enabled: boolean) => void;
-    onToggleAutoExpandReasoning: (enabled: boolean) => void;
+    onToolDensityChange: (density: ToolDensity) => void;
+    onToggleCollapseReasoningOnReply: (enabled: boolean) => void;
     tabPreviews: boolean | undefined;
+    onToggleRawTextOnExpand: (enabled: boolean) => void;
     onToggleTabPreviews: (enabled: boolean) => void;
     tabLayout?: TabLayout | undefined;
     onTabLayoutChange: (layout: TabLayout) => void;
@@ -197,8 +241,9 @@ export class SettingsModal {
     this.onOmpUpdateChecked = opts.onOmpUpdateChecked;
     this.panelPosition = opts.panelPosition ?? "top-right";
     this.defaultViewMode = opts.defaultViewMode ?? "terminal";
-    this.autoExpandTools = opts.autoExpandTools ?? false;
-    this.autoExpandReasoning = opts.autoExpandReasoning ?? true;
+    this.toolDensity = opts.toolDensity ?? "compact";
+    this.collapseReasoningOnReply = opts.collapseReasoningOnReply ?? false;
+    this.rawTextOnExpand = opts.rawTextOnExpand ?? false;
     this.tabPreviews = opts.tabPreviews ?? true;
     this.tabLayout = opts.tabLayout ?? DEFAULT_TAB_LAYOUT;
     this.tabRailSide = opts.tabRailSide ?? DEFAULT_TAB_RAIL_SIDE;
@@ -219,8 +264,9 @@ export class SettingsModal {
     this.onToggleCollapseTopBarToMenu = opts.onToggleCollapseTopBarToMenu;
     this.onPanelPositionChange = opts.onPanelPositionChange;
     this.onDefaultViewModeChange = opts.onDefaultViewModeChange;
-    this.onToggleAutoExpandTools = opts.onToggleAutoExpandTools;
-    this.onToggleAutoExpandReasoning = opts.onToggleAutoExpandReasoning;
+    this.onToolDensityChange = opts.onToolDensityChange;
+    this.onToggleCollapseReasoningOnReply = opts.onToggleCollapseReasoningOnReply;
+    this.onToggleRawTextOnExpand = opts.onToggleRawTextOnExpand;
     this.onToggleTabPreviews = opts.onToggleTabPreviews;
     this.onTabLayoutChange = opts.onTabLayoutChange;
     this.onTabRailSideChange = opts.onTabRailSideChange;
@@ -280,7 +326,9 @@ export class SettingsModal {
 
   setUsageReports(reports: ProviderUsageReport[]): void {
     this.usageReports = reports;
-    if (this.isOpen) this.render();
+    // Only the usage rows depend on this; a full render here was what still
+    // flashed the entire modal every time the tracker fetched.
+    if (this.isOpen) this.refreshUsageSection();
   }
 
   syncState(state: {
@@ -295,8 +343,9 @@ export class SettingsModal {
     autoUpdateOmpOnOpen?: boolean;
     panelPosition?: PanelPosition;
     defaultViewMode?: ViewMode;
-    autoExpandTools?: boolean;
-    autoExpandReasoning?: boolean;
+    toolDensity?: ToolDensity;
+    collapseReasoningOnReply?: boolean;
+    rawTextOnExpand?: boolean;
     tabPreviews?: boolean;
     tabLayout?: TabLayout;
     tabRailSide?: TabRailSide;
@@ -346,11 +395,14 @@ export class SettingsModal {
     if (state.defaultViewMode) {
       this.defaultViewMode = state.defaultViewMode;
     }
-    if (typeof state.autoExpandTools === "boolean") {
-      this.autoExpandTools = state.autoExpandTools;
+    if (isToolDensity(state.toolDensity)) {
+      this.toolDensity = state.toolDensity;
     }
-    if (typeof state.autoExpandReasoning === "boolean") {
-      this.autoExpandReasoning = state.autoExpandReasoning;
+    if (typeof state.collapseReasoningOnReply === "boolean") {
+      this.collapseReasoningOnReply = state.collapseReasoningOnReply;
+    }
+    if (typeof state.rawTextOnExpand === "boolean") {
+      this.rawTextOnExpand = state.rawTextOnExpand;
     }
     if (typeof state.tabPreviews === "boolean") {
       this.tabPreviews = state.tabPreviews;
@@ -399,14 +451,145 @@ export class SettingsModal {
     }
   }
 
-  private toggleSection(id: SettingsSectionId): void {
-    const collapsed = !this.settingsSectionCollapsed[id];
-    this.settingsSectionCollapsed = { ...this.settingsSectionCollapsed, [id]: collapsed };
-    this.onSettingsSectionCollapsedChange(this.settingsSectionCollapsed);
-    this.render();
-    if (id === "usage-tracker" && !collapsed) {
-      void this.onRefreshUsage().finally(() => this.render());
+  /**
+   * Sidebar navigation, not accordions: one section shows at a time and
+   * switching animates the pane in from the direction travelled. The collapse
+   * state is still persisted (every non-active section counts as collapsed) so
+   * existing settings files keep round-tripping.
+   */
+  private selectSection(id: SettingsSectionId): void {
+    // Picking a category is an explicit exit from search results.
+    if (this.searchQuery) {
+      this.searchQuery = "";
+      const search = this.el.querySelector<HTMLInputElement>(".settings-search");
+      if (search) search.value = "";
+      this.applySearch();
     }
+    if (id === this.activeSection) return;
+    const from = SETTINGS_SECTION_IDS.indexOf(this.activeSection);
+    const to = SETTINGS_SECTION_IDS.indexOf(id);
+    this.activeSection = id;
+    this.settingsSectionCollapsed = Object.fromEntries(
+      SETTINGS_SECTION_IDS.map((section) => [section, section !== id]),
+    );
+    this.onSettingsSectionCollapsedChange(this.settingsSectionCollapsed);
+    this.showActiveSection(to > from ? "down" : "up");
+
+    if (id === "usage-tracker") {
+      void this.onRefreshUsage().finally(() => this.refreshUsageSection());
+    }
+  }
+
+  /**
+   * Reveal the active pane and mark the matching sidebar item. `direction` is
+   * the travel down or up the sidebar, so the pane slides in from that side.
+   */
+  private showActiveSection(direction: "down" | "up" | "none" = "none"): void {
+    for (const item of this.el.querySelectorAll<HTMLElement>("[data-nav-id]")) {
+      const selected = item.dataset.navId === this.activeSection;
+      item.classList.toggle("active", selected);
+      item.setAttribute("aria-selected", String(selected));
+    }
+    for (const section of this.el.querySelectorAll<HTMLElement>("[data-section-id]")) {
+      const selected = section.dataset.sectionId === this.activeSection;
+      section.hidden = !selected;
+      section.classList.remove("settings-enter-down", "settings-enter-up");
+      if (!selected || direction === "none") continue;
+      // Reading layout restarts the animation; the class alone would not replay.
+      void section.offsetWidth;
+      section.classList.add(direction === "down" ? "settings-enter-down" : "settings-enter-up");
+    }
+    const pane = this.el.querySelector<HTMLElement>(".settings-pane");
+    if (pane) pane.scrollTop = 0;
+  }
+
+  /** Every row a search can match, per section. */
+  private static readonly ROW_SELECTOR = [
+    ".settings-check-label",
+    ".settings-check-col",
+    ".settings-pos-row",
+    ".settings-slider-row",
+    ".settings-action-row",
+    ".settings-font-row",
+    ".theme-card",
+    ".settings-activity-row",
+    ".settings-usage-provider",
+  ].join(",");
+
+  /**
+   * Filter rows by search text.
+   *
+   * An empty query restores the single-section sidebar view. Otherwise every
+   * section with a hit is shown at once, since a searcher wants the setting,
+   * not the category it happens to live in.
+   */
+  private applySearch(): void {
+    const query = this.searchQuery.trim().toLowerCase();
+    const sections = Array.from(this.el.querySelectorAll<HTMLElement>("[data-section-id]"));
+    const pane = this.el.querySelector<HTMLElement>(".settings-pane");
+    const nav = this.el.querySelector<HTMLElement>(".settings-nav");
+
+    if (!query) {
+      for (const section of sections) {
+        for (const row of section.querySelectorAll<HTMLElement>(SettingsModal.ROW_SELECTOR)) {
+          row.hidden = false;
+        }
+        for (const rule of section.querySelectorAll<HTMLElement>(".settings-divider")) rule.hidden = false;
+      }
+      nav?.classList.remove("searching");
+      pane?.classList.remove("searching");
+      this.showActiveSection();
+      return;
+    }
+
+    let hits = 0;
+    for (const section of sections) {
+      const rows = Array.from(section.querySelectorAll<HTMLElement>(SettingsModal.ROW_SELECTOR));
+      let matched = 0;
+      for (const row of rows) {
+        const hit = (row.textContent ?? "").toLowerCase().includes(query);
+        row.hidden = !hit;
+        if (hit) matched++;
+      }
+      // Dividers separate groups that may now be empty, so they only add noise.
+      for (const rule of section.querySelectorAll<HTMLElement>(".settings-divider")) rule.hidden = true;
+      section.hidden = matched === 0;
+      section.classList.remove("settings-enter-down", "settings-enter-up");
+      hits += matched;
+    }
+
+    nav?.classList.add("searching");
+    pane?.classList.add("searching");
+    this.setSearchEmptyState(pane, hits === 0);
+    if (pane) pane.scrollTop = 0;
+  }
+
+  /** "No settings match …" placeholder, created on demand. */
+  private setSearchEmptyState(pane: HTMLElement | null, show: boolean): void {
+    if (!pane) return;
+    let empty = pane.querySelector<HTMLElement>(".settings-search-empty");
+    if (!show) {
+      empty?.remove();
+      return;
+    }
+    if (!empty) {
+      empty = document.createElement("p");
+      empty.className = "settings-search-empty";
+      pane.append(empty);
+    }
+    empty.textContent = `No settings match “${this.searchQuery.trim()}”.`;
+  }
+
+  /**
+   * Repaint the usage rows without touching the section element itself, so a
+   * pane animation in flight is never cancelled halfway.
+   */
+  private refreshUsageSection(): void {
+    const section = this.el.querySelector<HTMLElement>('[data-section-id="usage-tracker"]');
+    const inner = section?.querySelector<HTMLElement>(".settings-section-content-inner");
+    if (!inner) return;
+    const freshInner = this.renderUsageTrackerSection().querySelector(".settings-section-content-inner");
+    if (freshInner) inner.replaceChildren(...Array.from(freshInner.childNodes));
   }
 
   private appendSectionBody(section: HTMLElement, ...nodes: Node[]): void {
@@ -419,36 +602,58 @@ export class SettingsModal {
     section.append(wrap);
   }
 
-  private sectionHeader(id: SettingsSectionId, title: string, description: string): HTMLDivElement {
-    const collapsed = this.settingsSectionCollapsed[id] === true;
-    const header = document.createElement("div");
-    header.className = "settings-section-header clickable-header";
-    header.setAttribute("role", "button");
-    header.tabIndex = 0;
-    header.setAttribute("aria-expanded", String(!collapsed));
+  /** Rule between two groups of options of different input kinds. */
+  private divider(): HTMLDivElement {
+    const rule = document.createElement("div");
+    rule.className = "settings-divider";
+    return rule;
+  }
 
-    const row = document.createElement("div");
-    row.className = "settings-title-row";
-    const chevron = document.createElement("span");
-    chevron.className = "settings-chevron";
-    chevron.textContent = collapsed ? "▶" : "▼";
+  /** Tags a section so the sidebar can show or hide it. */
+  private markSection(section: HTMLElement, id: SettingsSectionId): HTMLElement {
+    section.dataset.sectionId = id;
+    return section;
+  }
+
+  private sectionHeader(_id: SettingsSectionId, title: string, description: string): HTMLDivElement {
+    const header = document.createElement("div");
+    header.className = "settings-section-header";
+
     const heading = document.createElement("h3");
     heading.className = "settings-section-title";
     heading.textContent = title;
-    row.append(chevron, heading);
 
     const desc = document.createElement("span");
     desc.className = "settings-desc";
-    desc.textContent = collapsed ? `${title} collapsed (click to expand)` : description;
-    header.append(row, desc);
-    header.addEventListener("click", () => this.toggleSection(id));
-    header.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" || event.key === " ") {
-        event.preventDefault();
-        this.toggleSection(id);
-      }
-    });
+    desc.textContent = description;
+    header.append(heading, desc);
     return header;
+  }
+
+  /** Sidebar rail listing every section, in `SETTINGS_SECTION_IDS` order. */
+  private renderSidebar(): HTMLElement {
+    const nav = document.createElement("nav");
+    nav.className = "settings-nav";
+    nav.setAttribute("role", "tablist");
+    for (const id of SETTINGS_SECTION_IDS) {
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "settings-nav-item";
+      item.dataset.navId = id;
+      item.setAttribute("role", "tab");
+      const icon = document.createElement("span");
+      icon.className = "settings-nav-icon";
+      icon.setAttribute("aria-hidden", "true");
+      // Safe: the markup is a module constant, never user or session input.
+      icon.innerHTML = `<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">${SECTION_ICONS[id]}</svg>`;
+      const label = document.createElement("span");
+      label.className = "settings-nav-label";
+      label.textContent = SECTION_LABELS[id];
+      item.append(icon, label);
+      item.addEventListener("click", () => this.selectSection(id));
+      nav.append(item);
+    }
+    return nav;
   }
 
   private render(): void {
@@ -470,7 +675,16 @@ export class SettingsModal {
     closeBtn.innerHTML = "&times;";
     closeBtn.title = "Close";
     closeBtn.addEventListener("click", () => this.close());
-    header.append(title, closeBtn);
+    const search = document.createElement("input");
+    search.type = "search";
+    search.className = "settings-search";
+    search.placeholder = "Search settings\u2026";
+    search.value = this.searchQuery;
+    search.addEventListener("input", () => {
+      this.searchQuery = search.value;
+      this.applySearch();
+    });
+    header.append(title, search, closeBtn);
 
     // Scrollable Body
     const body = document.createElement("div");
@@ -612,9 +826,8 @@ export class SettingsModal {
     fontInput.addEventListener("change", onFontUpdate);
     fontRow.append(fontLabel, fontInput);
     fontSection.append(fontHeader, fontRow);
-    if (!this.settingsSectionCollapsed.appearance) {
-      this.appendSectionBody(themeSection, themeList, fontSection);
-    }
+    this.markSection(themeSection, "appearance");
+    this.appendSectionBody(themeSection, themeList, fontSection);
 
     // Section 3: Composer Glow Colors
     const activitySection = this.renderActivityColors();
@@ -928,31 +1141,86 @@ export class SettingsModal {
 
 
 
-    const autoExpandToolsLabel = document.createElement("label");
-    autoExpandToolsLabel.className = "settings-check-label";
-    const autoExpandToolsCheck = document.createElement("input");
-    autoExpandToolsCheck.type = "checkbox";
-    autoExpandToolsCheck.checked = this.autoExpandTools;
-    autoExpandToolsCheck.addEventListener("change", () => {
-      this.autoExpandTools = autoExpandToolsCheck.checked;
-      this.onToggleAutoExpandTools(this.autoExpandTools);
+    // Only meaningful in Detailed, the one density that opens reasoning: fold it
+    // back once the reply's own prose starts.
+    const collapseReasoningLabel = document.createElement("label");
+    collapseReasoningLabel.className = "settings-check-label";
+    const collapseReasoningCheck = document.createElement("input");
+    collapseReasoningCheck.type = "checkbox";
+    collapseReasoningCheck.checked = this.collapseReasoningOnReply;
+    collapseReasoningCheck.disabled = this.toolDensity !== "detailed";
+    collapseReasoningCheck.addEventListener("change", () => {
+      this.collapseReasoningOnReply = collapseReasoningCheck.checked;
+      this.onToggleCollapseReasoningOnReply(this.collapseReasoningOnReply);
     });
-    const autoExpandToolsText = document.createElement("span");
-    autoExpandToolsText.textContent = "Auto-expand Tool Groups in Chat View";
-    autoExpandToolsLabel.append(autoExpandToolsCheck, autoExpandToolsText);
+    const collapseReasoningText = document.createElement("span");
+    collapseReasoningText.textContent = "Collapse Reasoning once the reply starts";
+    collapseReasoningLabel.append(collapseReasoningCheck, collapseReasoningText);
 
-    const autoExpandReasoningLabel = document.createElement("label");
-    autoExpandReasoningLabel.className = "settings-check-label";
-    const autoExpandReasoningCheck = document.createElement("input");
-    autoExpandReasoningCheck.type = "checkbox";
-    autoExpandReasoningCheck.checked = this.autoExpandReasoning;
-    autoExpandReasoningCheck.addEventListener("change", () => {
-      this.autoExpandReasoning = autoExpandReasoningCheck.checked;
-      this.onToggleAutoExpandReasoning(this.autoExpandReasoning);
+    // Compact only: Detailed always uses the polished card, so the row hides
+    // there — its saved value is kept for the trip back to Compact.
+    const rawTextLabel = document.createElement("label");
+    rawTextLabel.className = "settings-check-label";
+    const rawTextCheck = document.createElement("input");
+    rawTextCheck.type = "checkbox";
+    rawTextCheck.checked = this.rawTextOnExpand;
+    rawTextCheck.addEventListener("change", () => {
+      this.rawTextOnExpand = rawTextCheck.checked;
+      this.onToggleRawTextOnExpand(this.rawTextOnExpand);
     });
-    const autoExpandReasoningText = document.createElement("span");
-    autoExpandReasoningText.textContent = "Auto-expand Reasoning in Chat View";
-    autoExpandReasoningLabel.append(autoExpandReasoningCheck, autoExpandReasoningText);
+    const rawTextText = document.createElement("span");
+    rawTextText.textContent = "Show Raw Text on Expand";
+    rawTextLabel.append(rawTextCheck, rawTextText);
+    rawTextLabel.hidden = this.toolDensity !== "compact";
+
+    // Option: how much tool activity Chat Mode prints per action.
+    const densityRow = document.createElement("div");
+    densityRow.className = "settings-slider-row settings-slider-row-inline";
+    const densityLabel = document.createElement("label");
+    densityLabel.className = "settings-pos-label";
+    densityLabel.textContent = "Tool Density";
+    densityLabel.title =
+      "Compact keeps activity collapsed; Detailed auto-expands it with diffs and command output.";
+    const densityValue = document.createElement("span");
+    densityValue.className = "settings-slider-value";
+    densityValue.textContent = TOOL_DENSITY_LABELS[this.toolDensity];
+    const densityHead = document.createElement("div");
+    densityHead.className = "settings-slider-head";
+    densityHead.append(densityLabel, densityValue);
+
+    const densityInput = document.createElement("input");
+    densityInput.type = "range";
+    densityInput.className = "settings-slider";
+    densityInput.min = "0";
+    densityInput.max = String(TOOL_DENSITIES.length - 1);
+    densityInput.step = "1";
+    densityInput.value = String(TOOL_DENSITIES.indexOf(this.toolDensity));
+
+    const densityTicks = document.createElement("div");
+    densityTicks.className = "settings-slider-ticks";
+    const densityTickNodes = TOOL_DENSITIES.map((density) => {
+      const tick = document.createElement("span");
+      tick.textContent = TOOL_DENSITY_LABELS[density];
+      if (density === this.toolDensity) tick.classList.add("active");
+      densityTicks.append(tick);
+      return tick;
+    });
+
+    densityInput.addEventListener("input", () => {
+      this.toolDensity = TOOL_DENSITIES[Number(densityInput.value)] ?? "compact";
+      densityValue.textContent = TOOL_DENSITY_LABELS[this.toolDensity];
+      for (let i = 0; i < densityTickNodes.length; i++) {
+        densityTickNodes[i].classList.toggle("active", TOOL_DENSITIES[i] === this.toolDensity);
+      }
+      collapseReasoningCheck.disabled = this.toolDensity !== "detailed";
+      rawTextLabel.hidden = this.toolDensity !== "compact";
+      this.onToolDensityChange(this.toolDensity);
+    });
+    // The three stops need a fixed column, not the whole settings pane.
+    const densityTrack = document.createElement("div");
+    densityTrack.className = "settings-slider-short";
+    densityTrack.append(densityInput, densityTicks);
+    densityRow.append(densityHead, densityTrack);
 
     // Option 6b: Hover tab previews
     const tabPreviewsLabel = document.createElement("label");
@@ -1150,38 +1418,71 @@ export class SettingsModal {
     volumeHead.append(volumeLabel, volumeValue, previewBtn);
     volumeRow.append(volumeHead, volumeInput);
 
+    // Grouped by input kind — toggles, menus, segmented controls, sliders,
+    // then actions — with a rule between each group.
     optionsList.append(
+      usageLabel,
       tabPreviewsLabel,
-      scrollRow,
       topLabelsLabel,
       bottomLabelsLabel,
       burgerMenuLabel,
       autoUpdateRow,
-      ompCheckRow,
-      posRow,
-      viewModeRow,
-      thinkingStyleRow,
-      autoExpandToolsLabel,
-      tabRailSideRow,
-      tabRailHoverRow,
-      autoExpandReasoningLabel,
-      scrollRow,
       doneSoundLabel,
+      this.divider(),
+      posRow,
+      tabLayoutRow,
+      tabRailSideRow,
+      this.divider(),
+      thinkingStyleRow,
+      this.divider(),
       volumeRow,
+      scrollRow,
+      tabRailHoverRow,
+      this.divider(),
+      ompCheckRow,
     );
-    if (!this.settingsSectionCollapsed.composer) {
-      this.appendSectionBody(activitySection, pasteRow, markerRow, paintRow, pulseLabel);
-    }
+    // Three paste menus, then the one toggle they gate.
+    this.appendSectionBody(activitySection, pasteRow, markerRow, paintRow, this.divider(), pulseLabel);
     interfaceSection.append(interfaceHeader);
-    if (!this.settingsSectionCollapsed.interface) this.appendSectionBody(interfaceSection, optionsList);
+    this.markSection(interfaceSection, "interface");
+    this.appendSectionBody(interfaceSection, optionsList);
 
-    body.append(
+    // Chat View lives in its own section: these only affect the structured
+    // conversation renderer, and were impossible to find buried in Interface.
+    const chatSection = document.createElement("section");
+    chatSection.className = "settings-section";
+    chatSection.append(
+      this.sectionHeader(
+        "chat-view",
+        "Chat View",
+        "Default view mode, tool activity, and reasoning behavior in the structured conversation view.",
+      ),
+    );
+    this.markSection(chatSection, "chat-view");
+    const chatList = document.createElement("div");
+    chatList.className = "settings-options-list";
+    chatList.append(
+      viewModeRow,
+      this.divider(),
+      densityRow,
+      this.divider(),
+      collapseReasoningLabel,
+      rawTextLabel,
+    );
+    this.appendSectionBody(chatSection, chatList);
+
+    // Sections all live in the DOM; the sidebar reveals one pane at a time.
+    const pane = document.createElement("div");
+    pane.className = "settings-pane";
+    pane.append(
       themeSection,
       activitySection,
       this.renderUsageTrackerSection(),
+      chatSection,
       interfaceSection,
       this.renderBackupSection(),
     );
+    body.append(this.renderSidebar(), pane);
 
     // Fixed Footer
     const footer = document.createElement("footer");
@@ -1197,6 +1498,8 @@ export class SettingsModal {
 
     dialog.append(header, body, footer);
     this.el.appendChild(dialog);
+    if (this.searchQuery.trim()) this.applySearch();
+    else this.showActiveSection();
   }
 
   private renderActivityColors(): HTMLElement {
@@ -1219,9 +1522,7 @@ export class SettingsModal {
       this.onResetActivityColors();
       this.render();
     });
-    if (!this.settingsSectionCollapsed.composer) {
-      heading.append(resetBtn);
-    }
+    heading.append(resetBtn);
     const grid = document.createElement("div");
     grid.className = "settings-activity-grid";
     for (const key of GLOW_ACTIVITIES) {
@@ -1258,7 +1559,8 @@ export class SettingsModal {
     tabsToggle.append(tabsCheck, tabsText);
 
     section.append(heading);
-    if (!this.settingsSectionCollapsed.composer) this.appendSectionBody(section, grid, tabsToggle);
+    this.markSection(section, "composer");
+    this.appendSectionBody(section, grid, tabsToggle);
     return section;
   }
 
@@ -1272,7 +1574,7 @@ export class SettingsModal {
         "Export settings to a file, or import settings saved from another machine.",
       ),
     );
-    if (this.settingsSectionCollapsed.backup) return section;
+    this.markSection(section, "backup");
 
     const exportRow = document.createElement("div");
     exportRow.className = "settings-action-row";
@@ -1358,7 +1660,7 @@ export class SettingsModal {
         "Select live provider quotas to show beside Recent Chats.",
       ),
     );
-    if (this.settingsSectionCollapsed["usage-tracker"]) return section;
+    this.markSection(section, "usage-tracker");
 
     const content = document.createElement("div");
     content.className = "settings-options-list";
@@ -1398,7 +1700,7 @@ export class SettingsModal {
         ...this.usageTracker,
         orientation,
       });
-      this.render();
+      this.refreshUsageSection();
     });
     orientationRow.append(orientationLabel, orientationSelect);
     const iconPlacementRow = document.createElement("div");
@@ -1445,7 +1747,7 @@ export class SettingsModal {
     combine.addEventListener("change", () => {
       this.updateUsageTracker({ ...this.usageTracker, combineAccounts: combine.checked });
       combineMaxRow.hidden = !combine.checked;
-      this.render();
+      this.refreshUsageSection();
     });
     const combineText = document.createElement("span");
     combineText.textContent = "Combine multi-account usage (e.g. Anthropic, OpenAI)";
@@ -1474,7 +1776,7 @@ export class SettingsModal {
         ...this.usageTracker,
         combineAccountsMax: combineMax.value === "100" ? 100 : 200,
       });
-      this.render();
+      this.refreshUsageSection();
     });
     combineMaxRow.append(combineMaxLabel, combineMax);
 
@@ -1519,7 +1821,7 @@ export class SettingsModal {
           refreshIntervalMs: Math.max(MIN_USAGE_TRACKER_REFRESH_MS, Number(interval.value)),
         });
       }
-      this.render();
+      this.refreshUsageSection();
     });
     intervalRow.append(intervalLabel, interval);
 
@@ -1546,16 +1848,21 @@ export class SettingsModal {
     refreshButton.type = "button";
     refreshButton.className = "settings-sound-preview";
     refreshButton.textContent = "Refresh live quotas";
-    refreshButton.addEventListener("click", () => void this.onRefreshUsage().finally(() => this.render()));
+    refreshButton.addEventListener("click", () => void this.onRefreshUsage().finally(() => this.refreshUsageSection()));
     content.append(
+      // Toggles.
       enabledLabel,
-      orientationRow,
-      iconPlacementRow,
       percentLabel,
       combineLabel,
+      this.divider(),
+      // Menus.
+      orientationRow,
+      iconPlacementRow,
       combineMaxRow,
       intervalRow,
       customRow,
+      this.divider(),
+      // Action.
       refreshButton,
     );
 
@@ -1648,7 +1955,7 @@ export class SettingsModal {
     const saveAll = (nextItems: QuotaItem[]): void => {
       const quotas = nextItems.map((item) => item.quota);
       this.updateUsageTracker({ ...this.usageTracker, quotas });
-      this.render();
+      this.refreshUsageSection();
     };
 
     const swapItems = (idxA: number, idxB: number): void => {
@@ -1844,11 +2151,11 @@ export class SettingsModal {
             ...this.usageTracker,
             providerIconUrls: { ...this.usageTracker.providerIconUrls, [provider]: reader.result },
           });
-          this.render();
+          this.refreshUsageSection();
         });
         reader.addEventListener("error", () => {
           this.usageIconError = "Could not read icon image.";
-          this.render();
+          this.refreshUsageSection();
         });
         reader.readAsDataURL(selected);
       });
@@ -1865,7 +2172,7 @@ export class SettingsModal {
         const providerIconUrls = { ...this.usageTracker.providerIconUrls };
         delete providerIconUrls[provider];
         this.updateUsageTracker({ ...this.usageTracker, providerIconUrls });
-        this.render();
+        this.refreshUsageSection();
       });
       row.append(url, file, choose, reset);
       providerRow.append(title, row);
@@ -1877,7 +2184,7 @@ export class SettingsModal {
       status.textContent = this.usageIconError;
       content.append(status);
     }
-    section.append(content);
+    this.appendSectionBody(section, content);
     return section;
   }
 

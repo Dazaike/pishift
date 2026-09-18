@@ -25,6 +25,7 @@ const STRIP: readonly string[] = [
 export function buildPtyEnv(
   base: NodeJS.ProcessEnv,
   sessionId: string,
+  controlBridgePort: number | null,
 ): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(base)) {
@@ -37,6 +38,11 @@ export function buildPtyEnv(
   env.COLORTERM = "truecolor";
   // Unique per hosted tab so control-bridge telemetry can target the right chrome.
   env.PISHIFT_SESSION_ID = sessionId;
+  // Each PiShift instance binds an OS-assigned ephemeral UDP port instead of a
+  // shared fixed one, so two instances running at once never fight over who
+  // gets to receive live telemetry. The extension falls back to the legacy
+  // fixed port when this is absent (a host predating this contract).
+  if (controlBridgePort !== null) env.PISHIFT_CONTROL_BRIDGE_PORT = String(controlBridgePort);
   // No ITERM_SESSION_ID: in-terminal IIP graphics are unsafe in this shell.
   return env;
 }

@@ -424,6 +424,14 @@ export class Dock {
     this.input.focus();
   }
 
+  /** Replace the composer's text and focus it, leaving the send to the user. */
+  prefill(text: string): void {
+    this.input.value = text;
+    this.render();
+    this.input.focus();
+    this.input.setSelectionRange(this.input.value.length, this.input.value.length);
+  }
+
   setCwd(cwd: string): void {
     this.cwdLabel.textContent = cwd;
     this.cwdLabel.title = cwd;
@@ -610,11 +618,6 @@ export class Dock {
       }, 160);
       this.toastTimer = null;
     }, durationMs);
-  }
-  toggleExpanded(): void {
-    this.root.classList.toggle("expanded");
-    this.autoGrow();
-    this.focus();
   }
 
   addPaths(paths: readonly string[]): void {

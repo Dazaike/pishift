@@ -45,4 +45,25 @@ describe("ControlBridgeListener stream dispatch", () => {
     expect(broadcasts).toHaveLength(2);
     expect(broadcasts[1].stream).toEqual({ kind: "text", text: "partial reply" });
   });
+
+  it("broadcasts an omp-side resume, which changes only the omp session id", () => {
+    const broadcasts: ControlBridgeState[] = [];
+    const listener = Object.create(ControlBridgeListener.prototype) as ListenerInternals;
+    listener.bySession = new Map();
+    listener.fingerprintBySession = new Map();
+    listener.lastState = null;
+    listener.broadcast = (_channel, state) => {
+      broadcasts.push(state);
+    };
+
+    // Idle, same pid, same PISHIFT_SESSION_ID: `/resume` moves nothing else.
+    const idle: ControlBridgeState = { ...base, running: false, activity: "idle", ompSessionId: "omp-old" };
+    listener.emitState(idle);
+    listener.emitState({ ...idle });
+    listener.emitState({ ...idle, ompSessionId: "omp-new" });
+    listener.emitState({ ...idle, ompSessionId: "omp-new", cwd: "C:\\other" });
+
+    expect(broadcasts.map((state) => state.ompSessionId)).toEqual(["omp-old", "omp-new", "omp-new"]);
+    expect(broadcasts[2].cwd).toBe("C:\\other");
+  });
 });

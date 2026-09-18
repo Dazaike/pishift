@@ -3,6 +3,35 @@
 All notable changes to PiShift are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.9.32] — 2026-09-18
+
+### Added
+- **Activity sections.** A run of thinking and tool calls is now one continuous, collapsible section headed by the work it did and how long it took — `ACTIVITY · 11 edits, 5 reads, 2 searches · 3m 04s` — instead of a separate card per event. The section spans consecutive assistant rows, so think → tool → think → tool → think reads as one sequence and ends when the reply's prose begins.
+- **Tool Density** under Settings → Chat View, now a two-stop control: **Compact** (default) leaves every activity section, tool row, and reasoning block folded; **Detailed** opens them all. Density decides default expansion only — never layout.
+- **Show Raw Text on Expand** (Compact only): manually expanding a tool prints a literal developer view — verb and path, `Lines 24–61`, the command, the diff, the content actually written or read — instead of the polished card. The preference persists and is hidden and ignored while Detailed is active.
+- Disclosure animation on every collapsible in the transcript via `::details-content` + `interpolate-size`, plus hover/press feedback on each summary and a fade-slide for steps that arrive while you are watching.
+- Live status is now inline muted subtext with a shimmer sweep; a change of activity slides the old word up and out and the new one in, and the elapsed counter ticks without restarting the animation.
+
+### Changed
+- **Markdown renders while the reply is being written.** Previously only the first delta was rendered and everything after it streamed as plain text until the persisted row replaced it. The in-flight reply is now split into fence-aware markdown blocks and only the changed tail block re-renders, so headings, bold, lists, and code fences appear as they are typed while finished blocks above are never touched.
+- One expanded design for both densities. The per-call card border, the Compact one-line preview, and the burst-summary sentence are gone; every tool row is borderless and opens onto the same body.
+- A **write** renders as an all-green diff of the content it wrote instead of dumping its arguments JSON and the harness acknowledgement.
+- An **edit** shows only the change. Replaced spans are named from the patch (`− lines 4–13, 20 replaced (11)`) rather than a bare count; the raw patch text and the post-edit file echo are no longer printed.
+- A **read** shows `Lines 24–61` (from the path selector, else derived from the printed numbering) plus its content, with no arguments JSON.
+- Diffs and payloads scroll on both axes instead of truncating at ten lines with a `+N more lines` tail.
+- omp's reclaimed-read placeholder renders as a muted note rather than as file content.
+- Completed activity rows dropped the trailing success check-mark and the duplicate timestamp that floated inside the box; running and failed markers stay.
+- Chat View tool calls render as readable activity lines built from the call's own payload (file names with `+added`/`−removed` counts, commands with their intent, search patterns with their target file) instead of raw name/JSON cards.
+- Persisted reasoning rows read "Thought" instead of "Thinking"/"Reasoning"; the live row still says "Thinking" while it is being written.
+
+### Fixed
+- Chat View no longer blanks a few seconds after opening. The transcript watcher emits an empty replacement whenever it re-resolves a file that has not been written yet (late `ompSessionId`, `/resume`), and the old guard ignored those only when the resolved path was null — so the rendered conversation was wiped and came back only after switching to Terminal and away. An empty replacement can never clear rendered rows now; only a real session switch does.
+- Resuming a chat from omp's own picker (or `/resume` typed in the terminal) shows the transcript immediately instead of waiting for your next keystroke. The control-bridge dedupe fingerprint omitted `ompSessionId` and `cwd`, and an omp-side resume changes nothing else, so the status was never broadcast to the renderer.
+
+### Removed
+- The **Balanced** density. Its behavior is the new Compact default.
+- **Auto-expand Tool Activity in Chat View** and **Auto-expand Reasoning in Chat View**; Tool Density is now the only control over what opens automatically.
+
 ## [1.9.31] — 2026-09-17
 
 ### Added

@@ -46,6 +46,7 @@ import {
   type PasteMarkerStyle,
 } from "../shared/paste-attach";
 import { DEFAULT_PERSISTED_SETTINGS } from "../shared/defaults";
+import { isToolDensity, type ToolDensity } from "../shared/tool-summary";
 import {
   FONT_FAMILY,
   FONT_SIZE,
@@ -88,7 +89,7 @@ import { attachButtonSpring, attachToolbarHoverPill, safeAnimate, springPresets,
 import { JobActivityModal } from "./job-activity-modal";
 import { RecentFoldersModal } from "./recent-folders-modal";
 import { RecentChatsModal } from "./recent-chats-modal";
-import { ChatView } from "./chat-view";
+import { ChatView, DEFAULT_CHAT_ZOOM, clampChatZoom } from "./chat-view";
 import { TopMenu } from "./top-menu";
 import { TabRail, type TabRailEntry } from "./tab-rail";
 import { TabPreviewPopover, type TabPreviewInfo } from "./tab-preview";
@@ -267,6 +268,8 @@ let showUsageInHeader = startupAppearance.showUsageInHeader ?? DEFAULT_PERSISTED
 let customFontFamily = DEFAULT_PERSISTED_SETTINGS.fontFamily ?? "";
 /** Terminal zoom (xterm font px); restored across app restarts. */
 let terminalFontSize = DEFAULT_PERSISTED_SETTINGS.fontSize ?? FONT_SIZE;
+/** Chat view zoom (CSS zoom factor); restored across app restarts. */
+let chatZoom = DEFAULT_PERSISTED_SETTINGS.chatZoom ?? DEFAULT_CHAT_ZOOM;
 const KNOWN_ACTIVITIES: readonly ControlBridgeActivity[] = ["idle", ...GLOW_ACTIVITIES];
 let activityColors: Record<GlowActivity, string> = { ...DEFAULT_ACTIVITY_COLORS, ...(DEFAULT_PERSISTED_SETTINGS.activityColors ?? {}) };
 let activityColorsOnTabs = DEFAULT_PERSISTED_SETTINGS.activityColorsOnTabs ?? true;
@@ -285,10 +288,12 @@ let panelPosition: PanelPosition = DEFAULT_PERSISTED_SETTINGS.panelPosition ?? "
 let defaultViewMode: ViewMode = DEFAULT_PERSISTED_SETTINGS.defaultViewMode ?? "terminal";
 /** Thinking level selector presentation: horizontal slider (default), vertical slider, or original list menu. */
 let thinkingControlStyle: ThinkingControlStyle = "horizontal";
-/** Whether chat tool groups open automatically. */
-let autoExpandTools = DEFAULT_PERSISTED_SETTINGS.autoExpandTools ?? true;
-/** Whether completed transcript reasoning rows open automatically. */
-let autoExpandReasoning = DEFAULT_PERSISTED_SETTINGS.autoExpandReasoning ?? true;
+/** How much detail Chat Mode prints for tool activity. */
+let toolDensity: ToolDensity = DEFAULT_PERSISTED_SETTINGS.toolDensity ?? "compact";
+/** Whether an expanded reasoning block folds away once the reply text begins. */
+let collapseReasoningOnReply = DEFAULT_PERSISTED_SETTINGS.collapseReasoningOnReply ?? false;
+/** Compact only: manual tool expansion shows raw payload text. */
+let rawTextOnExpand = DEFAULT_PERSISTED_SETTINGS.rawTextOnExpand ?? false;
 let terminalScrollSteps = DEFAULT_PERSISTED_SETTINGS.scrollSteps ?? DEFAULT_SCROLL_STEPS;
 let pasteMode: PasteModeSetting = DEFAULT_PERSISTED_SETTINGS.pasteMode ?? "ask";
 let pasteMarkerStyle: PasteMarkerStyle = DEFAULT_PERSISTED_SETTINGS.pasteMarkerStyle ?? "content";
@@ -940,6 +945,7 @@ function persist(): void {
     fontFamily: customFontFamily,
     fontSize: terminalFontSize,
     scrollSteps: terminalScrollSteps,
+    chatZoom,
     pasteMode,
     pasteMarkerStyle,
     pasteMarkerPaint,
@@ -950,8 +956,9 @@ function persist(): void {
     panelPosition,
     defaultViewMode,
     thinkingControlStyle,
-    autoExpandTools,
-    autoExpandReasoning,
+    toolDensity,
+    collapseReasoningOnReply,
+    rawTextOnExpand,
     collapseTopBarToMenu,
     todoPanelMode,
     hideTopButtonLabels,
@@ -1209,6 +1216,12 @@ function playViewSwitch(tab: Tab, dir: "left" | "right"): void {
   el.addEventListener("animationend", done);
 }
 
+/** Applies a chat zoom factor to every open tab's chat view and persists it as the new default. */
+function applyChatZoom(zoom: number): void {
+  chatZoom = clampChatZoom(zoom);
+  for (const t of tabs) t.chat?.applyPersistedZoom(chatZoom);
+}
+
 /** Build the tab's chat renderer on first use; the terminal keeps running below it. */
 function ensureChatView(tab: Tab): ChatView {
   if (tab.chat) return tab.chat;
@@ -1221,21 +1234,37 @@ function ensureChatView(tab: Tab): ChatView {
     resolveBlob: (ref, mimeType) => api.transcriptBlob(ref, mimeType),
     openImage: (src) => dock.showImage(src),
     onRevertToTerminal: () => setViewMode(tab, "terminal"),
+    onStarterPrompt: (text) => dock.prefill(text),
   });
-  chat.setAutoExpandTools(autoExpandTools);
-  chat.setAutoExpandReasoning(autoExpandReasoning);
+  chat.setToolDensity(toolDensity);
+  chat.setCollapseReasoningOnReply(collapseReasoningOnReply);
+  chat.setRawTextOnExpand(rawTextOnExpand);
+  chat.setSessionMeta({ model: tab.modelName ?? null, cwd: tab.cwd });
+  chat.applyPersistedZoom(chatZoom);
+  chat.setZoomChangeHandler((zoom) => {
+    applyChatZoom(zoom);
+    persist();
+  });
   tab.chat = chat;
   const targetPane = splitMode && tab === secondaryTab ? paneSecondaryEl : panePrimaryEl;
   chat.mount(targetPane);
   return chat;
 }
 
-/** Start (or repoint) main's transcript tail for a tab and paint the first snapshot. */
+/**
+ * Start (or repoint) main's transcript tail for a tab and paint the first snapshot.
+ *
+ * `cwd` is only passed once omp's own session id is known. Without an id the
+ * watcher falls back to the newest transcript recorded for that folder, which
+ * for a freshly spawned session is the *previous* chat — it flashed on screen
+ * for a moment and was then replaced once the real id arrived.
+ */
 function subscribeTranscript(tab: Tab): void {
   if (!tab.sessionId) return;
   const sessionId = tab.sessionId;
   tab.transcriptSubscribed = true;
-  void api.subscribeTranscript(sessionId, tab.ompSessionId, tab.cwd).then((snapshot) => {
+  const cwd = tab.ompSessionId ? tab.cwd : null;
+  void api.subscribeTranscript(sessionId, tab.ompSessionId, cwd).then((snapshot) => {
     // The tab may have been closed or restarted while the round trip was in flight.
     if (!snapshot || !tab.chat || tab.sessionId !== sessionId) return;
     tab.chat.apply(snapshot);
@@ -2469,6 +2498,9 @@ async function submitDock(payload: DockPayload): Promise<void> {
     }
 
     recordSentMessage(tab, renderPasteMarkersForHistory(body));
+    // Chat view has no other source for this: omp persists a user message only
+    // once the whole turn lands, so the reply would otherwise appear first.
+    tab.chat?.showPendingUser(renderPasteMarkersForHistory(body));
   }
 
   // Single submit for attachments + text together.
@@ -2658,13 +2690,16 @@ const dock = new Dock({
           active?.view?.openSearch();
         },
         onZoomIn: () => {
-          active?.view?.zoomIn();
+          if (active?.viewMode === "chat") active.chat?.zoomIn();
+          else active?.view?.zoomIn();
         },
         onZoomOut: () => {
-          active?.view?.zoomOut();
+          if (active?.viewMode === "chat") active.chat?.zoomOut();
+          else active?.view?.zoomOut();
         },
         onZoomReset: () => {
-          active?.view?.resetZoom();
+          if (active?.viewMode === "chat") active.chat?.resetZoom();
+          else active?.view?.resetZoom();
         },
         onToggleExpand: () => {
           dock.toggleExpand();
@@ -2882,8 +2917,10 @@ function applyControlBridgeStatus(status: ControlBridgeState | null | undefined)
   // Backfill matched on the wrong id space before this and always found nothing.
   const ompId = status.ompSessionId?.trim() || null;
   if (ompId && ompId !== tab.ompSessionId) {
+    // First discovery just names the session already on screen; a change from
+    // one id to another is a real `/new` or `/resume` and must start clean.
+    if (tab.ompSessionId !== null) tab.chat?.clearTranscript();
     tab.ompSessionId = ompId;
-    // `/new` and `/resume` repoint the same tab at a different transcript.
     if (tab.transcriptSubscribed) subscribeTranscript(tab);
   }
   // First sight of a session (startup, `/new`, or a `/resume` typed straight
@@ -2916,6 +2953,7 @@ function applyControlBridgeStatus(status: ControlBridgeState | null | undefined)
   // Always keep per-tab session state up to date, even when backgrounded.
   if (status.model) {
     tab.modelName = status.model;
+    tab.chat?.setSessionMeta({ model: tab.modelName, cwd: tab.cwd });
   }
   if (status.thinkingLevel) {
     tab.thinkingLevel = formatThinkingLevel(status.thinkingLevel);
@@ -2968,8 +3006,8 @@ api.onTranscriptUpdate((snapshot) => {
 // Periodically verify terminal model, thinking level, and plan state stay 100% synced with UI
 setInterval(async () => {
   try {
-    const status = await api.readControlBridgeStatus();
-    if (status) applyControlBridgeStatus(status);
+    const statuses = await api.readControlBridgeStatus();
+    for (const status of statuses) applyControlBridgeStatus(status);
   } catch {}
 }, 2000);
 
@@ -3136,6 +3174,14 @@ function openRecentChatsModal(): void {
           const tab = active;
           resetActivityHistory(tab);
           void backfillSessionMessages(tab, sessionId);
+          // Point the chat feed at the resumed transcript now. Waiting for the
+          // control bridge to publish the id left chat mode blank whenever the
+          // published id matched what the tab already had.
+          tab.ompSessionId = sessionId;
+          if (tab.viewMode === "chat") {
+            ensureChatView(tab).setEmptyReason("loading");
+            subscribeTranscript(tab);
+          }
           active.view.runSlash(`/resume ${sessionId}`);
           active.view.focus();
         }
@@ -3175,8 +3221,9 @@ function openSettingsModal(): void {
       collapseTopBarToMenu,
       panelPosition,
       defaultViewMode,
-      autoExpandTools,
-      autoExpandReasoning,
+      toolDensity,
+      collapseReasoningOnReply,
+      rawTextOnExpand,
       onSelect: (preset) => {
         applyTheme(preset);
         persist();
@@ -3236,14 +3283,19 @@ function openSettingsModal(): void {
         dock.setThinkingControlStyle(style);
         persist();
       },
-      onToggleAutoExpandTools: (enabled) => {
-        autoExpandTools = enabled;
-        for (const tab of tabs) tab.chat?.setAutoExpandTools(enabled);
+      onToolDensityChange: (density) => {
+        toolDensity = density;
+        for (const tab of tabs) tab.chat?.setToolDensity(density);
         persist();
       },
-      onToggleAutoExpandReasoning: (enabled) => {
-        autoExpandReasoning = enabled;
-        for (const tab of tabs) tab.chat?.setAutoExpandReasoning(enabled);
+      onToggleCollapseReasoningOnReply: (enabled) => {
+        collapseReasoningOnReply = enabled;
+        for (const tab of tabs) tab.chat?.setCollapseReasoningOnReply(enabled);
+        persist();
+      },
+      onToggleRawTextOnExpand: (enabled) => {
+        rawTextOnExpand = enabled;
+        for (const tab of tabs) tab.chat?.setRawTextOnExpand(enabled);
         persist();
       },
       tabPreviews: tabPreviewsEnabled,
@@ -3337,8 +3389,9 @@ function openSettingsModal(): void {
     panelPosition,
     defaultViewMode,
     thinkingControlStyle,
-    autoExpandTools,
-    autoExpandReasoning,
+    toolDensity,
+    collapseReasoningOnReply,
+    rawTextOnExpand,
     tabPreviews: tabPreviewsEnabled,
     scrollSteps: terminalScrollSteps,
     pasteMode,
@@ -3509,7 +3562,7 @@ window.addEventListener(
       switch (key) {
         case "enter":
           claim();
-          if (dock.isFocused) dock.toggleExpanded();
+          if (dock.isFocused) dock.toggleExpand();
           else dock.focus();
           return;
         case "t":
@@ -3546,17 +3599,20 @@ window.addEventListener(
     }
     if (key === "=" || key === "+") {
       claim();
-      active.view?.zoomIn();
+      if (active.viewMode === "chat") active.chat?.zoomIn();
+      else active.view?.zoomIn();
       return;
     }
     if (key === "-" || key === "_") {
       claim();
-      active.view?.zoomOut();
+      if (active.viewMode === "chat") active.chat?.zoomOut();
+      else active.view?.zoomOut();
       return;
     }
     if (key === "0") {
       claim();
-      active.view?.resetZoom();
+      if (active.viewMode === "chat") active.chat?.resetZoom();
+      else active.view?.resetZoom();
       return;
     }
     if (key === "tab") {
@@ -3588,6 +3644,9 @@ async function boot(): Promise<void> {
   if (typeof state.scrollSteps === "number") {
     terminalScrollSteps = clampScrollSteps(state.scrollSteps);
   }
+  if (typeof state.chatZoom === "number" && Number.isFinite(state.chatZoom)) {
+    chatZoom = clampChatZoom(state.chatZoom);
+  }
   if (isPasteModeSetting(state.pasteMode)) {
     pasteMode = state.pasteMode;
   }
@@ -3607,11 +3666,14 @@ async function boot(): Promise<void> {
   // Launching the app defaults to horizontal slider per user requirement
   thinkingControlStyle = "horizontal";
   dock.setThinkingControlStyle("horizontal");
-  if (typeof state.autoExpandTools === "boolean") {
-    autoExpandTools = state.autoExpandTools;
+  if (isToolDensity(state.toolDensity)) {
+    toolDensity = state.toolDensity;
   }
-  if (typeof state.autoExpandReasoning === "boolean") {
-    autoExpandReasoning = state.autoExpandReasoning;
+  if (typeof state.collapseReasoningOnReply === "boolean") {
+    collapseReasoningOnReply = state.collapseReasoningOnReply;
+  }
+  if (typeof state.rawTextOnExpand === "boolean") {
+    rawTextOnExpand = state.rawTextOnExpand;
   }
   if (typeof state.doneSoundEnabled === "boolean") {
     doneSoundEnabled = state.doneSoundEnabled;
@@ -3717,9 +3779,9 @@ async function boot(): Promise<void> {
   }
 
   try {
-    const initStatus = await api.readControlBridgeStatus();
-    if (initStatus) {
-      applyControlBridgeStatus(initStatus);
+    const initStatuses = await api.readControlBridgeStatus();
+    if (initStatuses.length) {
+      for (const status of initStatuses) applyControlBridgeStatus(status);
     } else if (active?.modelName) {
       applyThinkingLevelsForModel(active.modelName, active.thinkingLevel);
     }

@@ -7,6 +7,7 @@ import type {
   PasteMarkerStyle,
   PasteModeSetting,
 } from "./paste-attach";
+import type { ToolDensity } from "./tool-summary";
 import type { TabLayout, TabRailSide } from "./tab-layout";
 export type { TabLayout, TabRailSide } from "./tab-layout";
 
@@ -367,6 +368,8 @@ export type PersistedState = {
   fontSize?: number;
   /** Rows the terminal advances per wheel detent. */
   scrollSteps?: number;
+  /** Chat view zoom (CSS zoom factor). */
+  chatZoom?: number;
   /** How a long dock paste is attached; "ask" shows the chooser. */
   pasteMode?: PasteModeSetting;
   /** Composer marker wording for a collapsed paste. */
@@ -392,10 +395,12 @@ export type PersistedState = {
   panelPosition?: PanelPosition;
   /** View mode applied to newly created tabs. */
   defaultViewMode?: ViewMode;
-  /** Expand grouped transcript tool activity in Chat View. */
-  autoExpandTools?: boolean;
-  /** Open persisted thinking blocks in Chat View. */
-  autoExpandReasoning?: boolean;
+  /** How much detail Chat Mode prints for tool activity. */
+  toolDensity?: ToolDensity;
+  /** Collapse an expanded thinking block once the reply's own text starts arriving. */
+  collapseReasoningOnReply?: boolean;
+  /** Compact only: manual tool expansion shows raw payload text, not the card. */
+  rawTextOnExpand?: boolean;
   /** Show live hover thumbnail/content preview popover when hovering inactive tabs. */
   tabPreviews?: boolean;
   /** Presentation of sessions: vertical session rail vs scaled-down compact horizontal strip. */

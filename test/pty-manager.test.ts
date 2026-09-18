@@ -70,7 +70,7 @@ async function spawnSession(): Promise<Harness> {
   const emitted: Emitted[] = [];
   const emit: Emit = (channel, payload) =>
     emitted.push({ channel, payload: payload as unknown as Record<string, unknown> });
-  const manager = new mod.PtyManager(emit, () => undefined);
+  const manager = new mod.PtyManager(emit, () => undefined, () => null);
   const { id } = manager.spawn({ cwd: process.cwd(), cols: 80, rows: 24 });
   let acked = 0;
   const chunks = (): string[] =>
