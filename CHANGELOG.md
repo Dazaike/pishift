@@ -7,6 +7,10 @@ All notable changes to PiShift are documented here. Format follows
 
 ### Added
 - "Backup & Restore" section in Settings: **Export Settings** saves your theme, fonts, models, activity colors, interface layout, paste, and usage-tracker preferences to a JSON file; **Import Settings** loads them back in (from this machine or another). Window position, the active tab list, recent folders, and the local omp executable path are never included — only portable preferences travel.
+- Linux packaging: PiShift now ships as an **AppImage** and a **.deb** alongside the Windows installer, built via electron-builder's `linux` target. A GitHub Actions workflow (`.github/workflows/build-linux.yml`) builds both on `ubuntu-latest` and attaches them to every tagged release automatically.
+
+### Fixed
+- The Windows installer no longer ships an unused `.exe.blockmap` file — NSIS `differentialPackage` support (for an in-app auto-updater PiShift doesn't have) is now disabled.
 
 ## [1.9.30] — 2026-09-16
 
