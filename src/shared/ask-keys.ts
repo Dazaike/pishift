@@ -16,9 +16,10 @@ export type AskKeyStep =
   | { type: "text"; value: string }
   | { type: "wait"; ms: number };
 
-export const ASK_KEY_GAP_MS = 35;
-export const ASK_ENTER_GAP_MS = 80;
-export const ASK_EDITOR_GAP_MS = 80;
+export const ASK_KEY_GAP_MS = 75;
+export const ASK_ENTER_GAP_MS = 200;
+export const ASK_EDITOR_GAP_MS = 250;
+export const ASK_QUESTION_GAP_MS = 250;
 
 /** CR/LF would submit early and ESC would cancel the whole ask tool. */
 export function sanitizeAskText(text: string): string {
@@ -34,14 +35,9 @@ export function buildAskDialogSteps(answers: AskAnswer[]): AskKeyStep[] {
   if (answers.length === 0) return [];
 
   const steps: AskKeyStep[] = [];
-  // A single-question ask has no "Submit" tab: confirming the last (only)
-  // question's answer submits the whole dialog. A multi-question ask needs an
-  // explicit tab-advance after every INTERMEDIATE question (Enter on a
-  // just-confirmed Other row reopens its editor instead of advancing). The
-  // LAST question needs no such advance: its own confirming Enter already
-  // reaches Submit, exactly like the plain-selection path already does — an
-  // extra ArrowRight there has nowhere real to go and wraps the tab bar back
-  // to question 1, reopening its Other editor with stale text.
+  // Confirming the final answer submits the whole dialog. Intermediate Other
+  // editors need ArrowRight because their confirming Enter reopens the editor
+  // rather than advancing to the next question.
   const multiQuestion = answers.length > 1;
 
   answers.forEach((answer, index) => {
@@ -60,6 +56,12 @@ export function buildAskDialogSteps(answers: AskAnswer[]): AskKeyStep[] {
       }
     };
 
+    const settleNextQuestion = (): void => {
+      if (multiQuestion && !isLastQuestion) {
+        steps.push({ type: "wait", ms: ASK_QUESTION_GAP_MS });
+      }
+    };
+
     if (!answer.multi) {
       if (answer.customText !== undefined) {
         moveTo(n);
@@ -71,10 +73,14 @@ export function buildAskDialogSteps(answers: AskAnswer[]): AskKeyStep[] {
         // advancing; the arrow keys are the only reliable tab-to-tab move.
         // The last question needs no advance: its Enter already reaches
         // Submit, and an extra ArrowRight would wrap back to question 1.
-        if (multiQuestion && !isLastQuestion) steps.push({ type: "arrow", dir: "right" });
+        if (multiQuestion && !isLastQuestion) {
+          steps.push({ type: "arrow", dir: "right" });
+          settleNextQuestion();
+        }
       } else {
         moveTo(answer.selectedIndices[0] ?? 0);
         steps.push({ type: "enter" });
+        settleNextQuestion();
       }
       return;
     }
@@ -92,15 +98,16 @@ export function buildAskDialogSteps(answers: AskAnswer[]): AskKeyStep[] {
       steps.push({ type: "wait", ms: ASK_EDITOR_GAP_MS });
       steps.push({ type: "text", value: sanitizeAskText(answer.customText) });
       steps.push({ type: "enter" });
-      if (multiQuestion && !isLastQuestion) steps.push({ type: "arrow", dir: "right" });
+      if (multiQuestion && !isLastQuestion) {
+        steps.push({ type: "arrow", dir: "right" });
+        settleNextQuestion();
+      }
     } else {
       steps.push({ type: "enter" });
+      settleNextQuestion();
     }
   });
 
-  if (multiQuestion) {
-    steps.push({ type: "enter" });
-  }
 
   return steps;
 }

@@ -17,11 +17,18 @@
         <img src="./assets/icons/usage.png" alt="" class="btn-icon" />
         <span id="header-usage-text">Usage &middot; $0.00</span>
       </div>
+      <button id="dock-view-mode" type="button" class="ctrl-btn" title="Switch to Chat View (Ctrl+Shift+U)">
+        <img src="./assets/icons/terminal.png" alt="" class="btn-icon dock-view-icon" />
+        <span class="dock-view-label">Terminal</span>
+      </button>
       <div id="drag-region"></div>
       <div id="header-activity" hidden title="Current agent activity">
         <span id="header-activity-dot" aria-hidden="true"></span>
         <span id="header-activity-label">Idle</span>
         <span id="header-activity-elapsed"></span>
+      </div>
+      <div id="header-cwd-wrap">
+        <button id="header-cwd" type="button" title="Open working directory"></button>
       </div>
       <div id="chrome-actions">
         <div class="chrome-actions-row">
@@ -192,16 +199,17 @@
               <span>Tools</span>
             </button>
           </div>
-          <div id="dock-view-wrap">
-            <button id="dock-view-mode" type="button" class="ctrl-btn" title="Switch to Chat View (Ctrl+Shift+U)">
-              <img src="./assets/icons/terminal.png" alt="" class="btn-icon dock-view-icon" />
-              <span class="dock-view-label">Terminal</span>
-            </button>
-          </div>
           <div id="dock-usage-wrap">
             <button id="dock-usage-btn" type="button" class="ctrl-btn" title="View provider token usage & cost metrics">
               <img src="./assets/icons/usage.png" alt="" class="btn-icon" />
               <span>Usage</span>
+            </button>
+          </div>
+          <div id="dock-context-wrap">
+            <button id="dock-context-btn" type="button" class="ctrl-btn" title="Conversation context window usage">
+              <svg class="btn-icon dock-context-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+              <span class="dock-context-label">Context</span>
+              <span class="dock-context-percent">0%</span>
             </button>
           </div>
           <div id="dock-plan-wrap">

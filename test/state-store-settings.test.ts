@@ -19,7 +19,9 @@ describe("normalizeSettings", () => {
         fontSize: "not a number" as unknown as number,
         chatZoom: "nope" as unknown as number,
         collapseReasoningOnReply: "yes" as unknown as boolean,
-        panelPosition: "bottom-left" as never,
+        autoShowLiveThinking: "yes" as unknown as boolean,
+        showAskPopups: "yes" as unknown as boolean,
+        showPlanReviewPopups: "yes" as unknown as boolean,
         pasteMode: "garbage" as never,
         toolDensity: "ultra" as never,
         tabLayout: "diagonal" as never,
@@ -32,7 +34,9 @@ describe("normalizeSettings", () => {
     expect(settings.fontSize).toBe(DEFAULT_PERSISTED_SETTINGS.fontSize);
     expect(settings.chatZoom).toBe(DEFAULT_PERSISTED_SETTINGS.chatZoom);
     expect(settings.collapseReasoningOnReply).toBe(DEFAULT_PERSISTED_SETTINGS.collapseReasoningOnReply);
-    expect(settings.panelPosition).toBe(DEFAULT_PERSISTED_SETTINGS.panelPosition);
+    expect(settings.autoShowLiveThinking).toBe(DEFAULT_PERSISTED_SETTINGS.autoShowLiveThinking);
+    expect(settings.showAskPopups).toBe(DEFAULT_PERSISTED_SETTINGS.showAskPopups);
+    expect(settings.showPlanReviewPopups).toBe(DEFAULT_PERSISTED_SETTINGS.showPlanReviewPopups);
     expect(settings.pasteMode).toBe(DEFAULT_PERSISTED_SETTINGS.pasteMode);
     expect(settings.toolDensity).toBe(DEFAULT_PERSISTED_SETTINGS.toolDensity);
     expect(settings.tabLayout).toBe(DEFAULT_PERSISTED_SETTINGS.tabLayout);

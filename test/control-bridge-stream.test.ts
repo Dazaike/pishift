@@ -40,10 +40,28 @@ describe("ControlBridgeListener stream dispatch", () => {
 
     listener.emitState(base);
     listener.emitState({ ...base });
-    listener.emitState({ ...base, stream: { kind: "text", text: "partial reply" } });
+    listener.emitState({ ...base, stream: { thinking: "", text: "partial reply" } });
 
     expect(broadcasts).toHaveLength(2);
-    expect(broadcasts[1].stream).toEqual({ kind: "text", text: "partial reply" });
+    expect(broadcasts[1].stream).toEqual({ thinking: "", text: "partial reply" });
+  });
+
+  it("broadcasts a thinking-only change while the reply text is unchanged", () => {
+    const broadcasts: ControlBridgeState[] = [];
+    const listener = Object.create(ControlBridgeListener.prototype) as ListenerInternals;
+    listener.bySession = new Map();
+    listener.fingerprintBySession = new Map();
+    listener.lastState = null;
+    listener.broadcast = (_channel, state) => {
+      broadcasts.push(state);
+    };
+
+    listener.emitState({ ...base, stream: { thinking: "", text: "answer" } });
+    listener.emitState({ ...base, stream: { thinking: "", text: "answer" } });
+    listener.emitState({ ...base, stream: { thinking: "weighing", text: "answer" } });
+
+    expect(broadcasts).toHaveLength(2);
+    expect(broadcasts[1].stream).toEqual({ thinking: "weighing", text: "answer" });
   });
 
   it("broadcasts an omp-side resume, which changes only the omp session id", () => {

@@ -22,6 +22,7 @@ import {
   type ViewMode,
   type TodoPhase,
 } from "../shared/ipc";
+import { reconcileDetailedContextUsage, type ContextUsageSnapshot } from "../shared/transcript";
 import { parseModelSlashCommand } from "../shared/model-command";
 import { findInstalledModel } from "../shared/model-match";
 import { ASK_ENTER_GAP_MS, ASK_KEY_GAP_MS, buildAskDialogSteps, type AskAnswer } from "../shared/ask-keys";
@@ -192,6 +193,10 @@ type Tab = {
   title: string;
   modelName: string;
   thinkingLevel: string;
+  /** Distinct MCP server names currently exposing tools to this session. */
+  mcpServers: string[];
+  /** MCP server names that failed to connect. */
+  mcpServersFailed: string[];
   /** Sole owner of this tab's plan display state and toggle reconciliation. */
   plan: PlanReconciler;
   /** Combined busy for the tab chrome (progress OSC and/or agent activity). */
@@ -230,6 +235,10 @@ type Tab = {
   jobs: AsyncJob[];
   /** Active Plan Review menu state in this session. */
   planReview: { contextStats?: string } | null;
+  /** Bare plan filename from "Plan mode enabled. Plan file: …", for the chat strip. */
+  planFile: string | null;
+  /** Exact session-local plan artifact, loaded through the bounded main-process reader. */
+  planText: string | null;
   /** omp is blocked on the plan-review menu. */
   awaitingPlanReview: boolean;
   /** omp is compacting context after "Approve and Compact Context"; suppress reopen/close flicker until done. */
@@ -252,6 +261,8 @@ type Tab = {
   chat: ChatView | null;
   /** Whether main is tailing this tab's transcript. */
   transcriptSubscribed: boolean;
+  /** Latest context usage snapshot for this tab's session. */
+  contextUsage?: ContextUsageSnapshot | null;
 };
 
 const tabs: Tab[] = [];
@@ -292,8 +303,12 @@ let thinkingControlStyle: ThinkingControlStyle = "horizontal";
 let toolDensity: ToolDensity = DEFAULT_PERSISTED_SETTINGS.toolDensity ?? "compact";
 /** Whether an expanded reasoning block folds away once the reply text begins. */
 let collapseReasoningOnReply = DEFAULT_PERSISTED_SETTINGS.collapseReasoningOnReply ?? false;
+/** Whether live reasoning opens until reply prose starts. */
+let autoShowLiveThinking = DEFAULT_PERSISTED_SETTINGS.autoShowLiveThinking ?? true;
 /** Compact only: manual tool expansion shows raw payload text. */
 let rawTextOnExpand = DEFAULT_PERSISTED_SETTINGS.rawTextOnExpand ?? false;
+/** Compact only: activity sections start open instead of collapsed. */
+let autoExpandActivity = DEFAULT_PERSISTED_SETTINGS.autoExpandActivity ?? false;
 let terminalScrollSteps = DEFAULT_PERSISTED_SETTINGS.scrollSteps ?? DEFAULT_SCROLL_STEPS;
 let pasteMode: PasteModeSetting = DEFAULT_PERSISTED_SETTINGS.pasteMode ?? "ask";
 let pasteMarkerStyle: PasteMarkerStyle = DEFAULT_PERSISTED_SETTINGS.pasteMarkerStyle ?? "content";
@@ -302,6 +317,10 @@ let pasteMarkerPulse = DEFAULT_PERSISTED_SETTINGS.pasteMarkerPulse ?? true;
 let doneSoundEnabled = DEFAULT_PERSISTED_SETTINGS.doneSoundEnabled ?? true;
 let doneSoundVolume = DEFAULT_PERSISTED_SETTINGS.doneSoundVolume ?? DEFAULT_DONE_SOUND_VOLUME;
 let tabPreviewsEnabled = startupAppearance.tabPreviews ?? DEFAULT_PERSISTED_SETTINGS.tabPreviews ?? true;
+/** Surface omp ask questions as sheet + toast + chime; off answers in the terminal. */
+let showAskPopups = DEFAULT_PERSISTED_SETTINGS.showAskPopups ?? true;
+/** Surface omp plan-review menu as sheet + toast + chime; off answers in the terminal. */
+let showPlanReviewPopups = DEFAULT_PERSISTED_SETTINGS.showPlanReviewPopups ?? true;
 let usageTrackerSettings: UsageTrackerSettings = DEFAULT_PERSISTED_SETTINGS.usageTracker
   ? { ...DEFAULT_PERSISTED_SETTINGS.usageTracker }
   : {
@@ -315,6 +334,7 @@ let settingsSectionCollapsed: Partial<Record<SettingsSectionId, boolean>> = {
   ...DEFAULT_PERSISTED_SETTINGS.settingsSectionCollapsed,
 };
 let splitMode = false;
+
 let activePane: "primary" | "secondary" = "primary";
 let primaryTab: Tab | null = null;
 let secondaryTab: Tab | null = null;
@@ -328,7 +348,7 @@ function applyScrollSteps(steps: number): void {
 /** Header control widths only affect the header now; tabs live in the rail. */
 function applyButtonLabelVisibility(): void {
   document.body.classList.toggle("hide-top-button-labels", hideTopButtonLabels);
-  document.body.classList.toggle("hide-bottom-button-labels", hideBottomButtonLabels);
+  document.body.classList.toggle("hide-bottom-button-labels", hideBottomButtonLabels || active?.viewMode === "chat");
   document.body.classList.toggle("top-bar-as-menu", collapseTopBarToMenu);
   renderTabs();
 }
@@ -503,6 +523,7 @@ const todoPanel = new TodoPanel(
   (job) => {
     killJob(job);
   },
+  () => usageTrackerSettings.providerIconUrls,
 );
 function updateProviderReports(reports: ProviderUsageReport[]): void {
   usageModal?.updateReports(reports);
@@ -738,6 +759,7 @@ function clearAskSend(tab: Tab): void {
 function raiseAskAttention(tab: Tab, ask: PendingAsk): void {
   tab.awaitingAsk = true;
   renderTabs();
+  if (!showAskPopups) return;
   doneSound.play();
   // A question the user is already staring at does not need an OS toast.
   if (document.hasFocus() && tab === active) return;
@@ -755,6 +777,7 @@ function clearAskAttention(tab: Tab): void {
 function raisePlanReviewAttention(tab: Tab): void {
   tab.awaitingPlanReview = true;
   renderTabs();
+  if (!showPlanReviewPopups) return;
   doneSound.play();
   if (document.hasFocus() && tab === active) return;
   api.notify(
@@ -768,10 +791,33 @@ function clearPlanReviewAttention(tab: Tab): void {
   tab.awaitingPlanReview = false;
   renderTabs();
 }
-
 function syncAskModal(tab: Tab): void {
   const pending = tab.pendingAsk;
   if (!pending || pending.toolCallId === tab.dismissedAskToolCallId) {
+    askModal?.close();
+    tab.chat?.setAsk(null, null, null);
+    return;
+  }
+  const submit = (answers: AskAnswer[]): void => {
+    void sendAskAnswers(tab, answers);
+    tab.pendingAsk = null;
+    tab.chat?.setAsk(null, null, null);
+    clearAskAttention(tab);
+  };
+  const dismiss = (): void => {
+    tab.dismissedAskToolCallId = pending.toolCallId;
+    tab.chat?.setAsk(null, null, null);
+    clearAskAttention(tab);
+  };
+  // Chat tabs answer inline at the transcript tail; the floating sheet would
+  // overlay the conversation they are reading. Terminal tabs keep the sheet.
+  if (tab.viewMode === "chat") {
+    ensureChatView(tab).setAsk(pending, submit, dismiss);
+    askModal?.close();
+    return;
+  }
+  tab.chat?.setAsk(null, null, null);
+  if (!showAskPopups) {
     askModal?.close();
     return;
   }
@@ -784,23 +830,13 @@ function syncAskModal(tab: Tab): void {
   // Re-opening on every heartbeat would wipe half-entered answers; the sheet is
   // rebuilt only when omp actually asks something new.
   if (askModal.isOpen && askModal.toolCallId === pending.toolCallId) return;
-  askModal.open(
-    pending,
-    (answers) => {
-      void sendAskAnswers(tab, answers);
-      tab.pendingAsk = null;
-      clearAskAttention(tab);
-    },
-    () => {
-      tab.dismissedAskToolCallId = pending.toolCallId;
-      clearAskAttention(tab);
-    },
-  );
+  askModal.open(pending, submit, dismiss);
 }
 async function sendPlanReviewAction(tab: Tab, action: PlanReviewAction): Promise<void> {
   if (!tab.view) return;
   tab.planReview = null;
   if (action === "compact") tab.planReviewCompacting = true;
+  syncChatPlan(tab);
   clearPlanReviewAttention(tab);
 
   if (action === "quit") {
@@ -843,7 +879,42 @@ async function sendPlanReviewAction(tab: Tab, action: PlanReviewAction): Promise
   tab.view.writeRaw("\r");
 }
 
+/** Push tab plan state into the inline chat card; no-op before chat exists. */
+function syncChatPlan(tab: Tab): void {
+  tab.chat?.setPlanState({
+    mode: tab.plan.mode,
+    pending: tab.plan.pending,
+    reviewOpen: tab.planReview !== null,
+    contextStats: tab.planReview?.contextStats,
+    compacting: tab.planReviewCompacting,
+    planFile: tab.planFile,
+    planText: tab.planText,
+  });
+}
+
+/** Fetch the exact session-local plan; discard late responses from stale tabs/files. */
+function loadPlanText(tab: Tab, file: string): void {
+  const ompSessionId = tab.ompSessionId;
+  tab.planText = null;
+  syncChatPlan(tab);
+  if (!ompSessionId) return;
+  void api.planText(ompSessionId, file).then((text) => {
+    if (tab.ompSessionId !== ompSessionId || tab.planFile !== file) return;
+    tab.planText = text;
+    syncChatPlan(tab);
+  });
+}
 function syncPlanReviewModal(tab: Tab): void {
+  syncChatPlan(tab);
+  // Chat mode is served by the inline card only; terminal by the dock overlay only.
+  if (tab.viewMode === "chat") {
+    planReviewModal?.close();
+    return;
+  }
+  if (!showPlanReviewPopups) {
+    planReviewModal?.close();
+    return;
+  }
   if (tab.planReviewCompacting) {
     if (!planReviewModal) {
       planReviewModal = new PlanReviewModal();
@@ -958,7 +1029,9 @@ function persist(): void {
     thinkingControlStyle,
     toolDensity,
     collapseReasoningOnReply,
+    autoShowLiveThinking,
     rawTextOnExpand,
+    autoExpandActivity,
     collapseTopBarToMenu,
     todoPanelMode,
     hideTopButtonLabels,
@@ -967,6 +1040,8 @@ function persist(): void {
     doneSoundEnabled,
     doneSoundVolume,
     tabPreviews: tabPreviewsEnabled,
+    showAskPopups,
+    showPlanReviewPopups,
     usageTracker: usageTrackerSettings,
     settingsSectionCollapsed,
     splitRatio: splitRatio !== 0.5 ? splitRatio : undefined,
@@ -1136,9 +1211,7 @@ function syncTabBusy(tab: Tab): void {
   }
   renderTabs();
   if (tab === active) {
-    // Prefer bridge activity; fall back to generic working when only OSC busy is set.
-    const kind = next ? (tab.activity !== "idle" ? tab.activity : "working") : "idle";
-    dock.setAgentBusy(next, kind);
+    dock.setAgentBusy(next);
     updateHeaderActivity(tab);
   }
   syncTaskbarBusy();
@@ -1177,6 +1250,7 @@ function setTabProgressBusy(tab: Tab, busy: boolean): void {
   syncTabBusy(tab);
 }
 
+
 function setTabActivity(tab: Tab, activity: ControlBridgeActivity): void {
   if (activity === "idle") tab.activitySince = null;
   else if (tab.activity !== activity || tab.activitySince === null) {
@@ -1199,6 +1273,39 @@ function setTabActivity(tab: Tab, activity: ControlBridgeActivity): void {
 function updateUsageDisplay(tab: Tab): void {
   if (!tab || tab !== active) return;
   void refreshHeaderUsage();
+
+  // Resolve model's context window limit if known
+  let contextWindow: number | undefined;
+  if (tab.modelName) {
+    const installed = findInstalledModel(tab.modelName, installedModels);
+    if (installed?.contextWindow) {
+      contextWindow = installed.contextWindow;
+    }
+  }
+
+  if (
+    tab.contextUsage &&
+    !tab.contextUsage.detailedBreakdown &&
+    contextWindow &&
+    tab.contextUsage.contextWindow !== contextWindow
+  ) {
+    const prompt = tab.contextUsage.promptTokens;
+    tab.contextUsage = {
+      ...tab.contextUsage,
+      contextWindow,
+      percent: Math.min(100, Math.max(0, Math.round((prompt / contextWindow) * 100))),
+    };
+  }
+
+  dock.setContextUsage(
+    tab.contextUsage,
+    usageTrackerSettings.dockContextStyle ?? "button",
+  );
+
+  if (usageModal) {
+    usageModal.setDockContextStyle(usageTrackerSettings.dockContextStyle ?? "button");
+    usageModal.setContextUsage(tab.contextUsage);
+  }
 }
 
 function playViewSwitch(tab: Tab, dir: "left" | "right"): void {
@@ -1231,21 +1338,28 @@ function ensureChatView(tab: Tab): ChatView {
     openExternal: (url) => {
       void api.openExternal(url);
     },
+    resolveLocalImage: async (path) => (await api.imagePreview(path, 1200))?.dataUrl ?? null,
     resolveBlob: (ref, mimeType) => api.transcriptBlob(ref, mimeType),
     openImage: (src) => dock.showImage(src),
     onRevertToTerminal: () => setViewMode(tab, "terminal"),
     onStarterPrompt: (text) => dock.prefill(text),
+    onPlanAction: (action) => {
+      void sendPlanReviewAction(tab, action);
+    },
   });
   chat.setToolDensity(toolDensity);
   chat.setCollapseReasoningOnReply(collapseReasoningOnReply);
+  chat.setAutoShowLiveThinking(autoShowLiveThinking);
   chat.setRawTextOnExpand(rawTextOnExpand);
-  chat.setSessionMeta({ model: tab.modelName ?? null, cwd: tab.cwd });
+  chat.setAutoExpandActivity(autoExpandActivity);
+  chat.setSessionMeta({ model: tab.modelName ?? null, cwd: tab.cwd, mcpServers: tab.mcpServers, mcpFailed: tab.mcpServersFailed });
   chat.applyPersistedZoom(chatZoom);
   chat.setZoomChangeHandler((zoom) => {
     applyChatZoom(zoom);
     persist();
   });
   tab.chat = chat;
+  syncChatPlan(tab);
   const targetPane = splitMode && tab === secondaryTab ? paneSecondaryEl : panePrimaryEl;
   chat.mount(targetPane);
   return chat;
@@ -1266,8 +1380,12 @@ function subscribeTranscript(tab: Tab): void {
   const cwd = tab.ompSessionId ? tab.cwd : null;
   void api.subscribeTranscript(sessionId, tab.ompSessionId, cwd).then((snapshot) => {
     // The tab may have been closed or restarted while the round trip was in flight.
-    if (!snapshot || !tab.chat || tab.sessionId !== sessionId) return;
-    tab.chat.apply(snapshot);
+    if (!snapshot || tab.sessionId !== sessionId) return;
+    if (snapshot.contextUsage !== undefined) {
+      tab.contextUsage = reconcileDetailedContextUsage(tab.contextUsage, snapshot.contextUsage);
+      if (tab === active) updateUsageDisplay(tab);
+    }
+    if (tab.chat) tab.chat.apply(snapshot);
   });
 }
 
@@ -1282,10 +1400,16 @@ function setViewMode(tab: Tab, mode: ViewMode): void {
   if (mode === "chat") {
     const chat = ensureChatView(tab);
     chat.setEmptyReason("loading");
-    if (!tab.transcriptSubscribed) subscribeTranscript(tab);
+    // A terminal-only resumed tab already tails its transcript, but its earlier
+    // snapshots had no ChatView to receive them. Re-subscribe to fetch and paint
+    // the current file immediately rather than waiting for another transcript edit.
+    subscribeTranscript(tab);
   }
 
-  if (tab === active) syncViewMode(tab);
+  if (tab === active) {
+    syncViewMode(tab);
+    syncPlanReviewModal(tab);
+  }
   dock.focus();
 }
 
@@ -1295,6 +1419,7 @@ function syncViewMode(tab: Tab): void {
   document.body.dataset.viewMode = tab.viewMode;
   tab.chat?.setActive(chat);
   dock.setViewMode(tab.viewMode);
+  applyButtonLabelVisibility();
 }
 
 function mountTabInPane(tab: Tab, pane: "primary" | "secondary"): void {
@@ -1335,7 +1460,7 @@ function focusPane(pane: "primary" | "secondary"): void {
     applyModelToDock(targetTab.modelName, targetTab.thinkingLevel, targetTab);
     dock.setThinkingLevel(targetTab.thinkingLevel || "low");
     dock.setPlanMode(targetTab.plan.mode, targetTab.plan.pending);
-    dock.setAgentBusy(targetTab.busy, targetTab.busy ? targetTab.activity : "idle");
+    dock.setAgentBusy(targetTab.busy);
     updateHeaderActivity(targetTab);
     syncAskModal(targetTab);
     syncPlanReviewModal(targetTab);
@@ -1475,7 +1600,7 @@ function activate(tab: Tab): void {
     applyModelToDock(tab.modelName, tab.thinkingLevel, tab);
     dock.setThinkingLevel(tab.thinkingLevel || "low");
     dock.setPlanMode(tab.plan.mode, tab.plan.pending);
-    dock.setAgentBusy(tab.busy, tab.busy ? tab.activity : "idle");
+    dock.setAgentBusy(tab.busy);
     updateHeaderActivity(tab);
     syncAskModal(tab);
     syncPlanReviewModal(tab);
@@ -1529,7 +1654,7 @@ function activate(tab: Tab): void {
   applyModelToDock(tab.modelName, tab.thinkingLevel, tab);
   dock.setThinkingLevel(tab.thinkingLevel || "low");
   dock.setPlanMode(tab.plan.mode, tab.plan.pending);
-  dock.setAgentBusy(tab.busy, tab.busy ? tab.activity : "idle");
+  dock.setAgentBusy(tab.busy);
   updateHeaderActivity(tab);
   syncAskModal(tab);
   syncPlanReviewModal(tab);
@@ -1624,7 +1749,6 @@ function closeTab(tab: Tab): void {
     }
     return;
   }
-
   if (active === tab) {
     active = null;
     askModal?.close();
@@ -1811,6 +1935,9 @@ async function triggerOmpUpdate(): Promise<void> {
 }
 
 function startRenameTab(tab: Tab): void {
+  // Guard: a second rename while an editor is open would replaceWith on a
+  // detached label — a no-op stranding the first input until blur.
+  if (tab.button.querySelector(".tab-rename-input")) return;
   const currentName = tabDisplayName(tab);
   const input = document.createElement("input");
   input.type = "text";
@@ -2079,14 +2206,18 @@ async function startSession(tab: Tab): Promise<void> {
   bySession.set(result.id, tab);
   api.resize(result.id, view.cols, view.rows);
   for (const chunk of tab.pending.splice(0)) api.write(result.id, chunk);
-  // A tab that starts (or restarts) already in chat mode needs its feed opened;
-  // `setViewMode` could not do it before a PTY id existed.
+  // Subscribe transcript so context usage metrics and chat feed stay up to date in both modes
   if (tab.viewMode === "chat") {
     ensureChatView(tab).setEmptyReason("loading");
     subscribeTranscript(tab);
     if (tab === active) syncViewMode(tab);
+  } else {
+    subscribeTranscript(tab);
   }
-  if (tab === active) dock.focus();
+  if (tab === active) {
+    updateUsageDisplay(tab);
+    dock.focus();
+  }
 }
 
 function makeTab(cwd: string, customTitle?: string, colorTag?: string): Tab {
@@ -2127,6 +2258,7 @@ function makeTab(cwd: string, customTitle?: string, colorTag?: string): Tab {
     answerConfirm: () => self.view?.writeRaw("\r"),
     onDisplay: (mode, pending) => {
       if (self === active) dock.setPlanMode(mode, pending);
+      if (self.chat) syncChatPlan(self);
     },
   });
 
@@ -2143,6 +2275,8 @@ function makeTab(cwd: string, customTitle?: string, colorTag?: string): Tab {
     title: "",
     modelName: "",
     thinkingLevel: "low",
+    mcpServers: [],
+    mcpServersFailed: [],
     plan,
     busy: false,
     progressBusy: false,
@@ -2167,6 +2301,8 @@ function makeTab(cwd: string, customTitle?: string, colorTag?: string): Tab {
     todo: null,
     jobs: [],
     planReview: null,
+    planFile: null,
+    planText: null,
     awaitingPlanReview: false,
     planReviewCompacting: false,
     suppressDoneSound: false,
@@ -2440,6 +2576,10 @@ async function submitDock(payload: DockPayload): Promise<void> {
       return;
     }
   }
+  const body = text.replace(/\r\n/g, "\n");
+  const historyText = renderPasteMarkersForHistory(body);
+  tab.chat?.showPendingUser(historyText, payload.imagePaths);
+
 
   if (hasImages) {
     view.paste(payload.imagePaths.map(quotePath).join(" "));
@@ -2454,7 +2594,6 @@ async function submitDock(payload: DockPayload): Promise<void> {
   if (hasText) {
     // Append onto the same composer line as any attachment atoms.
     // Prefer type() so we don't open a second bracketed-paste "segment".
-    const body = text.replace(/\r\n/g, "\n");
     const bySeq = new Map(payload.pastes.map((item) => [item.seq, item]));
     const segments = splitPasteSegments(body, new Set(bySeq.keys()));
     // No dock choice was possible for a long body that never became a chip
@@ -2497,10 +2636,7 @@ async function submitDock(payload: DockPayload): Promise<void> {
       );
     }
 
-    recordSentMessage(tab, renderPasteMarkersForHistory(body));
-    // Chat view has no other source for this: omp persists a user message only
-    // once the whole turn lands, so the reply would otherwise appear first.
-    tab.chat?.showPendingUser(renderPasteMarkersForHistory(body));
+    recordSentMessage(tab, historyText);
   }
 
   // Single submit for attachments + text together.
@@ -2572,8 +2708,16 @@ function parseStatusStream(tab: Tab, rawData: string): void {
   // statusline entirely while it is up.
   if (detectPasteMenu(plain)) tab.pasteMenuSeen = true;
   // Plan lines must be handled before the statusline gate: "Plan mode paused."
-  // and "Plan mode disabled." can arrive without a statusline.
   const planStatus = parsePlanStatus(plain);
+  const fileMatch = /Plan mode enabled\. Plan file:\s*(\S+)/.exec(plain);
+  if (fileMatch?.[1] && fileMatch[1] !== tab.planFile) {
+    tab.planFile = fileMatch[1];
+    loadPlanText(tab, fileMatch[1]);
+  }
+  if (planStatus === "off") {
+    tab.planFile = null;
+    tab.planText = null;
+  }
   if (planStatus) tab.plan.observe(planStatus, Date.now());
   if (isPlanExitConfirm(plain)) tab.plan.confirmPrompt(Date.now());
 
@@ -2596,8 +2740,42 @@ function parseStatusStream(tab: Tab, rawData: string): void {
   ) {
     tab.planReview = null;
     tab.planReviewCompacting = false;
+    tab.planFile = null;
+    tab.planText = null;
     clearPlanReviewAttention(tab);
     if (tab === active) syncPlanReviewModal(tab);
+  }
+  // MCP connect banner ("Connected: beeper, design-helper. Failed: classroom
+  // [config: ...]: Unable to connect... Still connecting: chrome-devtools…")
+  // prints once at startup outside any statusline, so it must be read ahead
+  // of the statusline gate below. No extension API can enumerate MCP server
+  // connect state for the running omp build; this is the only observable
+  // signal. Each redraw restates every server connected/failed so far, so
+  // collecting every match in this chunk yields that redraw's full set.
+  const collectMcpNames = (re: RegExp): string[] => {
+    const names = new Set<string>();
+    let match: RegExpExecArray | null;
+    while ((match = re.exec(plain))) {
+      for (const name of match[1].split(",")) {
+        const trimmed = name.trim();
+        if (trimmed) names.add(trimmed);
+      }
+    }
+    return Array.from(names);
+  };
+  const connected = collectMcpNames(/\bConnected:\s*([a-z0-9][\w-]*(?:,\s*[a-z0-9][\w-]*)*)\s*\./gi);
+  const failed = collectMcpNames(/\bFailed:\s*([a-z0-9][\w-]*(?:,\s*[a-z0-9][\w-]*)*)\s*\[config:/gi);
+  const connectedChanged = connected.length > 0 && connected.join(",") !== tab.mcpServers.join(",");
+  const failedChanged = failed.length > 0 && failed.join(",") !== tab.mcpServersFailed.join(",");
+  if (connectedChanged) tab.mcpServers = connected;
+  if (failedChanged) tab.mcpServersFailed = failed;
+  if (connectedChanged || failedChanged) {
+    tab.chat?.setSessionMeta({
+      model: tab.modelName || null,
+      cwd: tab.cwd,
+      mcpServers: tab.mcpServers,
+      mcpFailed: tab.mcpServersFailed,
+    });
   }
   // Only parse explicit statusline or command feedback lines to prevent chat text matching
   const isStatusLine =
@@ -2656,15 +2834,14 @@ const dock = new Dock({
   setPlanTarget: (target: PlanTarget) => active?.plan.request(target, Date.now()),
   openModel: () => openModelSelector(),
   openUsage: () => {
-    if (!usageModal) {
-      usageModal = new UsageModal(
-        () => {
-          if (active?.view) active.view.runSlash("/stats");
-        },
-        () => usageTracker!.refresh(),
-      );
-    }
-    usageModal.toggle();
+    const modal = getOrCreateUsageModal();
+    modal.setContextOnly(false);
+    modal.toggle();
+  },
+  openContext: () => {
+    const modal = getOrCreateUsageModal();
+    modal.setContextOnly(true);
+    modal.toggle();
   },
   openTools: () => {
     if (!dockToolsMenu) {
@@ -2787,7 +2964,7 @@ function openModelSelector(): void {
     let clearanceFrame: number | null = null;
     const syncDockClearance = (): void => {
       const rect = dockEl.getBoundingClientRect();
-      const clearance = Math.ceil(rect.height + 26);
+      const clearance = Math.ceil(window.innerHeight - rect.top + 16);
       if (Math.abs(clearance - lastClearance) < 2) return;
       lastClearance = clearance;
       document.documentElement.style.setProperty("--dock-clearance", `${clearance}px`);
@@ -2921,7 +3098,8 @@ function applyControlBridgeStatus(status: ControlBridgeState | null | undefined)
     // one id to another is a real `/new` or `/resume` and must start clean.
     if (tab.ompSessionId !== null) tab.chat?.clearTranscript();
     tab.ompSessionId = ompId;
-    if (tab.transcriptSubscribed) subscribeTranscript(tab);
+    if (tab.planFile) loadPlanText(tab, tab.planFile);
+    subscribeTranscript(tab);
   }
   // First sight of a session (startup, `/new`, or a `/resume` typed straight
   // into the terminal) is the only reliable moment to load what that chat
@@ -2936,6 +3114,9 @@ function applyControlBridgeStatus(status: ControlBridgeState | null | undefined)
   // Stream text is UDP-only, so it is absent on the 2 s status-file poll; only
   // apply it when the publication actually carried the field.
   if ("stream" in status) tab.chat?.setStream(status.stream);
+  // Same UDP-only rule as `stream`: a status-file poll carries no live steps and
+  // must not wipe the rows the datagrams put on screen.
+  if ("steps" in status) tab.chat?.setLiveSteps(status.steps ?? []);
   // The job registry is independent from the terminal session lifecycle. Its
   // polling updates must not reset activity chrome or overwrite model/thinking
   // selections with the background worker's context.
@@ -2953,13 +3134,14 @@ function applyControlBridgeStatus(status: ControlBridgeState | null | undefined)
   // Always keep per-tab session state up to date, even when backgrounded.
   if (status.model) {
     tab.modelName = status.model;
-    tab.chat?.setSessionMeta({ model: tab.modelName, cwd: tab.cwd });
+    tab.chat?.setSessionMeta({ model: tab.modelName, cwd: tab.cwd, mcpServers: tab.mcpServers, mcpFailed: tab.mcpServersFailed });
   }
   if (status.thinkingLevel) {
     tab.thinkingLevel = formatThinkingLevel(status.thinkingLevel);
   }
   if (status.planMode) {
     tab.plan.observe(status.planMode, Date.now());
+    syncChatPlan(tab);
   }
   if ("ask" in status) {
     const prevAskId = tab.pendingAsk?.toolCallId ?? null;
@@ -3000,7 +3182,13 @@ api.onControlBridgeStatus((status) => {
 
 api.onTranscriptUpdate((snapshot) => {
   const tab = bySession.get(snapshot.ptySessionId);
-  tab?.chat?.apply(snapshot);
+  if (tab) {
+    if (snapshot.contextUsage !== undefined) {
+      tab.contextUsage = reconcileDetailedContextUsage(tab.contextUsage, snapshot.contextUsage);
+      if (tab === active) updateUsageDisplay(tab);
+    }
+    tab.chat?.apply(snapshot);
+  }
 });
 
 // Periodically verify terminal model, thinking level, and plan state stay 100% synced with UI
@@ -3099,16 +3287,32 @@ headerUsage.addEventListener("click", () => {
   dockHooksUsage();
 });
 
-function dockHooksUsage(): void {
+function getOrCreateUsageModal(): UsageModal {
   if (!usageModal) {
     usageModal = new UsageModal(
       () => {
         if (active?.view) active.view.runSlash("/stats");
       },
       () => usageTracker!.refresh(),
+      () => usageTrackerSettings.providerIconUrls,
+      (cmd) => {
+        if (active?.view) active.view.runSlash(cmd);
+      },
+      () => {
+        if (active) subscribeTranscript(active);
+      },
     );
   }
-  usageModal.toggle();
+  if (active?.contextUsage !== undefined) {
+    usageModal.setContextUsage(active.contextUsage);
+  }
+  usageModal.setDockContextStyle(usageTrackerSettings.dockContextStyle ?? "button");
+  return usageModal;
+}
+function dockHooksUsage(): void {
+  const modal = getOrCreateUsageModal();
+  modal.setContextOnly(false);
+  modal.toggle();
 }
 function closeOtherPopovers(except: "folders" | "chats" | "menu"): void {
   if (except !== "folders" && recentFoldersModal?.isOpen) recentFoldersModal.close();
@@ -3223,7 +3427,9 @@ function openSettingsModal(): void {
       defaultViewMode,
       toolDensity,
       collapseReasoningOnReply,
+      autoShowLiveThinking,
       rawTextOnExpand,
+      autoExpandActivity,
       onSelect: (preset) => {
         applyTheme(preset);
         persist();
@@ -3293,15 +3499,39 @@ function openSettingsModal(): void {
         for (const tab of tabs) tab.chat?.setCollapseReasoningOnReply(enabled);
         persist();
       },
+      onToggleAutoShowLiveThinking: (enabled) => {
+        autoShowLiveThinking = enabled;
+        for (const tab of tabs) tab.chat?.setAutoShowLiveThinking(enabled);
+        persist();
+      },
       onToggleRawTextOnExpand: (enabled) => {
         rawTextOnExpand = enabled;
         for (const tab of tabs) tab.chat?.setRawTextOnExpand(enabled);
+        persist();
+      },
+      onToggleAutoExpandActivity: (enabled) => {
+        autoExpandActivity = enabled;
+        for (const tab of tabs) tab.chat?.setAutoExpandActivity(enabled);
         persist();
       },
       tabPreviews: tabPreviewsEnabled,
       onToggleTabPreviews: (enabled) => {
         tabPreviewsEnabled = enabled;
         tabPreviewPopover.setEnabled(enabled);
+        persist();
+      },
+      showAskPopups,
+      onToggleShowAskPopups: (enabled) => {
+        showAskPopups = enabled;
+        if (!enabled) askModal?.close();
+        else if (active) syncAskModal(active);
+        persist();
+      },
+      showPlanReviewPopups,
+      onToggleShowPlanReviewPopups: (enabled) => {
+        showPlanReviewPopups = enabled;
+        if (!enabled) planReviewModal?.close();
+        else if (active) syncPlanReviewModal(active);
         persist();
       },
       tabLayout,
@@ -3365,6 +3595,7 @@ function openSettingsModal(): void {
       onUsageTrackerChange: (settings) => {
         usageTrackerSettings = normalizeUsageTrackerSettings(settings);
         usageTracker?.updateSettings(usageTrackerSettings);
+        if (active) updateUsageDisplay(active);
         persist();
       },
       onSettingsSectionCollapsedChange: (collapsed) => {
@@ -3391,9 +3622,12 @@ function openSettingsModal(): void {
     thinkingControlStyle,
     toolDensity,
     collapseReasoningOnReply,
+    autoShowLiveThinking,
     rawTextOnExpand,
+    autoExpandActivity,
     tabPreviews: tabPreviewsEnabled,
-    scrollSteps: terminalScrollSteps,
+    showAskPopups,
+    showPlanReviewPopups,
     pasteMode,
     autoUpdateOmpOnOpen,
     pasteMarkerStyle,
@@ -3672,8 +3906,14 @@ async function boot(): Promise<void> {
   if (typeof state.collapseReasoningOnReply === "boolean") {
     collapseReasoningOnReply = state.collapseReasoningOnReply;
   }
+  if (typeof state.autoShowLiveThinking === "boolean") {
+    autoShowLiveThinking = state.autoShowLiveThinking;
+  }
   if (typeof state.rawTextOnExpand === "boolean") {
     rawTextOnExpand = state.rawTextOnExpand;
+  }
+  if (typeof state.autoExpandActivity === "boolean") {
+    autoExpandActivity = state.autoExpandActivity;
   }
   if (typeof state.doneSoundEnabled === "boolean") {
     doneSoundEnabled = state.doneSoundEnabled;
@@ -3743,6 +3983,14 @@ async function boot(): Promise<void> {
   if (typeof state.tabPreviews === "boolean") {
     tabPreviewsEnabled = state.tabPreviews;
     tabPreviewPopover.setEnabled(tabPreviewsEnabled);
+  }
+  if (typeof state.showAskPopups === "boolean") {
+    showAskPopups = state.showAskPopups;
+    askModal?.close();
+  }
+  if (typeof state.showPlanReviewPopups === "boolean") {
+    showPlanReviewPopups = state.showPlanReviewPopups;
+    planReviewModal?.close();
   }
   usageTrackerSettings = normalizeUsageTrackerSettings(state.usageTracker);
   settingsSectionCollapsed = {

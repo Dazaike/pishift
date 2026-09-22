@@ -3,6 +3,46 @@
 All notable changes to PiShift are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [2.0.0] — 2026-09-21
+
+### Added
+- **Inline plan review.** A plan awaiting review now renders as a card at the conversation tail with the full markdown plan, context stats, and its own buttons — **Approve and Execute**, **Approve in Compact Context**, **Approve and Keep Context**, **Refine Plan**, **Save and Quit**, **Quit** — including a compacting spinner while omp rewrites the context. The sheet is no longer the only way to answer a plan. (`src/renderer/chat-view.ts`)
+- **Inline questions.** `ask` prompts appear as in-flow cards at the bottom of the transcript: single- and multi-select options, `(Recommended)` markers, an **Other** option with its own text field, a progress counter, and validation that blocks submission until every required question is answered. No floating modal steals the conversation. (`src/renderer/chat-inline-ask.ts`)
+- **Activity Orb.** The live activity header carries an animated orb whose gesture follows what the agent is doing — solving while thinking, composing while replying, searching on reads, shaping on edits, working on shell commands — and it picks up the terminal's light or dark background automatically. (`src/renderer/activity-orb.ts`)
+- **Composer beam.** In Chat View the composer dock is wrapped in a layered, drifting border beam with an orbiting traveler while the agent is thinking or working. (`src/renderer/chat-composer-beam.ts`)
+- **Context Window popover.** The dock's Context button opens a real breakdown: a circular utilization ring, total and free tokens, the reserved auto-compaction buffer, per-slice accounting for system overhead, your input, thinking, assistant output, and tool calls, plus buttons to refresh or run `/compact`. (`src/renderer/usage-modal.ts`, `src/renderer/usage-render.ts`)
+- **Context Tracker settings section.** New sidebar section — "Track active conversation context tokens and limit percentage in the bottom dock" — with **Dock Display Mode**: *Dock Button + Popover*, *Combined into Usage Popover*, or *Hidden (Off)*. (`src/renderer/settings.ts`)
+- **Show Ask Question Popups** and **Show Plan Review Sheet** toggles under Settings → Interface. Off keeps questions and plan reviews in the terminal — no sheet, no chime, no notification. (`src/renderer/settings.ts`)
+- **Show Live Thinking Automatically** under Settings → Chat View unfolds reasoning while it is still being written; **Auto-expand Activity Sections** (Compact only) starts activity groups open. (`src/renderer/settings.ts`)
+- **Live tool-call streaming.** The control bridge publishes in-flight steps as their arguments stream in, before the tool has run, with the subject extracted (`path`, `command`, or search pattern) and a rolling preview of the content being written. Chat View shows work as it happens rather than after it lands. (`extensions/control-bridge.ts`, `src/shared/ipc.ts`)
+- **Model reordering in the Model popover.** Edit mode gains a **Reorder** toggle with drag handles (`⋮⋮`) and keyboard-reachable `▲`/`▼` buttons for resequencing custom models, plus a sliding pill that tracks hover and arrow-key navigation across cards. (`src/renderer/model-modal.ts`)
+- **Kill jobs from the To-Do panel.** Running subagent and background rows carry an inline `×` that terminates the job without opening terminal job controls. (`src/renderer/todo-panel.ts`)
+- Provider glyphs for `google-antigravity`, `google-vertex`, `openai-codex`, `deepseek`, `xai-oauth`, `openrouter`, `nanogpt`, `devin`, and `litellm`, with custom image URL overrides. (`src/renderer/provider-icons.ts`)
+- Skeleton rows shimmer in the Usage popover while limits load, then cards stagger in and progress bars fill. (`src/renderer/usage-modal.ts`)
+- `control-bridge:read-status` lets the renderer pull the last-known state of every active session straight from the main process instead of waiting for the next datagram. (`src/shared/ipc.ts`, `src/preload/index.ts`)
+- Markdown links to `file:` URIs are treated as safe and render clickable. (`src/shared/markdown.ts`)
+
+### Changed
+- **The view toggle and the working directory moved to the top bar.** Chat/Terminal switching now sits in the header next to the usage meter, and in Chat View the cwd path moves up there too — leaving a centered 720px composer that is only a message box. (`src/renderer/index.html`, `src/renderer/main.ts`)
+- **Dual sliding pills across the toolbars.** Dock control groups and the top bar actions row run two indicators: a glass pill that locks onto the active or open control with spring physics, and a faster hover pill that tracks the pointer. Buttons, window controls, session tabs, and attachment chips all move on springs. (`src/renderer/motion-utils.ts`, `src/renderer/dock.ts`)
+- **Per-session runtime status.** The bridge writes `~/.omp/agent/runtime-status/<sessionId>.json` instead of one shared file, and PiShift binds an OS-assigned ephemeral UDP port passed to each session as `PISHIFT_CONTROL_BRIDGE_PORT`. Concurrent windows stop overwriting each other's state. (`extensions/control-bridge.ts`, `src/main/control-bridge-listener.ts`)
+- **Tool rows complete in place.** Streaming now diffs full row content signatures rather than row IDs, so a running tool flips to completed or errored the moment the outcome hits disk. (`src/main/transcript.ts`)
+- Plans referenced as `local://` artifacts are read from the session's own store, so Chat View renders the canonical plan instead of a transcript excerpt. (`src/main/transcript.ts`)
+- Rate-limit names drop redundant `(shared)`/`(pooled)` suffixes on compact cards — the full qualifier stays in the tooltip — and cards sort by shortest reset window. (`src/renderer/usage-render.ts`)
+- Background job rows show `claude-opus-5`, not `anthropic/claude-opus-5`. (`src/renderer/todo-panel.ts`)
+- Bridge updates distinguish `session` telemetry from `jobs` updates, so job polling no longer clobbers session state. (`src/shared/ipc.ts`)
+
+### Fixed
+- **Ask dialogs with several questions.** After confirming **Other** text on an intermediate question the bridge sends `ArrowRight` instead of `Enter`, so the inline editor no longer reopens; the final question no longer sends a trailing `ArrowRight` that wrapped back to the first. Custom text is stripped of CR, LF, and ESC so a pasted newline can't submit or cancel the dialog. (`src/shared/ask-keys.ts`)
+- **Context percentage after a compaction or `/clear`.** Tokens removed by a history rewrite are deducted from the prompt total instead of inflating the bar, and the parent-chain walk stops at a `/clear` boundary so wiped context is never attributed to the next prompt. Aborted turns with zeroed counts are skipped rather than reported as a collapse to zero. (`src/shared/transcript.ts`)
+- A zero or missing token limit renders 0% and 0 tokens instead of `NaN%` in the context ring. (`src/renderer/usage-render.ts`)
+- Sliding pills account for ancestor CSS transform scale and snap on reflow, so they stop jumping when fonts or icons finish loading. (`src/renderer/motion-utils.ts`)
+- A malformed or half-written status file is skipped without dropping the other active sessions. (`src/main/control-bridge-listener.ts`)
+
+### Removed
+- `src/renderer/dock-glow.ts` and the `animejs` dependency; the composer glow is now the `border-beam` effect. (`src/renderer/dock.ts`)
+- The fixed UDP port `37991` as the bridge's only channel — the port is negotiated per instance now.
+
 ## [1.9.32] — 2026-09-18
 
 ### Added

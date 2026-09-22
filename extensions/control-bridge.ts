@@ -285,42 +285,99 @@ class ActivityTracker {
  * Tool-call argument deltas are ignored: the activity pill already names the
  * running tool, and streaming raw JSON is noise.
  */
-const MAX_STREAM_CHARS = 4000;
+const MAX_STREAM_CHARS = 20_000;
 
-type StreamKind = "text" | "thinking";
+function capStream(value: string): string {
+  return value.length > MAX_STREAM_CHARS ? value.slice(-MAX_STREAM_CHARS) : value;
+}
 
 class StreamBuffer {
-  private kind: StreamKind | null = null;
+  private thinking = "";
   private text = "";
 
   clear(): void {
-    this.kind = null;
+    this.thinking = "";
     this.text = "";
   }
 
-  read(): { kind: StreamKind; text: string } | null {
-    return this.kind && this.text ? { kind: this.kind, text: this.text } : null;
+  read(): { thinking: string; text: string } | null {
+    return this.thinking || this.text ? { thinking: this.thinking, text: this.text } : null;
   }
 
-  /** Apply one `assistantMessageEvent`; returns true when the visible text changed. */
+  /** Apply one `assistantMessageEvent`; returns true when either buffer changed. */
   apply(type: string | undefined, event: unknown): boolean {
     const ev = event && typeof event === "object" ? (event as Record<string, unknown>) : null;
 
     switch (type) {
       case "text_start":
-      case "thinking_start":
-        this.kind = type === "text_start" ? "text" : "thinking";
         this.text = "";
+        return true;
+      case "thinking_start":
+        this.thinking = "";
         return true;
 
       case "text_delta":
       case "thinking_delta": {
-        const delta = ev && typeof ev.delta === "string" ? ev.delta : "";
-        if (!delta) return false;
-        // A delta can arrive before its `_start` if the bridge loaded mid-turn.
-        if (this.kind === null) this.kind = type === "text_delta" ? "text" : "thinking";
-        this.text += delta;
-        if (this.text.length > MAX_STREAM_CHARS) this.text = this.text.slice(-MAX_STREAM_CHARS);
+        let nestedDelta = "";
+        if (ev && "delta" in ev && ev.delta && typeof ev.delta === "object") {
+          if ("text" in ev.delta && typeof ev.delta.text === "string") nestedDelta = ev.delta.text;
+          else if ("thinking" in ev.delta && typeof ev.delta.thinking === "string") nestedDelta = ev.delta.thinking;
+          else if ("content" in ev.delta && typeof ev.delta.content === "string") nestedDelta = ev.delta.content;
+        }
+        const direct = ev && typeof ev.delta === "string"
+          ? ev.delta
+          : ev && typeof ev.text === "string"
+            ? ev.text
+            : ev && typeof ev.content === "string"
+              ? ev.content
+              : nestedDelta;
+        const contentIndex = ev && typeof ev.contentIndex === "number" ? ev.contentIndex : -1;
+        let partial: unknown = null;
+        if (ev && "partial" in ev && ev.partial && typeof ev.partial === "object" && "content" in ev.partial) {
+          partial = ev.partial.content;
+        }
+        const items = Array.isArray(partial) ? partial : [];
+        let item = contentIndex >= 0 ? items[contentIndex] : null;
+        if (!item) {
+          for (let i = items.length - 1; i >= 0; i--) {
+            const candidate = items[i];
+            if (!candidate || typeof candidate !== "object") continue;
+            if (
+              ("thinking" in candidate && typeof candidate.thinking === "string")
+              || ("text" in candidate && typeof candidate.text === "string")
+              || ("content" in candidate && typeof candidate.content === "string")
+            ) {
+              item = candidate;
+              break;
+            }
+          }
+        }
+        let snapshot = "";
+        if (item && typeof item === "object") {
+          if ("text" in item && typeof item.text === "string") snapshot = item.text;
+          else if ("thinking" in item && typeof item.thinking === "string") snapshot = item.thinking;
+          else if ("content" in item && typeof item.content === "string") snapshot = item.content;
+        }
+        // Providers disagree on what a "delta" is: some send the next few
+        // characters, others re-send the whole block each time. A payload that
+        // already starts with what is buffered is the block itself and replaces
+        // it; anything else is an increment and appends. Guessing wrong here is
+        // what made reasoning read "Let me readLet me read the…".
+        const current = type === "text_delta" ? this.text : this.thinking;
+        const candidate = direct || snapshot;
+        let next: string;
+        if (current !== "" && candidate.startsWith(current)) {
+          if (candidate.length === current.length) return false;
+          next = candidate;
+        } else if (direct) {
+          next = current + direct;
+        } else if (snapshot.length > current.length) {
+          next = snapshot;
+        } else {
+          return false;
+        }
+        if (type === "text_delta") this.text = capStream(next);
+        else this.thinking = capStream(next);
         return true;
       }
 
@@ -329,8 +386,11 @@ class StreamBuffer {
         // Authoritative full block; deltas can have been dropped or truncated.
         const content = ev && typeof ev.content === "string" ? ev.content : null;
         if (content === null) return false;
-        this.kind = type === "text_end" ? "text" : "thinking";
-        this.text = content.length > MAX_STREAM_CHARS ? content.slice(-MAX_STREAM_CHARS) : content;
+        if (type === "text_end") {
+          this.text = capStream(content);
+        } else {
+          this.thinking = capStream(content);
+        }
         return true;
       }
     }
@@ -475,6 +535,165 @@ interface SessionManagerLike {
 
 type BridgeUpdateKind = "session" | "jobs";
 
+interface LiveStep {
+  id: string;
+  name: string;
+  subject: string | null;
+  running: boolean;
+  isError: boolean;
+  /** Tail of the payload still being streamed, so a write shows its contents. */
+  preview: string | null;
+}
+
+/** Cap: a runaway loop must not grow an unbounded datagram. */
+const MAX_LIVE_STEPS = 40;
+/** Enough of an argument object to find its path or command, never the payload. */
+const MAX_ARG_HEAD = 400;
+/** Payload tail kept for the live preview; a datagram, not a file buffer. */
+const MAX_PREVIEW_CHARS = 1600;
+/** Lines sent per call: the view shows five and scrolls back through the rest. */
+const MAX_PREVIEW_LINES = 16;
+
+/**
+ * Decode the tail of a half-written JSON string value into displayable text.
+ * The fragment is arbitrary — it can end mid-escape — so a dangling backslash
+ * is dropped rather than producing a stray character.
+ */
+function decodeArgTail(raw: string): string {
+  return raw
+    .replace(/\\$/, "")
+    .replace(/\\u[0-9a-fA-F]{0,4}$/, "")
+    .replace(/\\n/g, "\n")
+    .replace(/\\t/g, "\t")
+    .replace(/\\r/g, "")
+    .replace(/\\"/g, '"')
+    .replace(/\\\\/g, "\\");
+}
+
+/**
+ * The last few lines of the payload a call is writing. Derived from the raw
+ * argument tail because the JSON is not parseable until the call completes —
+ * which is precisely the stretch worth showing.
+ *
+ * Only content-carrying calls qualify. A command has no payload to watch: its
+ * arguments *are* the subject, already on the row, and echoing them into a
+ * file-edit panel claimed an edit that never happened.
+ */
+function previewFromArgTail(toolName: string, raw: string): string | null {
+  if (classifyToolActivity(toolName) !== "editing") return null;
+  const marker = /"(?:content|patch|new_str|newText|text|body)"\s*:\s*"/.exec(raw);
+  // Before the payload key arrives there is nothing to show; the raw argument
+  // head is JSON plumbing, not file content.
+  if (!marker && !/^[\s\S]*\\n/.test(raw)) return null;
+  const payload = marker ? raw.slice(marker.index + marker[0].length) : raw;
+  const decoded = decodeArgTail(payload).replace(/"\s*[,}]\s*$/, "");
+  const lines = decoded.split("\n").filter((line, index, all) => line !== "" || index !== all.length - 1);
+  if (!lines.length) return null;
+  const shown = lines.slice(-MAX_PREVIEW_LINES).join("\n").trimEnd();
+  return shown === "" ? null : shown;
+}
+
+/** Argument names that say what a call is about, most specific first. */
+const SUBJECT_KEYS = [
+  "path",
+  "file",
+  "filePath",
+  "file_path",
+  "filename",
+  "target",
+  "command",
+  "cmd",
+  "pattern",
+  "query",
+  "url",
+  "input",
+  "name",
+];
+
+/**
+ * What a call is *about*, taken from its arguments: the path being edited, the
+ * command being run, the pattern being searched. Without it a live row could
+ * only say "Editing", which the activity pill already says.
+ *
+ * Arguments reach this both as an object and as raw JSON text, depending on
+ * whether the call has finished streaming, so both are handled.
+ */
+function extractStepSubject(args: unknown): string | null {
+  if (typeof args === "string") return subjectFromPartialArgs(args);
+  if (!args || typeof args !== "object") return null;
+  const record = args as Record<string, unknown>;
+  for (const key of SUBJECT_KEYS) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim() !== "") return clipSubject(value);
+  }
+  return null;
+}
+
+/** Trim a subject to one line that fits a chat row. */
+function clipSubject(value: string): string | null {
+  const line = value.split("\n")[0].trim();
+  if (line === "") return null;
+  return line.length > 120 ? `${line.slice(0, 119)}\u2026` : line;
+}
+
+/**
+ * The tool call whose arguments are streaming right now, read out of the
+ * in-progress message block. omp writes a big file by streaming its arguments
+ * for many seconds *before* `tool_execution_start` fires, so execution events
+ * alone leave that whole stretch looking idle.
+ *
+ * `delta` is the raw argument-JSON fragment that just arrived. The block itself
+ * often carries no parsed arguments at all while they are still being written,
+ * so the fragments are the only place the path or command can be found.
+ */
+function extractStreamingCall(
+  event: unknown,
+): { id: string; name: string; args: string; delta: string } | null {
+  if (!event || typeof event !== "object") return null;
+  const ev = event as Record<string, unknown>;
+  const partial = ev.partial && typeof ev.partial === "object" ? (ev.partial as Record<string, unknown>) : null;
+  const items = partial && Array.isArray(partial.content) ? (partial.content as Record<string, unknown>[]) : [];
+  if (!items.length) return null;
+  const index = typeof ev.contentIndex === "number" && ev.contentIndex >= 0 ? ev.contentIndex : items.length - 1;
+  const block = items[index];
+  if (!block || typeof block !== "object") return null;
+
+  const name = typeof block.name === "string" ? block.name : "";
+  if (name === "") return null;
+  const id =
+    typeof block.id === "string"
+      ? block.id
+      : typeof block.toolCallId === "string"
+        ? block.toolCallId
+        : `stream:${index}`;
+  const args =
+    typeof block.arguments === "string"
+      ? block.arguments
+      : typeof block.args === "string"
+        ? block.args
+        : block.args && typeof block.args === "object"
+          ? JSON.stringify(block.args)
+          : "";
+  const delta =
+    typeof ev.delta === "string"
+      ? ev.delta
+      : ev.delta && typeof ev.delta === "object" && typeof (ev.delta as Record<string, unknown>).text === "string"
+        ? ((ev.delta as Record<string, unknown>).text as string)
+        : "";
+  return { id, name, args, delta };
+}
+
+/**
+ * Pull a subject out of *half-written* argument JSON. The text is not parseable
+ * yet — that is the whole point of showing it — so the first complete key/value
+ * pair is matched directly.
+ */
+function subjectFromPartialArgs(text: string): string | null {
+  const match = new RegExp(`"(?:${SUBJECT_KEYS.join("|")})"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"`).exec(text);
+  if (!match) return null;
+  return clipSubject(match[1].replace(/\\(.)/g, "$1"));
+}
+
 interface BridgeState {
   /**
    * Job registry polling is independent of the terminal session lifecycle.
@@ -483,7 +702,6 @@ interface BridgeState {
   updateKind: BridgeUpdateKind;
   running: boolean;
   activity: AgentActivity;
-  model: string | null;
   thinkingLevel: string;
   planMode: PlanMode;
   ask: PendingAsk | null;
@@ -499,12 +717,18 @@ interface BridgeState {
    */
   ompSessionId: string | null;
   /**
-   * Assistant output still being written. UDP-only and never persisted to the
-   * status file: it is worthless a moment later, and a stale copy on disk would
-   * be read back as live.
+   * Assistant output still being written: independent thinking and text
+   * buffers. UDP-only and never persisted to the status file: it is worthless
+   * a moment later, and a stale copy on disk would be read back as live.
    */
-  stream: { kind: StreamKind; text: string } | null;
-  updatedAt: string;
+  stream: { thinking: string; text: string } | null;
+  /**
+   * Tool calls of the current turn, in execution order. omp only writes a call
+   * to the transcript when its message persists, so this is the only way a UI
+   * can show an edit or a command while it is actually running. UDP-only for
+   * the same reason as `stream`.
+   */
+  steps: LiveStep[];
 }
 
 /**
@@ -598,6 +822,10 @@ export default function controlBridge(pi: ExtensionAPI) {
   let activity: AgentActivity = "idle";
   const tracker = new ActivityTracker();
   const stream = new StreamBuffer();
+  /** Tool calls of the running turn; the transcript owns them once it persists. */
+  let liveSteps: LiveStep[] = [];
+  /** Head (for the subject) and tail (for the preview) of each streaming call's arguments. */
+  const streamingArgs = new Map<string, { head: string; tail: string }>();
   const jobSnapshots = new AuthoritativeSnapshotCache<AsyncJob>();
   let lastActivityPublish = 0;
   let pendingDurable = false;
@@ -728,6 +956,7 @@ export default function controlBridge(pi: ExtensionAPI) {
       sessionId: currentSessionId,
       ompSessionId: readOmpSessionId(ctx),
       stream: stream.read(),
+      steps: liveSteps,
       updatedAt: new Date().toISOString(),
     };
   }
@@ -749,9 +978,10 @@ export default function controlBridge(pi: ExtensionAPI) {
         recursive: true,
       });
 
-      // Pretty JSON makes manual inspection less miserable. `stream` is omitted:
-      // the file is the backstop for durable state, not for in-flight text.
-      const { stream: _stream, ...durableState } = state;
+      // Pretty JSON makes manual inspection less miserable. `stream` and `steps`
+      // are omitted: the file is the backstop for durable state, and a stale
+      // copy of in-flight work on disk would be read back as live.
+      const { stream: _stream, steps: _steps, ...durableState } = state;
       writeFileSync(
         statusFile,
         JSON.stringify(durableState, null, 2),
@@ -821,6 +1051,41 @@ export default function controlBridge(pi: ExtensionAPI) {
       return event.toolCallId;
     }
     return toolName ?? "unknown";
+  }
+
+  /**
+   * Record (or refine) the call whose arguments are still streaming. Returns
+   * whether anything a consumer can see actually changed, so a delta that adds
+   * nothing new does not cost a datagram.
+   *
+   * Two windows are kept per call, never the whole payload: the head, where the
+   * subject (`path`, `command`, …) lives, and a short tail, which is the file
+   * contents currently being written. The tail is what makes a write look alive
+   * instead of a name with a spinner next to it.
+   */
+  function upsertStreamingStep(call: { id: string; name: string; args: string; delta: string }): boolean {
+    const seen = streamingArgs.get(call.id) ?? { head: "", tail: "" };
+    const head =
+      call.args.length > seen.head.length
+        ? call.args.slice(0, MAX_ARG_HEAD)
+        : (seen.head + call.delta).slice(0, MAX_ARG_HEAD);
+    const rawTail = (call.args.length > seen.tail.length ? call.args : seen.tail + call.delta);
+    const tail = rawTail.length > MAX_PREVIEW_CHARS ? rawTail.slice(-MAX_PREVIEW_CHARS) : rawTail;
+    streamingArgs.set(call.id, { head, tail });
+
+    const subject = subjectFromPartialArgs(head);
+    const preview = previewFromArgTail(call.name, tail);
+    const existing = liveSteps.find((step) => step.id === call.id);
+    if (existing) {
+      const changed = (subject !== null && subject !== existing.subject) || preview !== existing.preview;
+      if (!changed) return false;
+      if (subject !== null) existing.subject = subject;
+      existing.preview = preview;
+      return true;
+    }
+    liveSteps.push({ id: call.id, name: call.name, subject, running: true, isError: false, preview });
+    if (liveSteps.length > MAX_LIVE_STEPS) liveSteps = liveSteps.slice(-MAX_LIVE_STEPS);
+    return true;
   }
 
   function showCurrent(ctx: ExtensionContext) {
@@ -967,6 +1232,8 @@ export default function controlBridge(pi: ExtensionAPI) {
     activity = "idle";
     tracker.reset();
     stream.clear();
+    liveSteps = [];
+    streamingArgs.clear();
     jobSnapshots.reset();
 
     planLeafId = null;
@@ -1005,6 +1272,8 @@ export default function controlBridge(pi: ExtensionAPI) {
     activity = "idle";
     tracker.reset();
     stream.clear();
+    liveSteps = [];
+    streamingArgs.clear();
     jobSnapshots.reset();
     pendingAsk = null;
     todoState = null;
@@ -1018,6 +1287,8 @@ export default function controlBridge(pi: ExtensionAPI) {
       if (!ctx || !ctx.hasUI) return;
       tracker.agentStart();
       stream.clear();
+      liveSteps = [];
+      streamingArgs.clear();
       syncActivity(ctx);
     },
   );
@@ -1027,6 +1298,8 @@ export default function controlBridge(pi: ExtensionAPI) {
     tracker.agentStart();
     // Last turn's text is now in the transcript; the live row must not repeat it.
     stream.clear();
+    liveSteps = [];
+    streamingArgs.clear();
     syncActivity(ctx);
   });
 
@@ -1038,13 +1311,23 @@ export default function controlBridge(pi: ExtensionAPI) {
       event && typeof event === "object" && "assistantMessageEvent" in event
         ? event.assistantMessageEvent
         : event;
+    // Deltas only. The in-progress `message` that rides along with this event
+    // runs ahead of them, and mixing the two replayed every block from zero on
+    // top of itself ("The user wantsThe user wants…").
     const streamChanged = stream.apply(type, inner);
+    // A tool call is visible long before it executes: its arguments stream in.
+    // Recording it here is what makes a large write show up at all.
+    let stepsChanged = false;
+    if (type === "toolcall_start" || type === "toolcall_delta" || type === "toolcall_end") {
+      const call = extractStreamingCall(inner);
+      if (call) stepsChanged = upsertStreamingStep(call);
+    }
     // `ctx.setTimeout` does not run until an agent turn yields. Deferring
     // deltas through it therefore turns streaming into an end-of-turn update.
     // Each changed local UDP packet is cheap and is the only truthful way to
     // paint reasoning and text as they are produced.
     syncActivity(ctx);
-    if (streamChanged && stream.read()) publish(ctx, true, "session", false);
+    if (stepsChanged || (streamChanged && stream.read())) publish(ctx, true, "session", false);
   });
 
   pi.on(
@@ -1052,8 +1335,29 @@ export default function controlBridge(pi: ExtensionAPI) {
     async (event, ctx) => {
       if (!ctx || !ctx.hasUI) return;
       const toolName = extractToolName(event);
-      tracker.toolStart(toolCallKey(event, toolName), toolName);
-      syncActivity(ctx);
+      const key = toolCallKey(event, toolName);
+      tracker.toolStart(key, toolName);
+      const args =
+        event && typeof event === "object"
+          ? ("args" in event ? event.args : "arguments" in event ? event.arguments : undefined)
+          : undefined;
+      // The row may already exist from the argument-streaming phase, under the
+      // id of its message block. Adopt it instead of opening a second row for
+      // the same call.
+      const streamed = liveSteps.find((step) => step.id !== key && step.name === toolName && step.running);
+      const target = liveSteps.find((step) => step.id === key) ?? streamed;
+      const subject = extractStepSubject(args);
+      if (target) {
+        target.id = key;
+        target.running = true;
+        if (subject) target.subject = subject;
+        // Arguments are complete now, so the streaming tail stops being news.
+        target.preview = null;
+      } else {
+        liveSteps.push({ id: key, name: toolName ?? "tool", subject, running: true, isError: false, preview: null });
+        if (liveSteps.length > MAX_LIVE_STEPS) liveSteps = liveSteps.slice(-MAX_LIVE_STEPS);
+      }
+      syncActivity(ctx, true);
 
       if (
         event &&
@@ -1063,7 +1367,6 @@ export default function controlBridge(pi: ExtensionAPI) {
         "toolCallId" in event &&
         typeof event.toolCallId === "string"
       ) {
-        const args = "args" in event ? event.args : ("arguments" in event ? event.arguments : undefined);
         let questions = normalizeAskQuestions(
           args && typeof args === "object" && "questions" in args ? args.questions : undefined,
         );
@@ -1090,8 +1393,15 @@ export default function controlBridge(pi: ExtensionAPI) {
     "tool_execution_end",
     async (event, ctx) => {
       if (!ctx || !ctx.hasUI) return;
-      tracker.toolEnd(toolCallKey(event, extractToolName(event)));
-      syncActivity(ctx);
+      const endedKey = toolCallKey(event, extractToolName(event));
+      tracker.toolEnd(endedKey);
+      const ended = liveSteps.find((step) => step.id === endedKey);
+      if (ended) {
+        ended.running = false;
+        ended.isError =
+          Boolean(event) && typeof event === "object" && "isError" in event && event.isError === true;
+      }
+      syncActivity(ctx, true);
       if (
         pendingAsk &&
         event &&
@@ -1133,6 +1443,8 @@ export default function controlBridge(pi: ExtensionAPI) {
     tracker.agentEnd(willContinue);
     // omp has persisted the message by now; the transcript owns it from here.
     stream.clear();
+    liveSteps = [];
+    streamingArgs.clear();
     syncActivity(ctx, true);
   });
 
@@ -1145,6 +1457,8 @@ export default function controlBridge(pi: ExtensionAPI) {
       activity = "idle";
       tracker.reset();
       stream.clear();
+      liveSteps = [];
+      streamingArgs.clear();
 
       publish(ctx);
 

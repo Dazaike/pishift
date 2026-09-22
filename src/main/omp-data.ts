@@ -73,6 +73,8 @@ export function loadInstalledModels(): InstalledModelGroup[] {
           name?: string;
           description?: string;
           reasoning?: boolean;
+          contextWindow?: number;
+          maxTokens?: number;
           thinking?: {
             efforts?: string[];
             requiresEffort?: boolean;
@@ -93,6 +95,8 @@ export function loadInstalledModels(): InstalledModelGroup[] {
             reasoning: m.reasoning,
             thinkingEfforts: efforts,
             thinkingRequiresEffort: m.thinking?.requiresEffort === true,
+            contextWindow: typeof m.contextWindow === "number" && Number.isFinite(m.contextWindow) ? m.contextWindow : undefined,
+            maxTokens: typeof m.maxTokens === "number" && Number.isFinite(m.maxTokens) ? m.maxTokens : undefined,
           };
         });
 
@@ -205,6 +209,13 @@ export async function queryOmpUsage(): Promise<ProviderUsageReport[]> {
             resetsIn,
           };
         });
+        const seenLimitKeys = new Set<string>();
+        const dedupedLimits = limits.filter((l) => {
+          const key = `${l.label}|${l.usedPercent}|${l.limit}|${l.resetsIn ?? ""}`;
+          if (seenLimitKeys.has(key)) return false;
+          seenLimitKeys.add(key);
+          return true;
+        });
 
         return {
           provider: r.provider,
@@ -214,7 +225,7 @@ export async function queryOmpUsage(): Promise<ProviderUsageReport[]> {
           email: r.metadata?.email,
           orgName: r.metadata?.orgName,
           planType: r.metadata?.planType,
-          limits,
+          limits: dedupedLimits,
         };
       });
 

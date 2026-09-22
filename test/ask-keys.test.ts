@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { ASK_EDITOR_GAP_MS, buildAskDialogSteps, sanitizeAskText } from "../src/shared/ask-keys";
+import {
+  ASK_EDITOR_GAP_MS,
+  ASK_QUESTION_GAP_MS,
+  buildAskDialogSteps,
+  sanitizeAskText,
+} from "../src/shared/ask-keys";
 
 describe("buildAskDialogSteps", () => {
   it("moves up from the recommended row for single-select", () => {
@@ -120,7 +125,7 @@ describe("buildAskDialogSteps", () => {
       { type: "text", value: "x" },
       { type: "enter" },
       { type: "arrow", dir: "right" },
-      { type: "enter" },
+      { type: "wait", ms: ASK_QUESTION_GAP_MS },
       { type: "enter" },
     ]);
   });
@@ -148,7 +153,7 @@ describe("buildAskDialogSteps", () => {
       { type: "text", value: "y" },
       { type: "enter" },
       { type: "arrow", dir: "right" },
-      { type: "enter" },
+      { type: "wait", ms: ASK_QUESTION_GAP_MS },
       { type: "enter" },
     ]);
   });
@@ -170,6 +175,7 @@ describe("buildAskDialogSteps", () => {
       ]),
     ).toEqual([
       { type: "enter" },
+      { type: "wait", ms: ASK_QUESTION_GAP_MS },
       { type: "space" },
       { type: "arrow", dir: "down" },
       { type: "arrow", dir: "down" },
@@ -177,11 +183,10 @@ describe("buildAskDialogSteps", () => {
       { type: "wait", ms: ASK_EDITOR_GAP_MS },
       { type: "text", value: "zxc" },
       { type: "enter" },
-      { type: "enter" },
     ]);
   });
 
-  it("adds a Submit-tab Enter after two single-select questions", () => {
+  it("settles after a normal first selection before answering the second question", () => {
     expect(
       buildAskDialogSteps([
         {
@@ -195,7 +200,39 @@ describe("buildAskDialogSteps", () => {
           selectedIndices: [0],
         },
       ]),
-    ).toEqual([{ type: "enter" }, { type: "enter" }, { type: "enter" }]);
+    ).toEqual([
+      { type: "enter" },
+      { type: "wait", ms: ASK_QUESTION_GAP_MS },
+      { type: "enter" },
+    ]);
+  });
+
+  it("submits a regular selection then final typed Other exactly once", () => {
+    expect(
+      buildAskDialogSteps([
+        {
+          multi: false,
+          optionsCount: 3,
+          selectedIndices: [1],
+        },
+        {
+          multi: false,
+          optionsCount: 2,
+          selectedIndices: [],
+          customText: "distinctive answer",
+        },
+      ]),
+    ).toEqual([
+      { type: "arrow", dir: "down" },
+      { type: "enter" },
+      { type: "wait", ms: ASK_QUESTION_GAP_MS },
+      { type: "arrow", dir: "down" },
+      { type: "arrow", dir: "down" },
+      { type: "enter" },
+      { type: "wait", ms: ASK_EDITOR_GAP_MS },
+      { type: "text", value: "distinctive answer" },
+      { type: "enter" },
+    ]);
   });
 });
 

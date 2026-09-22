@@ -25,8 +25,11 @@ function makeModal(): SettingsModal {
     defaultViewMode: "terminal",
     toolDensity: "compact",
     collapseReasoningOnReply: false,
+    autoShowLiveThinking: true,
     rawTextOnExpand: false,
     tabPreviews: true,
+    showAskPopups: true,
+    showPlanReviewPopups: true,
     tabLayout: "vertical",
     tabRailSide: "left",
     tabRailHoverReachPx: 24,
@@ -56,8 +59,11 @@ function makeModal(): SettingsModal {
     onDefaultViewModeChange: noop,
     onToolDensityChange: noop,
     onToggleCollapseReasoningOnReply: noop,
+    onToggleAutoShowLiveThinking: noop,
     onToggleRawTextOnExpand: noop,
     onToggleTabPreviews: noop,
+    onToggleShowAskPopups: noop,
+    onToggleShowPlanReviewPopups: noop,
     onTabLayoutChange: noop,
     onTabRailSideChange: noop,
     onTabRailHoverReachChange: noop,
@@ -160,5 +166,31 @@ describe("SettingsModal search", () => {
       ),
     ).toHaveLength(0);
     expect(modal.el.querySelector(".settings-search-empty")?.textContent).toContain("zzzznotasetting");
+  });
+});
+describe("SettingsModal ask popups toggle", () => {
+  it("exposes a searchable ask popups checkbox", () => {
+    const modal = makeModal();
+    modal.open();
+    search(modal, "ask question");
+    expect(visibleRows(modal).some((row) => row.includes("Show Ask Question Popups"))).toBe(true);
+  });
+});
+
+describe("SettingsModal live thinking toggle", () => {
+  it("exposes a searchable automatic live thinking checkbox", () => {
+    const modal = makeModal();
+    modal.open();
+    search(modal, "live thinking");
+    expect(visibleRows(modal).some((row) => row.includes("Show Live Thinking Automatically"))).toBe(true);
+  });
+});
+
+describe("SettingsModal plan review toggle", () => {
+  it("exposes a searchable plan review checkbox", () => {
+    const modal = makeModal();
+    modal.open();
+    search(modal, "plan review");
+    expect(visibleRows(modal).some((row) => row.includes("Show Plan Review Sheet"))).toBe(true);
   });
 });

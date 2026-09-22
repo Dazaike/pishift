@@ -3,6 +3,7 @@ import type { ProviderLimit, ProviderUsageReport } from "./ipc";
 export type UsageTrackerStyle = "bar" | "circle" | "battery";
 export type UsageTrackerIconPlacement = "inside" | "beside";
 export type UsageTrackerOrientation = "auto" | "horizontal" | "vertical";
+export type DockContextUsageStyle = "button" | "combined" | "off";
 export type UsageTrackerQuota = {
   provider: string;
   account?: string;
@@ -27,6 +28,8 @@ export type UsageTrackerSettings = {
    * percent and raises the ceiling by 100 per account (current default).
    */
   combineAccountsMax?: 100 | 200;
+  /** Context usage tracker display mode in dock. */
+  dockContextStyle?: DockContextUsageStyle;
 };
 
 export const USAGE_TRACKER_REFRESH_PRESETS = [
@@ -52,12 +55,13 @@ export const DEFAULT_USAGE_TRACKER_SETTINGS: UsageTrackerSettings = {
   orientation: "auto",
   combineAccounts: false,
   combineAccountsMax: 200,
+  dockContextStyle: "button",
 };
-
 export type SettingsSectionId =
   | "appearance"
   | "composer"
   | "usage-tracker"
+  | "context-tracker"
   | "chat-view"
   | "interface"
   | "backup";
@@ -66,6 +70,7 @@ export const SETTINGS_SECTION_IDS: readonly SettingsSectionId[] = [
   "appearance",
   "composer",
   "usage-tracker",
+  "context-tracker",
   "chat-view",
   "interface",
   "backup",
@@ -75,11 +80,11 @@ export const DEFAULT_SETTINGS_SECTION_COLLAPSED: Record<SettingsSectionId, boole
   appearance: false,
   composer: false,
   "usage-tracker": false,
+  "context-tracker": false,
   "chat-view": false,
   interface: false,
   backup: false,
 };
-
 export function usageTrackerQuotaKey(quota: Pick<UsageTrackerQuota, "provider" | "account" | "label">): string {
   return `${quota.provider}\u0000${quota.account ?? ""}\u0000${quota.label}`;
 }
@@ -272,6 +277,10 @@ export function normalizeUsageTrackerSettings(value: unknown): UsageTrackerSetti
       candidate.combineAccountsMax === 100 || candidate.combineAccountsMax === 200
         ? candidate.combineAccountsMax
         : DEFAULT_USAGE_TRACKER_SETTINGS.combineAccountsMax,
+    dockContextStyle:
+      candidate.dockContextStyle === "combined" || candidate.dockContextStyle === "off"
+        ? candidate.dockContextStyle
+        : "button",
   };
 }
 

@@ -42,7 +42,7 @@ import { PtyManager } from "./pty-manager";
 import { StateStore } from "./state-store";
 import { getThemeByName } from "../shared/themes";
 import { ControlBridgeListener } from "./control-bridge-listener";
-import { TranscriptWatcher, readTranscriptBlob } from "./transcript";
+import { TranscriptWatcher, readSessionPlan, readTranscriptBlob } from "./transcript";
 
 const DEFAULT_CHROME_BG = "#191b24";
 const TEMP_SUBDIR = "pishift";
@@ -322,6 +322,7 @@ function registerIpc(): void {
   );
   ipcMain.on(CH.unsubscribeTranscript, (_e, ptySessionId: string) => transcripts?.unsubscribe(ptySessionId));
   ipcMain.handle(CH.transcriptBlob, (_e, ref: string, mimeType: string) => readTranscriptBlob(ref, mimeType));
+  ipcMain.handle(CH.planText, (_e, ompSessionId: string | null, ref: string) => readSessionPlan(ompSessionId, ref));
   ipcMain.handle(CH.killJob, async (_e, req: KillJobRequest) => {
     try {
       const cancelPath = join(app.getPath("home"), ".omp", "agent", "cancel-job.json");

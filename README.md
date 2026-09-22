@@ -82,7 +82,7 @@ No fake web-view wrappers pretending to be terminals. Just a genuine hardware-ac
 - **Drag the chrome, not the 8px caption lie:** The whole top bar is a window drag handle. Grab the tab strip, the usage gauges, whatever — it moves. Buttons stay clickable because we are not animals.
 
 ### 🔌 Zero-Config Telemetry Bridge
-- Uses an asynchronous UDP bridge (`127.0.0.1:37991`) to stream live agent activity (`idle`, `working`, `thinking`), token usage, and model states with **zero polling**. A file-watch backstop covers dropped datagrams, so the UI never gets stuck claiming the agent is busy.
+- Uses an asynchronous UDP bridge on `127.0.0.1` — the port is negotiated per instance, so two PiShift windows never fight over one socket — to stream live agent activity (`idle`, `working`, `thinking`), in-flight tool calls, token usage, and model states with **zero polling**. A file-watch backstop covers dropped datagrams, so the UI never gets stuck claiming the agent is busy.
 - **Auto-installs** `control-bridge.ts` into your `~/.omp/agent/extensions/` on launch. You don't have to touch a config file. You're welcome.
 
 ### 🛰️ Async Job Monitor
@@ -98,6 +98,9 @@ No fake web-view wrappers pretending to be terminals. Just a genuine hardware-ac
 - **Transcript backfill on resume:** reopen a past session and your earlier messages come back, instead of an empty scrollback pretending nothing happened.
 - **Chat View:** Toggle each tab between raw xterm and a structured conversation view with live reasoning/text, transcript backfill, and per-view expansion controls. Because terminal scrollback is a terrible chat client.
 - **Tool Density:** Two modes, one design. **Compact** (default) keeps every activity section, tool call, and thought folded; **Detailed** opens them all on arrival. Nothing else changes — expanded work looks identical either way, because shipping two different expanded layouts would be an admission of indecision. Compact also offers **Show Raw Text on Expand** for people who want the literal payload instead of the polished card.
+- **Inline Plan Review & Questions:** Plans and `ask` prompts answer inline at the conversation tail — full plan markdown with Approve / Compact / Refine / Quit buttons, and question cards with multi-select, `(Recommended)` markers, and an **Other** field. Or switch both off in Settings and keep them in the terminal, if you liked it the old way.
+- **Activity Orb:** The live activity header animates to what the agent is actually doing — solving, composing, searching, shaping, working — instead of a spinner that means nothing.
+- **Context Window Popover:** A circular usage ring with total and free tokens, the reserved auto-compaction buffer, and where the rest went: system overhead, your input, thinking, output, tool calls. One click to `/compact`.
 
 ### 🎨 28 Themes Because Aesthetics Matter
 - 28 built-in palettes (Tokyo Night, Catppuccin, Gruvbox, Nord, Cyberpunk, Rose Pine, Synthwave...).
@@ -131,10 +134,10 @@ No fake web-view wrappers pretending to be terminals. Just a genuine hardware-ac
 
 ### Download the binary (for people with places to be)
  Grab the latest release from the **[Releases](https://github.com/Dazaike/pishift/releases)** tab:
-- **`PiShift Setup 1.9.32.exe`** — Standard installer (Windows).
-- **`PiShift-1.9.32-win.zip`** — Portable zip if you have installer commitment issues (Windows).
-- **`PiShift-1.9.32.AppImage`** — Portable, no install needed (Linux, x64).
-- **`pishift_1.9.32_amd64.deb`** — Debian/Ubuntu package (Linux, x64).
+- **`PiShift Setup 2.0.0.exe`** — Standard installer (Windows).
+- **`PiShift-2.0.0-win.zip`** — Portable zip if you have installer commitment issues (Windows).
+- **`PiShift-2.0.0.AppImage`** — Portable, no install needed (Linux, x64).
+- **`pishift_2.0.0_amd64.deb`** — Debian/Ubuntu package (Linux, x64).
 ### Build from source (for hackers & tinkerers)
 
 ```bash
