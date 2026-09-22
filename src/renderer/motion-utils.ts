@@ -145,14 +145,19 @@ export type PillItemRect = {
 };
 
 /**
- * Measures `el`'s box relative to `container` in container's own layout
- * pixels. Plain `getBoundingClientRect()` deltas are visual (post-transform)
- * pixels, so while an ancestor is mid CSS-transform animation (e.g. a
- * popover's open spring scaling from 0.95 -> 1), the delta comes out smaller
- * than the untransformed offset the pill's own `translate()` needs — the
- * pill lands offset until the transform settles at scale 1. Dividing by the
- * ancestor's current scale factor (visual rect size vs. real layout size)
- * corrects for that at every frame, not just once the animation ends.
+ * Measures `el`'s box relative to `container`'s **padding box** in container's
+ * own layout pixels — the same origin an absolutely positioned child with
+ * `left: 0` / `top: 0` resolves against. `getBoundingClientRect()` deltas are
+ * border-box relative, so without subtracting `clientLeft`/`clientTop` the
+ * pill lands shifted by the container's border width.
+ *
+ * The rects are also visual (post-transform) pixels, so while an ancestor is
+ * mid CSS-transform animation (e.g. a popover's open spring scaling from 0.95
+ * -> 1), the delta comes out smaller than the untransformed offset the pill's
+ * own `translate()` needs — the pill lands offset until the transform settles
+ * at scale 1. Dividing by the ancestor's current scale factor (visual rect
+ * size vs. real layout size) corrects for that at every frame, not just once
+ * the animation ends.
  */
 function measureItemRect(container: HTMLElement, el: HTMLElement, box: boolean): PillItemRect {
   const crate = container.getBoundingClientRect();
@@ -161,11 +166,11 @@ function measureItemRect(container: HTMLElement, el: HTMLElement, box: boolean):
     const scaleX = container.offsetWidth > 0 ? crate.width / container.offsetWidth : 1;
     const scaleY = container.offsetHeight > 0 ? crate.height / container.offsetHeight : 1;
     const next: PillItemRect = {
-      offsetLeft: (r.left - crate.left) / scaleX + container.scrollLeft,
+      offsetLeft: (r.left - crate.left) / scaleX - container.clientLeft + container.scrollLeft,
       offsetWidth: r.width / scaleX,
     };
     if (box) {
-      next.offsetTop = (r.top - crate.top) / scaleY + container.scrollTop;
+      next.offsetTop = (r.top - crate.top) / scaleY - container.clientTop + container.scrollTop;
       next.offsetHeight = r.height / scaleY;
     }
     return next;
@@ -236,6 +241,11 @@ export class SlidingPillIndicator {
       this.pill.style.willChange = "transform, width, height, opacity";
       container.prepend(this.pill);
     }
+    // `translate()` stacks on the pill's *static* position, which inside a flex
+    // row is wherever the pill would have been laid out as a flex item. Pin the
+    // horizontal origin to the container's padding-box left so the measured
+    // offset is the whole story.
+    this.pill.style.left = "0";
   }
 
   /** Slides the pill onto `target`; `null` fades it out. */
@@ -253,6 +263,12 @@ export class SlidingPillIndicator {
       ? this.getItemRect(target)
       : { offsetLeft: target.offsetLeft, offsetWidth: target.offsetWidth };
     const frame = pillFrame(rect);
+    if (rect.offsetTop != null) {
+      // Box-mode pills drive their own height, so pin the vertical origin too;
+      // any CSS `top`/`bottom` inset would otherwise double-count.
+      this.pill.style.top = "0";
+      this.pill.style.bottom = "auto";
+    }
 
     if (!this.mounted || immediate) {
       this.pill.style.opacity = "1";
@@ -555,6 +571,11 @@ export function attachDualToolbarPills(
 
   const mo = new MutationObserver(() => sync());
   mo.observe(container, { attributes: true, subtree: true, attributeFilter: ["class", "hidden"] });
+  // Body-level appearance toggles (icon-only mode, chat-mode chrome) resize
+  // buttons without touching the container's own subtree — without this the
+  // pill freezes at its pre-toggle size instead of resyncing to the new one.
+  const bodyMo = document.body ? new MutationObserver(() => sync(true)) : null;
+  bodyMo?.observe(document.body, { attributes: true, attributeFilter: ["class"] });
 
   // Row content (provider icons, async fonts) can reflow after the initial
   // immediate mount below has already measured and frozen a pill's position.
@@ -572,6 +593,7 @@ export function attachDualToolbarPills(
 
   const dispose = (): void => {
     mo.disconnect();
+    bodyMo?.disconnect();
     ro.disconnect();
     container.removeEventListener("pointerover", onOver);
     container.removeEventListener("pointerleave", onLeave);

@@ -71,6 +71,7 @@ export const CH = {
   unsubscribeTranscript: "transcript:unsubscribe",
   transcriptUpdate: "transcript:update",
   transcriptBlob: "transcript:blob",
+  planText: "plan:text",
   checkOmpUpdate: "app:check-omp-update",
   performOmpUpdate: "app:perform-omp-update",
   getAppVersion: "app:get-version",
@@ -206,7 +207,28 @@ export interface GetJobActivityRequest {
   startTime?: number;
   cwd?: string | null;
 }
-export type ControlBridgeStream = { kind: "text" | "thinking"; text: string };
+export type ControlBridgeStream = { thinking: string; text: string };
+
+/**
+ * A tool call in the turn that is running right now. omp only writes a tool
+ * call to the transcript when its message is persisted, so without these the
+ * chat view shows nothing at all while an edit or a command is executing.
+ */
+export interface ControlBridgeStep {
+  id: string;
+  /** omp tool name, e.g. `edit`, `bash`. */
+  name: string;
+  /** Path, command, or pattern the call is about; null when it has no obvious one. */
+  subject: string | null;
+  running: boolean;
+  isError: boolean;
+  /**
+   * Tail of the payload being written — the last lines of a file's contents as
+   * they stream in. Present only while the call is streaming its arguments;
+   * once it completes the transcript owns the real diff.
+   */
+  preview: string | null;
+}
 
 export interface KillJobRequest {
   jobId: string;
@@ -241,11 +263,18 @@ export interface ControlBridgeState {
    */
   ompSessionId?: string | null;
   /**
-   * Assistant output still being written, rebuilt from omp's `message_update`
-   * deltas. UDP-only and never persisted, so it is absent whenever the renderer
-   * falls back to polling the status file, and on a bridge predating streaming.
+   * Assistant output still being written: independent thinking and text buffers
+   * rebuilt from omp's `message_update` deltas. UDP-only and never persisted,
+   * so it is absent whenever the renderer falls back to polling the status
+   * file, and on a bridge predating streaming.
    */
   stream?: ControlBridgeStream | null;
+  /**
+   * Tool calls of the current turn, in execution order. Cleared once omp
+   * persists the message that owns them, from which point the transcript is
+   * authoritative. UDP-only, like `stream`.
+   */
+  steps?: ControlBridgeStep[];
   updatedAt: string;
 }
 
@@ -266,6 +295,8 @@ export type InstalledModel = {
   /** Supported effort tokens from models.db `thinking.efforts`. */
   thinkingEfforts?: string[];
   thinkingRequiresEffort?: boolean;
+  contextWindow?: number;
+  maxTokens?: number;
 };
 
 export type InstalledModelGroup = {
@@ -399,10 +430,18 @@ export type PersistedState = {
   toolDensity?: ToolDensity;
   /** Collapse an expanded thinking block once the reply's own text starts arriving. */
   collapseReasoningOnReply?: boolean;
+  /** Expand the live reasoning step while the agent is still thinking. */
+  autoShowLiveThinking?: boolean;
   /** Compact only: manual tool expansion shows raw payload text, not the card. */
   rawTextOnExpand?: boolean;
+  /** Compact only: activity sections (thinking/tool cards) start expanded instead of collapsed. */
+  autoExpandActivity?: boolean;
   /** Show live hover thumbnail/content preview popover when hovering inactive tabs. */
   tabPreviews?: boolean;
+  /** Surface omp questions as a sheet, OS notification, and chime. Off leaves them answerable in the terminal. */
+  showAskPopups?: boolean;
+  /** Surface omp plan-review menu as a sheet, chime, and notification. Off leaves it answerable in the terminal. */
+  showPlanReviewPopups?: boolean;
   /** Presentation of sessions: vertical session rail vs scaled-down compact horizontal strip. */
   tabLayout?: TabLayout;
   /** Vertical rail edge. Ignored while tabLayout is horizontal. */

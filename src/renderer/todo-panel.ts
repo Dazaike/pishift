@@ -55,6 +55,7 @@ export class TodoPanel {
     private readonly refreshUsageReports: () => Promise<ProviderUsageReport[]>,
     private readonly onJobClick?: (job: AsyncJob) => void,
     private readonly onKillJob?: (job: AsyncJob) => void,
+    private readonly getProviderIconUrls: () => Record<string, string> = () => ({}),
   ) {
     this.closeBtn.addEventListener("click", () => this.setVisible(false));
     this.modeBtn.addEventListener("click", () => {
@@ -150,7 +151,7 @@ export class TodoPanel {
       renderUsageSkeleton(this.usageBody);
       return;
     }
-    renderUsageCards(this.usageBody, this.usageReports);
+    renderUsageCards(this.usageBody, this.usageReports, this.getProviderIconUrls());
     animateUsageReveal(this.usageBody);
   }
 

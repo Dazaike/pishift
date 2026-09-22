@@ -2,8 +2,8 @@
  * Minimal markdown → HTML for the chat view.
  *
  * Written by hand rather than pulled in as a dependency: the app ships only
- * `animejs` and `node-pty` at runtime, and the subset agents actually emit is
- * small. `src/renderer/highlight.ts` is not reusable here — it is a
+ * `node-pty` at runtime, and the subset agents actually emit is small.
+ * `src/renderer/highlight.ts` is not reusable here — it is a
  * character-preserving inline highlighter for the composer's textarea overlay.
  *
  * Security: the source is HTML-escaped *before* any markup is generated, so no

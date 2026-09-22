@@ -1,8 +1,8 @@
-import { IMAGE_EXT, type ControlBridgeActivity, type ImagePreview, type ThinkingControlStyle, type ViewMode } from "../shared/ipc";
+import { IMAGE_EXT, type ImagePreview, type ThinkingControlStyle, type ViewMode } from "../shared/ipc";
 import type { KeyLike } from "../shared/kitty-keys";
-import { DockGlow } from "./dock-glow";
 import { filePaths } from "./dnd";
 import { highlightMessage } from "./highlight";
+import { ChatComposerBeam } from "./chat-composer-beam";
 import { ImageLightbox } from "./image-lightbox";
 import { getProviderIcon } from "./provider-icons";
 import { SlashMenu } from "./slash-menu";
@@ -12,6 +12,8 @@ import planIcon from "./assets/icons/plan.png";
 import terminalIcon from "./assets/icons/terminal.png";
 import chatIcon from "./assets/icons/chat.png";
 import type { PlanMode, PlanTarget } from "../shared/plan-mode";
+import type { ContextUsageSnapshot } from "../shared/transcript";
+import type { DockContextUsageStyle } from "../shared/usage-tracker";
 import { PasteMenu } from "./paste-menu";
 import {
   countPasteLines,
@@ -231,6 +233,7 @@ export interface DockHooks {
   setPlanTarget(target: PlanTarget): void;
   openModel(): void;
   openUsage(): void;
+  openContext?(): void;
   openTools?(): void;
   selectThinking(level: string): void;
   openCwd(): void;
@@ -266,7 +269,11 @@ export class Dock {
   private readonly mirror = document.getElementById("dock-highlight") as HTMLPreElement;
   private readonly cwdLabel = document.getElementById("dock-cwd") as HTMLButtonElement;
   private readonly changeDirBtn = document.getElementById("dock-change-dir") as HTMLButtonElement;
+  private readonly headerCwdLabel = document.getElementById("header-cwd") as HTMLButtonElement | null;
   private readonly usageBtn = document.getElementById("dock-usage-btn") as HTMLButtonElement;
+  private readonly contextWrap = document.getElementById("dock-context-wrap") as HTMLDivElement | null;
+  private readonly contextBtn = document.getElementById("dock-context-btn") as HTMLButtonElement | null;
+  private readonly contextPercent = this.contextBtn?.querySelector(".dock-context-percent") as HTMLSpanElement | null;
   private readonly toolsBtn = document.getElementById("dock-tools-btn") as HTMLButtonElement | null;
   private readonly expandBtn = document.getElementById("dock-expand-btn") as HTMLButtonElement | null;
   private readonly modelBtn = document.getElementById("dock-model") as HTMLButtonElement;
@@ -279,11 +286,14 @@ export class Dock {
   private readonly slashMenu: SlashMenu;
   private readonly pasteMenu = new PasteMenu();
   private readonly thinkingMenu: ThinkingMenu;
+  private readonly composerBeam: ChatComposerBeam;
   private readonly lightbox: ImageLightbox;
-  private readonly glow: DockGlow;
+  private isChatView = false;
   private isBusy = false;
   private isExpanded = false;
   private stopButtonAnim: MotionControls | null = null;
+  private stopButtonHideTimer: number | null = null;
+  private stopButtonGen = 0;
   private lastChipKeys = new Set<string>();
   private chips: Attachment[] = [];
   private snippets: Snippet[] = [];
@@ -304,6 +314,7 @@ export class Dock {
   private toastTimer: number | null = null;
   private toastLeavingTimer: number | null = null;
   constructor(private readonly hooks: DockHooks) {
+    this.composerBeam = new ChatComposerBeam(this.root);
     this.slashMenu = new SlashMenu((cmd) => {
       const text = this.input.value;
       const match = /^\/([a-zA-Z0-9_:.-]*)$/.exec(text);
@@ -316,8 +327,6 @@ export class Dock {
       this.input.focus();
     });
 
-    const editorEl = document.getElementById("dock-editor") as HTMLElement;
-    this.glow = new DockGlow(editorEl);
     this.lightbox = new ImageLightbox();
     // Slash/paste menus mount on document.body so glass blur isn't clipped by #dock.
 
@@ -337,7 +346,15 @@ export class Dock {
     });
     this.changeDirBtn.addEventListener("click", () => this.hooks.changeCwd());
     this.cwdLabel.addEventListener("click", () => this.hooks.openCwd());
+    this.headerCwdLabel?.addEventListener("click", () => this.hooks.openCwd());
     this.usageBtn.addEventListener("click", () => this.hooks.openUsage());
+    this.contextBtn?.addEventListener("click", () => {
+      if (this.hooks.openContext) {
+        this.hooks.openContext();
+      } else {
+        this.hooks.openUsage();
+      }
+    });
     this.modelBtn.addEventListener("click", () => this.hooks.openModel());
     this.toolsBtn?.addEventListener("click", () => this.hooks.openTools?.());
     this.expandBtn?.addEventListener("click", () => this.toggleExpand());
@@ -380,7 +397,9 @@ export class Dock {
     for (const btn of [
       this.changeDirBtn,
       this.cwdLabel,
+      this.headerCwdLabel,
       this.usageBtn,
+      this.contextBtn,
       this.modelBtn,
       this.planBtn,
       this.viewModeBtn,
@@ -435,6 +454,10 @@ export class Dock {
   setCwd(cwd: string): void {
     this.cwdLabel.textContent = cwd;
     this.cwdLabel.title = cwd;
+    if (this.headerCwdLabel) {
+      this.headerCwdLabel.textContent = cwd;
+      this.headerCwdLabel.title = cwd;
+    }
     void this.refreshSkillCommands(cwd);
   }
 
@@ -451,25 +474,32 @@ export class Dock {
     }
   }
 
-  /** Orbiting glow around the composer while the active session is busy. */
-  setAgentBusy(busy: boolean, kind: ControlBridgeActivity = "idle"): void {
+  setAgentBusy(busy: boolean): void {
     const busyChanged = this.isBusy !== busy;
     this.isBusy = busy;
-    this.root.classList.toggle("agent-busy", busy);
+    this.updateComposerBeam();
     if (busyChanged) {
       this.updateSendButton();
     }
-    if (busy && kind !== "idle") {
-      this.root.style.setProperty("--dock-active-color", `var(--glow-${kind})`);
-      // Always (re)start so kind switches mid-turn recolor the comet immediately.
-      this.glow.start(kind);
-    } else {
-      this.root.style.removeProperty("--dock-active-color");
-      this.glow.stop();
-    }
+  }
+
+
+  private updateComposerBeam(): void {
+    this.composerBeam.setActive(this.isChatView && this.isBusy);
   }
 
   private updateSendButton(): void {
+    // Ground truth for hiding the stop button is this timer, not the
+    // animation's own promise: WAAPI rejects `finished` when an in-flight
+    // fade is interrupted by a rapid busy/idle flicker (multiple quick tool
+    // calls), so a `.then()`-only hide could silently never fire, leaving a
+    // ghost stop button visible while idle.
+    const gen = ++this.stopButtonGen;
+
+    if (this.stopButtonHideTimer !== null) {
+      window.clearTimeout(this.stopButtonHideTimer);
+      this.stopButtonHideTimer = null;
+    }
     if (this.stopButtonAnim) {
       try {
         this.stopButtonAnim.stop();
@@ -494,11 +524,12 @@ export class Dock {
           { opacity: 0, scale: 0.9 },
           { duration: 0.12, ease: "easeOut" }
         );
-        this.stopButtonAnim.then(() => {
-          if (!this.isBusy) {
+        this.stopButtonHideTimer = window.setTimeout(() => {
+          this.stopButtonHideTimer = null;
+          if (gen === this.stopButtonGen && !this.isBusy) {
             this.stopButton.hidden = true;
           }
-        });
+        }, 130);
       } else {
         this.stopButton.hidden = true;
       }
@@ -529,6 +560,28 @@ export class Dock {
     this.setModel(name);
   }
 
+  setContextUsage(
+    usage: ContextUsageSnapshot | null | undefined,
+    style: DockContextUsageStyle = "button",
+  ): void {
+    if (!this.contextWrap || !this.contextBtn) return;
+
+    if (style === "off" || style === "combined") {
+      this.contextWrap.hidden = true;
+      return;
+    }
+
+    this.contextWrap.hidden = false;
+
+    const percent = usage?.percent ?? 0;
+    if (this.contextPercent) {
+      this.contextPercent.textContent = `${percent}%`;
+    }
+    const promptK = usage ? `${Math.round(usage.promptTokens / 1000)}k` : "0k";
+    const windowK = usage ? `${Math.round(usage.contextWindow / 1000)}k` : "200k";
+    this.contextBtn.title = `Context Window: ${promptK} / ${windowK} (${percent}%) — Click to open breakdown`;
+  }
+
   setPlanMode(mode: PlanMode, pending = this.planPending): void {
     if (this.planMode === mode && this.planPending === pending) return;
     this.planMode = mode;
@@ -536,11 +589,12 @@ export class Dock {
     this.updatePlanButton();
   }
 
-  /** Paint the toggle with the *current* mode; its title names the action it performs. */
+  /** Switch the mode affordance and keep the chat-only beam out of terminal view. */
   setViewMode(mode: ViewMode): void {
     const chat = mode === "chat";
+    this.isChatView = chat;
+    this.updateComposerBeam();
     this.viewModeBtn.classList.toggle("view-chat", chat);
-    this.viewModeBtn.classList.toggle("active", chat);
     this.viewModeBtn.title = chat
       ? "Back to Terminal (Ctrl+Shift+U)"
       : "Switch to Chat View (Ctrl+Shift+U)";

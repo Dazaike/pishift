@@ -13,9 +13,10 @@
 
 import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   buildTranscriptRows,
+  extractContextUsage,
   parseTranscriptLine,
   transcriptRowId,
   type TranscriptNode,
@@ -36,6 +37,10 @@ const MAX_TAIL_BYTES = 32 * 1024 * 1024;
 const MAX_BLOB_BYTES = 8 * 1024 * 1024;
 
 const BLOB_REF = /^blob:sha256:([0-9a-f]{64})$/;
+
+/** A plan is a session-local artifact, never an arbitrary renderer-provided path. */
+const PLAN_LOCAL_REF = /^local:\/\/([A-Za-z0-9][A-Za-z0-9._-]*)$/;
+const MAX_PLAN_BYTES = 1024 * 1024;
 
 interface Subscription {
   readonly ptySessionId: string;
@@ -236,12 +241,14 @@ export class TranscriptWatcher {
   }
 
   private snapshot(sub: Subscription, replace: boolean, rows: TranscriptRow[]): TranscriptSnapshot {
+    const contextUsage = extractContextUsage(sub.nodes);
     return {
       ptySessionId: sub.ptySessionId,
       ompSessionId: sub.ompSessionId,
       file: sub.path,
       replace,
       rows,
+      contextUsage,
     };
   }
 
@@ -349,6 +356,28 @@ export function readTranscriptBlob(ref: string, mimeType: string): string | null
     if (statSync(path).size > MAX_BLOB_BYTES) return null;
     const type = /^[\w.+-]+\/[\w.+-]+$/.test(mimeType) ? mimeType : "image/png";
     return `data:${type};base64,${readFileSync(path).toString("base64")}`;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Read the current session's approved plan artifact.
+ *
+ * `local://` paths are virtual session artifacts. Resolve only a single
+ * filename beneath the matching transcript's sibling `local` directory so a
+ * compromised renderer cannot use this IPC channel for arbitrary file reads.
+ */
+export function readSessionPlan(ompSessionId: string | null, ref: string): string | null {
+  if (!ompSessionId || typeof ref !== "string") return null;
+  const match = PLAN_LOCAL_REF.exec(ref);
+  if (!match) return null;
+  const transcript = resolveTranscript(ompSessionId, null);
+  if (!transcript) return null;
+  const path = join(dirname(transcript), "local", match[1]);
+  try {
+    if (!existsSync(path) || statSync(path).size > MAX_PLAN_BYTES) return null;
+    return readFileSync(path, "utf8");
   } catch {
     return null;
   }

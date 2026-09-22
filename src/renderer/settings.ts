@@ -67,6 +67,7 @@ const SECTION_LABELS: Record<SettingsSectionId, string> = {
   appearance: "Appearance",
   composer: "Composer",
   "usage-tracker": "Usage Tracker",
+  "context-tracker": "Context Tracker",
   "chat-view": "Chat View",
   interface: "Interface",
   backup: "Backup & Restore",
@@ -87,6 +88,7 @@ const SECTION_ICONS: Record<SettingsSectionId, string> = {
     '<circle cx="8" cy="8" r="6"/><circle cx="6" cy="6" r="1.1" fill="currentColor" stroke="none"/><circle cx="10.4" cy="6.4" r="1.1" fill="currentColor" stroke="none"/><circle cx="6.4" cy="10.4" r="1.1" fill="currentColor" stroke="none"/>',
   composer: '<path d="M2 4h12M2 8h8M2 12h5"/><path d="M11.5 12.5 14 10l1.2 1.2-2.5 2.5-1.4.3z"/>',
   "usage-tracker": '<path d="M3 13V8M8 13V4M13 13v-3"/><path d="M1.5 14h13"/>',
+  "context-tracker": '<circle cx="8" cy="8" r="6.5"/><path d="M8 4.5v3.5l2.5 1.5"/>',
   "chat-view": '<path d="M14 9.5a2 2 0 0 1-2 2H6l-3.5 2.5V4a2 2 0 0 1 2-2h7.5a2 2 0 0 1 2 2z"/>',
   interface: '<path d="M2.5 5h11M2.5 11h11"/><circle cx="6" cy="5" r="1.7"/><circle cx="10.5" cy="11" r="1.7"/>',
   backup: '<path d="M8 2.5v7m0 0L5.3 6.8M8 9.5l2.7-2.7"/><path d="M2.5 11v1.5a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1V11"/>',
@@ -106,8 +108,12 @@ export class SettingsModal {
   private defaultViewMode: ViewMode;
   private toolDensity: ToolDensity;
   private collapseReasoningOnReply: boolean;
+  private autoShowLiveThinking: boolean;
   private tabPreviews: boolean;
   private rawTextOnExpand: boolean;
+  private autoExpandActivity: boolean;
+  private showAskPopups: boolean;
+  private showPlanReviewPopups: boolean;
   private tabLayout: TabLayout;
   private tabRailSide: TabRailSide;
   private tabRailHoverReachPx: number;
@@ -137,8 +143,12 @@ export class SettingsModal {
   private onDefaultViewModeChange: (mode: ViewMode) => void;
   private onToolDensityChange: (density: ToolDensity) => void;
   private onToggleCollapseReasoningOnReply: (enabled: boolean) => void;
+  private onToggleAutoShowLiveThinking: (enabled: boolean) => void;
   private onToggleTabPreviews: (enabled: boolean) => void;
   private onToggleRawTextOnExpand: (enabled: boolean) => void;
+  private onToggleAutoExpandActivity: (enabled: boolean) => void;
+  private onToggleShowAskPopups: (enabled: boolean) => void;
+  private onToggleShowPlanReviewPopups: (enabled: boolean) => void;
   private onTabLayoutChange: (layout: TabLayout) => void;
   private onTabRailSideChange: (side: TabRailSide) => void;
   private onTabRailHoverReachChange: (px: number) => void;
@@ -176,8 +186,10 @@ export class SettingsModal {
     defaultViewMode: ViewMode | undefined;
     toolDensity: ToolDensity | undefined;
     collapseReasoningOnReply: boolean | undefined;
+    autoShowLiveThinking: boolean | undefined;
     onSelect: (preset: ThemePreset) => void;
     rawTextOnExpand: boolean | undefined;
+    autoExpandActivity: boolean | undefined;
     onToggleUsageHeader: (show: boolean) => void;
     onFontChange: (family: string) => void;
     onActivityColorChange: (key: GlowActivity, color: string) => void;
@@ -193,9 +205,15 @@ export class SettingsModal {
     onDefaultViewModeChange: (mode: ViewMode) => void;
     onToolDensityChange: (density: ToolDensity) => void;
     onToggleCollapseReasoningOnReply: (enabled: boolean) => void;
+    onToggleAutoShowLiveThinking: (enabled: boolean) => void;
     tabPreviews: boolean | undefined;
     onToggleRawTextOnExpand: (enabled: boolean) => void;
+    onToggleAutoExpandActivity: (enabled: boolean) => void;
+    showAskPopups: boolean | undefined;
+    showPlanReviewPopups: boolean | undefined;
     onToggleTabPreviews: (enabled: boolean) => void;
+    onToggleShowAskPopups: (enabled: boolean) => void;
+    onToggleShowPlanReviewPopups: (enabled: boolean) => void;
     tabLayout?: TabLayout | undefined;
     onTabLayoutChange: (layout: TabLayout) => void;
     tabRailSide?: TabRailSide | undefined;
@@ -243,8 +261,12 @@ export class SettingsModal {
     this.defaultViewMode = opts.defaultViewMode ?? "terminal";
     this.toolDensity = opts.toolDensity ?? "compact";
     this.collapseReasoningOnReply = opts.collapseReasoningOnReply ?? false;
+    this.autoShowLiveThinking = opts.autoShowLiveThinking ?? true;
     this.rawTextOnExpand = opts.rawTextOnExpand ?? false;
+    this.autoExpandActivity = opts.autoExpandActivity ?? false;
     this.tabPreviews = opts.tabPreviews ?? true;
+    this.showAskPopups = opts.showAskPopups ?? true;
+    this.showPlanReviewPopups = opts.showPlanReviewPopups ?? true;
     this.tabLayout = opts.tabLayout ?? DEFAULT_TAB_LAYOUT;
     this.tabRailSide = opts.tabRailSide ?? DEFAULT_TAB_RAIL_SIDE;
     this.tabRailHoverReachPx = clampTabRailHoverReachPx(
@@ -266,8 +288,12 @@ export class SettingsModal {
     this.onDefaultViewModeChange = opts.onDefaultViewModeChange;
     this.onToolDensityChange = opts.onToolDensityChange;
     this.onToggleCollapseReasoningOnReply = opts.onToggleCollapseReasoningOnReply;
+    this.onToggleAutoShowLiveThinking = opts.onToggleAutoShowLiveThinking;
     this.onToggleRawTextOnExpand = opts.onToggleRawTextOnExpand;
+    this.onToggleAutoExpandActivity = opts.onToggleAutoExpandActivity;
     this.onToggleTabPreviews = opts.onToggleTabPreviews;
+    this.onToggleShowAskPopups = opts.onToggleShowAskPopups;
+    this.onToggleShowPlanReviewPopups = opts.onToggleShowPlanReviewPopups;
     this.onTabLayoutChange = opts.onTabLayoutChange;
     this.onTabRailSideChange = opts.onTabRailSideChange;
     this.onTabRailHoverReachChange = opts.onTabRailHoverReachChange;
@@ -345,8 +371,12 @@ export class SettingsModal {
     defaultViewMode?: ViewMode;
     toolDensity?: ToolDensity;
     collapseReasoningOnReply?: boolean;
+    autoShowLiveThinking?: boolean;
     rawTextOnExpand?: boolean;
+    autoExpandActivity?: boolean;
     tabPreviews?: boolean;
+    showAskPopups?: boolean;
+    showPlanReviewPopups?: boolean;
     tabLayout?: TabLayout;
     tabRailSide?: TabRailSide;
     tabRailHoverReachPx?: number;
@@ -401,11 +431,23 @@ export class SettingsModal {
     if (typeof state.collapseReasoningOnReply === "boolean") {
       this.collapseReasoningOnReply = state.collapseReasoningOnReply;
     }
+    if (typeof state.autoShowLiveThinking === "boolean") {
+      this.autoShowLiveThinking = state.autoShowLiveThinking;
+    }
     if (typeof state.rawTextOnExpand === "boolean") {
       this.rawTextOnExpand = state.rawTextOnExpand;
     }
+    if (typeof state.autoExpandActivity === "boolean") {
+      this.autoExpandActivity = state.autoExpandActivity;
+    }
     if (typeof state.tabPreviews === "boolean") {
       this.tabPreviews = state.tabPreviews;
+    }
+    if (typeof state.showAskPopups === "boolean") {
+      this.showAskPopups = state.showAskPopups;
+    }
+    if (typeof state.showPlanReviewPopups === "boolean") {
+      this.showPlanReviewPopups = state.showPlanReviewPopups;
     }
     if (isTabLayout(state.tabLayout)) {
       this.tabLayout = state.tabLayout;
@@ -591,6 +633,7 @@ export class SettingsModal {
     const freshInner = this.renderUsageTrackerSection().querySelector(".settings-section-content-inner");
     if (freshInner) inner.replaceChildren(...Array.from(freshInner.childNodes));
   }
+
 
   private appendSectionBody(section: HTMLElement, ...nodes: Node[]): void {
     const wrap = document.createElement("div");
@@ -1157,6 +1200,19 @@ export class SettingsModal {
     collapseReasoningText.textContent = "Collapse Reasoning once the reply starts";
     collapseReasoningLabel.append(collapseReasoningCheck, collapseReasoningText);
 
+    const liveThinkingLabel = document.createElement("label");
+    liveThinkingLabel.className = "settings-check-label";
+    const liveThinkingCheck = document.createElement("input");
+    liveThinkingCheck.type = "checkbox";
+    liveThinkingCheck.checked = this.autoShowLiveThinking;
+    liveThinkingCheck.addEventListener("change", () => {
+      this.autoShowLiveThinking = liveThinkingCheck.checked;
+      this.onToggleAutoShowLiveThinking(this.autoShowLiveThinking);
+    });
+    const liveThinkingText = document.createElement("span");
+    liveThinkingText.textContent = "Show Live Thinking Automatically";
+    liveThinkingLabel.append(liveThinkingCheck, liveThinkingText);
+
     // Compact only: Detailed always uses the polished card, so the row hides
     // there — its saved value is kept for the trip back to Compact.
     const rawTextLabel = document.createElement("label");
@@ -1172,6 +1228,21 @@ export class SettingsModal {
     rawTextText.textContent = "Show Raw Text on Expand";
     rawTextLabel.append(rawTextCheck, rawTextText);
     rawTextLabel.hidden = this.toolDensity !== "compact";
+
+    // Compact only, same reasoning as rawTextLabel above.
+    const autoExpandLabel = document.createElement("label");
+    autoExpandLabel.className = "settings-check-label";
+    const autoExpandCheck = document.createElement("input");
+    autoExpandCheck.type = "checkbox";
+    autoExpandCheck.checked = this.autoExpandActivity;
+    autoExpandCheck.addEventListener("change", () => {
+      this.autoExpandActivity = autoExpandCheck.checked;
+      this.onToggleAutoExpandActivity(this.autoExpandActivity);
+    });
+    const autoExpandText = document.createElement("span");
+    autoExpandText.textContent = "Auto-expand Activity Sections";
+    autoExpandLabel.append(autoExpandCheck, autoExpandText);
+    autoExpandLabel.hidden = this.toolDensity !== "compact";
 
     // Option: how much tool activity Chat Mode prints per action.
     const densityRow = document.createElement("div");
@@ -1214,6 +1285,7 @@ export class SettingsModal {
       }
       collapseReasoningCheck.disabled = this.toolDensity !== "detailed";
       rawTextLabel.hidden = this.toolDensity !== "compact";
+      autoExpandLabel.hidden = this.toolDensity !== "compact";
       this.onToolDensityChange(this.toolDensity);
     });
     // The three stops need a fixed column, not the whole settings pane.
@@ -1235,6 +1307,35 @@ export class SettingsModal {
     const tabPreviewsText = document.createElement("span");
     tabPreviewsText.textContent = "Show Tab Previews on Hover";
     tabPreviewsLabel.append(tabPreviewsCheck, tabPreviewsText);
+
+    const askPopupsLabel = document.createElement("label");
+    askPopupsLabel.className = "settings-check-label";
+    const askPopupsCheck = document.createElement("input");
+    askPopupsCheck.type = "checkbox";
+    askPopupsCheck.checked = this.showAskPopups;
+    askPopupsCheck.addEventListener("change", () => {
+      this.showAskPopups = askPopupsCheck.checked;
+      this.onToggleShowAskPopups(this.showAskPopups);
+    });
+    const askPopupsText = document.createElement("span");
+    askPopupsText.textContent = "Show Ask Question Popups";
+    askPopupsText.title = "Off keeps omp questions in the terminal — no sheet, toast, or chime.";
+    askPopupsLabel.append(askPopupsCheck, askPopupsText);
+
+    const planReviewPopupsLabel = document.createElement("label");
+    planReviewPopupsLabel.className = "settings-check-label";
+    const planReviewPopupsCheck = document.createElement("input");
+    planReviewPopupsCheck.type = "checkbox";
+    planReviewPopupsCheck.checked = this.showPlanReviewPopups;
+    planReviewPopupsCheck.addEventListener("change", () => {
+      this.showPlanReviewPopups = planReviewPopupsCheck.checked;
+      this.onToggleShowPlanReviewPopups(this.showPlanReviewPopups);
+    });
+    const planReviewPopupsText = document.createElement("span");
+    planReviewPopupsText.textContent = "Show Plan Review Sheet";
+    planReviewPopupsText.title =
+      "Off keeps the plan-review menu in the terminal — no sheet, chime, or notification.";
+    planReviewPopupsLabel.append(planReviewPopupsCheck, planReviewPopupsText);
 
 
     // Option 7: Wheel scroll steps
@@ -1423,6 +1524,8 @@ export class SettingsModal {
     optionsList.append(
       usageLabel,
       tabPreviewsLabel,
+      askPopupsLabel,
+      planReviewPopupsLabel,
       topLabelsLabel,
       bottomLabelsLabel,
       burgerMenuLabel,
@@ -1467,7 +1570,9 @@ export class SettingsModal {
       densityRow,
       this.divider(),
       collapseReasoningLabel,
+      liveThinkingLabel,
       rawTextLabel,
+      autoExpandLabel,
     );
     this.appendSectionBody(chatSection, chatList);
 
@@ -1478,6 +1583,7 @@ export class SettingsModal {
       themeSection,
       activitySection,
       this.renderUsageTrackerSection(),
+      this.renderContextTrackerSection(),
       chatSection,
       interfaceSection,
       this.renderBackupSection(),
@@ -2231,6 +2337,53 @@ export class SettingsModal {
       gauge.append(this.renderMiniIcon(provider));
     }
     return gauge;
+  }
+
+  private renderContextTrackerSection(): HTMLElement {
+    const section = document.createElement("section");
+    section.className = "settings-section";
+    section.append(
+      this.sectionHeader(
+        "context-tracker",
+        "Context Tracker",
+        "Track active conversation context tokens and limit percentage in the bottom dock.",
+      ),
+    );
+    this.markSection(section, "context-tracker");
+
+    const content = document.createElement("div");
+    content.className = "settings-options-list";
+
+    const modeRow = document.createElement("div");
+    modeRow.className = "settings-pos-row";
+    const modeLabel = document.createElement("label");
+    modeLabel.className = "settings-pos-label";
+    modeLabel.textContent = "Dock Display Mode";
+    const modeSelect = document.createElement("select");
+    modeSelect.className = "settings-select";
+    for (const [value, label] of [
+      ["button", "Dock Button + Popover"] as const,
+      ["combined", "Combined into Usage Popover"] as const,
+      ["off", "Hidden (Off)"] as const,
+    ]) {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = label;
+      option.selected = (this.usageTracker.dockContextStyle ?? "button") === value;
+      modeSelect.append(option);
+    }
+    modeSelect.addEventListener("change", () => {
+      const style = modeSelect.value as "button" | "combined" | "off";
+      this.updateUsageTracker({
+        ...this.usageTracker,
+        dockContextStyle: style,
+      });
+    });
+    modeRow.append(modeLabel, modeSelect);
+
+    content.append(modeRow);
+    this.appendSectionBody(section, content);
+    return section;
   }
 
 }

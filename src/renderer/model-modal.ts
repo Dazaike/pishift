@@ -1,7 +1,7 @@
 import type { CustomModelConfig } from "../shared/ipc";
 import { INTERNAL_DRAG_TYPE } from "./dnd";
 import { getProviderIcon } from "./provider-icons";
-import { attachToolbarHoverPill, popoverMotion, SlidingPillIndicator } from "./motion-utils";
+import { attachToolbarHoverPill, popoverMotion } from "./motion-utils";
 
 const VIEWPORT_MARGIN = 8;
 const ANCHOR_GAP = 12;
@@ -12,7 +12,6 @@ export const DEFAULT_USER_MODELS: CustomModelConfig[] = [
   { id: "gpt-4o", name: "GPT-4o", provider: "openai" },
   { id: "grok-4.5", name: "Grok 4.5", provider: "xai-oauth" },
 ];
-export type ModelViewMode = "list" | "grid";
 
 export class ModelModal {
   readonly el: HTMLDivElement;
@@ -22,10 +21,9 @@ export class ModelModal {
   private showAddForm = false;
   private isEditMode = false;
   private isReordering = false;
-  private viewMode: ModelViewMode = "list";
   private kbIndex = -1;
-  private listPill: { dispose: () => void; sync: (immediate?: boolean) => void } | null = null;
   private draggedIndex: number | null = null;
+  private listPill: { dispose: () => void; sync: (immediate?: boolean) => void } | null = null;
   private onSelectCallback: (modelId: string, provider?: string) => void;
   private onModelsChange: (models: CustomModelConfig[]) => void;
 
@@ -34,11 +32,9 @@ export class ModelModal {
     currentModel: string,
     onSelect: (modelId: string, provider?: string) => void,
     onModelsChange: (models: CustomModelConfig[]) => void,
-    initialViewMode: ModelViewMode = "list",
   ) {
     this.models = savedModels && savedModels.length > 0 ? savedModels : [...DEFAULT_USER_MODELS];
     this.currentModel = currentModel;
-    this.viewMode = initialViewMode;
     this.onSelectCallback = onSelect;
     this.onModelsChange = onModelsChange;
 
@@ -110,8 +106,7 @@ export class ModelModal {
         this.listPill?.sync(true);
       }
     });
-    const controls = popoverMotion.animatePopoverOpen(this.el);
-    controls.then(() => this.listPill?.sync(true));
+    popoverMotion.animatePopoverOpen(this.el).then(() => this.listPill?.sync(true));
   }
 
   close(): void {
@@ -130,7 +125,7 @@ export class ModelModal {
     if (!anchor) return;
 
     const anchorRect = anchor.getBoundingClientRect();
-    const menuW = this.el.offsetWidth || (this.viewMode === "grid" ? 400 : 360);
+    const menuW = this.el.offsetWidth || 460;
     const menuH = this.el.offsetHeight || 200;
 
     // Center horizontally over the Model button.
@@ -178,7 +173,6 @@ export class ModelModal {
     this.listPill?.dispose();
     this.listPill = null;
     this.el.replaceChildren();
-    this.el.classList.toggle("grid-view", this.viewMode === "grid");
 
     if (this.isOpen) {
       requestAnimationFrame(() => {
@@ -221,42 +215,6 @@ export class ModelModal {
         this.render();
       });
       headerActions.appendChild(editBtn);
-
-      // Grid / List toggle with sliding pill
-      const viewToggle = document.createElement("div");
-      viewToggle.className = "model-view-toggle";
-      viewToggle.setAttribute("role", "group");
-      viewToggle.setAttribute("aria-label", "Model list layout");
-
-      const listBtn = document.createElement("button");
-      listBtn.type = "button";
-      listBtn.className = "model-view-toggle-btn";
-      listBtn.classList.toggle("active", this.viewMode === "list");
-      listBtn.textContent = "List";
-      listBtn.addEventListener("click", () => {
-        if (this.viewMode === "list") return;
-        this.viewMode = "list";
-        this.render();
-      });
-
-      const gridBtn = document.createElement("button");
-      gridBtn.type = "button";
-      gridBtn.className = "model-view-toggle-btn";
-      gridBtn.classList.toggle("active", this.viewMode === "grid");
-      gridBtn.textContent = "Grid";
-      gridBtn.addEventListener("click", () => {
-        if (this.viewMode === "grid") return;
-        this.viewMode = "grid";
-        this.render();
-      });
-
-      viewToggle.append(listBtn, gridBtn);
-      headerActions.appendChild(viewToggle);
-      const indicator = new SlidingPillIndicator(viewToggle, {
-        pillClass: "model-view-indicator",
-      });
-      const activeToggle = this.viewMode === "grid" ? gridBtn : listBtn;
-      requestAnimationFrame(() => indicator.sync(activeToggle, true));
     }
 
     const closeBtn = document.createElement("button");
@@ -440,7 +398,7 @@ export class ModelModal {
     }
 
     const listEl = document.createElement("div");
-    listEl.className = this.viewMode === "grid" ? "model-grid-list" : "model-vertical-list";
+    listEl.className = "model-grid-list";
 
     for (let i = 0; i < this.models.length; i++) {
       const item = this.models[i]!;
@@ -450,6 +408,7 @@ export class ModelModal {
       if (i === this.kbIndex) cardClass += " kb-active";
       if (this.isEditMode) cardClass += " in-edit";
       if (this.isReordering) cardClass += " reorderable";
+      if (item.id === this.currentModel) cardClass += " active";
       card.className = cardClass;
       card.draggable = this.isReordering;
       card.dataset.index = String(i);
@@ -505,7 +464,43 @@ export class ModelModal {
           }
           this.draggedIndex = null;
         });
+      }
 
+      const iconWrap = document.createElement("span");
+      iconWrap.className = "model-provider-icon";
+      if (item.iconUrl) {
+        iconWrap.innerHTML = `<img src="${item.iconUrl}" alt="" class="model-custom-img-icon" onerror="this.remove()" />`;
+      } else {
+        iconWrap.innerHTML = getProviderIcon(item.provider);
+      }
+
+      const nameSpan = document.createElement("span");
+      nameSpan.className = "model-row-name";
+      nameSpan.textContent = item.name;
+
+      card.append(iconWrap, nameSpan);
+
+      if (item.id === this.currentModel) {
+        const checkSpan = document.createElement("span");
+        checkSpan.className = "model-row-check";
+        checkSpan.textContent = "\u2713";
+        card.appendChild(checkSpan);
+      }
+
+      if (this.isEditMode && !this.isReordering) {
+        const delBtn = document.createElement("button");
+        delBtn.type = "button";
+        delBtn.className = "model-row-del-btn";
+        delBtn.title = `Delete ${item.name}`;
+        delBtn.textContent = "\u00d7";
+        delBtn.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          this.removeModel(item.id);
+        });
+        card.appendChild(delBtn);
+      }
+
+      if (this.isReordering) {
         const reorderArrows = document.createElement("div");
         reorderArrows.className = "model-reorder-arrows";
 
@@ -546,52 +541,7 @@ export class ModelModal {
         }
 
         card.appendChild(reorderArrows);
-      }
 
-      const iconWrap = document.createElement("span");
-      iconWrap.className = "model-provider-icon";
-      if (item.iconUrl) {
-        iconWrap.innerHTML = `<img src="${item.iconUrl}" alt="" class="model-custom-img-icon" onerror="this.remove()" />`;
-      } else {
-        iconWrap.innerHTML = getProviderIcon(item.provider);
-      }
-
-      const textCol = document.createElement("span");
-      textCol.className = "model-row-text";
-
-      const nameSpan = document.createElement("span");
-      nameSpan.className = "model-row-name";
-      nameSpan.textContent = item.name;
-
-      const providerLabel = (item.provider || "model").replace(/-oauth$/i, "");
-      const metaSpan = document.createElement("span");
-      metaSpan.className = "model-row-meta";
-      metaSpan.textContent = providerLabel;
-      if (this.viewMode === "grid") {
-        textCol.append(nameSpan, metaSpan);
-        card.append(iconWrap, textCol);
-      } else {
-        textCol.append(nameSpan);
-        const shortcut = document.createElement("span");
-        shortcut.className = "model-row-shortcut";
-        shortcut.textContent = providerLabel;
-        card.append(iconWrap, textCol, shortcut);
-      }
-
-      if (this.isEditMode && !this.isReordering) {
-        const delBtn = document.createElement("button");
-        delBtn.type = "button";
-        delBtn.className = "model-row-del-btn";
-        delBtn.title = `Delete ${item.name}`;
-        delBtn.textContent = "\u00d7";
-        delBtn.addEventListener("click", (ev) => {
-          ev.stopPropagation();
-          this.removeModel(item.id);
-        });
-        card.appendChild(delBtn);
-      }
-
-      if (this.isReordering) {
         const dragHandle = document.createElement("span");
         dragHandle.className = "model-drag-handle";
         dragHandle.innerHTML = `&#8942;&#8942;`;

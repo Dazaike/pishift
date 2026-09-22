@@ -30,3 +30,26 @@ export function getProviderIcon(provider: string): string {
   }
   return PROVIDER_ICONS.generic;
 }
+
+/** Icon element with an optional custom-URL override; swaps to the built-in glyph on image load failure. */
+export function renderProviderIconEl(provider: string, overrideUrl?: string): HTMLElement {
+  if (overrideUrl) {
+    const img = document.createElement("img");
+    img.className = "provider-icon-img";
+    img.src = overrideUrl;
+    img.alt = "";
+    img.addEventListener(
+      "error",
+      () => {
+        img.replaceWith(renderProviderIconEl(provider));
+      },
+      { once: true },
+    );
+    return img;
+  }
+  const icon = document.createElement("span");
+  icon.className = "provider-icon-svg";
+  icon.setAttribute("aria-hidden", "true");
+  icon.innerHTML = getProviderIcon(provider);
+  return icon;
+}

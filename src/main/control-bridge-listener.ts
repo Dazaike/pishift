@@ -41,7 +41,12 @@ export function controlBridgeFingerprint(state: ControlBridgeState): string {
     state.jobs ? state.jobs.map((j) => `${j.id}:${j.status}`).join(",") : "",
     // Stream deltas leave all durable status unchanged, but must still reach
     // the renderer while a reply is being written.
-    state.stream ? `${state.stream.kind}:${state.stream.text}` : "",
+    state.stream ? `thinking:${state.stream.thinking}\ntext:${state.stream.text}` : "",
+    // Live tool calls change nothing durable either, but a started or finished
+    // edit has to reach the chat view while it is still running.
+    state.steps
+      ? state.steps.map((s) => `${s.id}:${s.name}:${s.subject ?? ""}:${s.running ? 1 : 0}:${s.isError ? 1 : 0}`).join(",")
+      : "",
     // Intentionally omit updatedAt — heartbeats must not spam identical activity.
   ].join("|");
 }

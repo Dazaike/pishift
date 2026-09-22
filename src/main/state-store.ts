@@ -58,6 +58,10 @@ export function normalizeSettings(
       typeof raw.collapseReasoningOnReply === "boolean"
         ? raw.collapseReasoningOnReply
         : defaults.collapseReasoningOnReply,
+    autoShowLiveThinking:
+      typeof raw.autoShowLiveThinking === "boolean"
+        ? raw.autoShowLiveThinking
+        : defaults.autoShowLiveThinking,
     rawTextOnExpand:
       typeof raw.rawTextOnExpand === "boolean" ? raw.rawTextOnExpand : defaults.rawTextOnExpand,
     doneSoundEnabled:
@@ -106,6 +110,12 @@ export function normalizeSettings(
         ? raw.panelPosition
         : defaults.panelPosition,
     tabPreviews: typeof raw.tabPreviews === "boolean" ? raw.tabPreviews : defaults.tabPreviews,
+    showAskPopups:
+      typeof raw.showAskPopups === "boolean" ? raw.showAskPopups : defaults.showAskPopups,
+    showPlanReviewPopups:
+      typeof raw.showPlanReviewPopups === "boolean"
+        ? raw.showPlanReviewPopups
+        : defaults.showPlanReviewPopups,
     tabLayout: isTabLayout(raw.tabLayout) ? raw.tabLayout : defaults.tabLayout,
     tabRailSide: isTabRailSide(raw.tabRailSide) ? raw.tabRailSide : defaults.tabRailSide,
     tabRailHoverReachPx:

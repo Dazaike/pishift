@@ -125,7 +125,8 @@ const api = {
   },
   transcriptBlob: (ref: string, mimeType: string): Promise<string | null> =>
     ipcRenderer.invoke(CH.transcriptBlob, ref, mimeType),
-
+  planText: (ompSessionId: string | null, ref: string): Promise<string | null> =>
+    ipcRenderer.invoke(CH.planText, ompSessionId, ref),
   pickDirectory: (): Promise<string | null> => ipcRenderer.invoke(CH.pickDirectory),
   notify: (title: string, body: string): void => ipcRenderer.send(CH.notify, title, body),
   saveClipboardImage: (): Promise<string | null> =>

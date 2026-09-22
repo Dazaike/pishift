@@ -1,10 +1,10 @@
 import type { ProviderUsageReport } from "../shared/ipc";
+import type { ContextUsageSnapshot } from "../shared/transcript";
 import { attachButtonSpring, popoverMotion } from "./motion-utils";
-import { animateUsageReveal, renderUsageCards, renderUsageSkeleton } from "./usage-render";
+import { animateUsageReveal, renderContextCard, renderUsageCards, renderUsageSkeleton } from "./usage-render";
 
 const REFRESH_ICON =
   '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3.15-6.85"/><polyline points="21 3 21 9 15 9"/></svg>';
-
 export class UsageModal {
   readonly el: HTMLDivElement;
   private reports: ProviderUsageReport[] = [];
@@ -13,12 +13,23 @@ export class UsageModal {
   private loading = false;
   private hasLoaded = false;
   private refreshBtn!: HTMLButtonElement;
+  private closeBtn!: HTMLButtonElement;
   private body!: HTMLDivElement;
+  private footer!: HTMLElement;
 
-  constructor(onOpenStats: () => void, refreshReports: () => Promise<ProviderUsageReport[]>) {
+  private contextUsage: ContextUsageSnapshot | null | undefined = null;
+  private isContextOnly = false;
+  private dockContextStyle: string = "badge";
+
+  constructor(
+    onOpenStats: () => void,
+    refreshReports: () => Promise<ProviderUsageReport[]>,
+    private readonly getProviderIconUrls: () => Record<string, string> = () => ({}),
+    private readonly onRunSlash: (cmd: string) => void = () => {},
+    private readonly onRefreshContext: () => void = () => {},
+  ) {
     this.onOpenStatsCallback = onOpenStats;
     this.refreshReports = refreshReports;
-
     this.el = document.createElement("div");
     this.el.id = "usage-popover";
     this.el.className = "usage-popover";
@@ -29,9 +40,11 @@ export class UsageModal {
     document.addEventListener("mousedown", (ev) => {
       if (!this.el.hidden && !this.el.contains(ev.target as Node)) {
         const usageBtn = document.getElementById("dock-usage-btn");
+        const contextBtn = document.getElementById("dock-context-btn");
         const headerUsage = document.getElementById("header-usage");
         if (
           (usageBtn && usageBtn.contains(ev.target as Node)) ||
+          (contextBtn && contextBtn.contains(ev.target as Node)) ||
           (headerUsage && headerUsage.contains(ev.target as Node))
         ) {
           return;
@@ -65,22 +78,28 @@ export class UsageModal {
     this.position();
     requestAnimationFrame(() => this.position());
     popoverMotion.animatePopoverOpen(this.el);
-    if (!this.hasLoaded) {
-      await this.refresh();
-    } else {
+    // Context-only data comes from transcript snapshots; no provider refresh needed.
+    if (this.isContextOnly || this.hasLoaded) {
       this.paintBody({ entrance: true });
+    } else {
+      await this.refresh();
     }
     requestAnimationFrame(() => this.position());
   }
 
-  private position(): void {
+  private position(anchorEl?: HTMLElement | null): void {
+    const dockContext = document.getElementById("dock-context-btn");
     const dockBtn = document.getElementById("dock-usage-btn");
     const headerBtn = document.getElementById("header-usage");
-    const anchor = (dockBtn && dockBtn.offsetParent !== null) ? dockBtn : headerBtn;
+    const anchor = anchorEl ?? (
+      (this.isContextOnly && dockContext && dockContext.offsetParent !== null)
+        ? dockContext
+        : (dockBtn && dockBtn.offsetParent !== null) ? dockBtn : headerBtn
+    );
     if (!anchor) return;
 
     const anchorRect = anchor.getBoundingClientRect();
-    const menuW = this.el.offsetWidth || 340;
+    const menuW = this.el.offsetWidth || 380;
     const menuH = this.el.offsetHeight || 380;
 
     let left = anchorRect.left + (anchorRect.width - menuW) / 2;
@@ -98,6 +117,37 @@ export class UsageModal {
     this.el.style.top = `${Math.round(top)}px`;
   }
 
+  setContextUsage(snapshot: ContextUsageSnapshot | null | undefined): void {
+    this.contextUsage = snapshot;
+    if (this.isOpen && !this.loading) {
+      this.paintBody({ entrance: false });
+    }
+  }
+
+
+  setContextOnly(contextOnly: boolean): void {
+    this.isContextOnly = contextOnly;
+    this.el.classList.toggle("context-window", contextOnly);
+    const title = this.el.querySelector(".usage-header h2");
+    if (title) {
+      title.textContent = contextOnly ? "Context Window" : "Usage & Quotas";
+    }
+    // Context data comes from transcript snapshots, not refreshReports.
+    this.refreshBtn.style.display = contextOnly ? "none" : "";
+    if (this.isOpen && !this.loading) {
+      this.paintBody({ entrance: false });
+    } else {
+      this.paintFooter();
+    }
+  }
+
+  setDockContextStyle(style: string): void {
+    this.dockContextStyle = style;
+    if (this.isOpen && !this.loading) {
+      this.paintBody({ entrance: false });
+    }
+  }
+
   updateReports(reports: ProviderUsageReport[]): void {
     this.reports = reports;
     this.hasLoaded = true;
@@ -108,7 +158,8 @@ export class UsageModal {
 
   async refresh(): Promise<void> {
     this.loading = true;
-    this.refreshBtn.disabled = true;
+    // Hidden in context-only mode (transcript snapshots, not provider reports).
+    if (!this.isContextOnly) this.refreshBtn.disabled = true;
     this.el.classList.add("loading");
     this.paintBody({ entrance: false });
     try {
@@ -149,21 +200,66 @@ export class UsageModal {
     this.refreshBtn.innerHTML = REFRESH_ICON;
     this.refreshBtn.addEventListener("click", () => void this.refresh());
 
-    const closeBtn = document.createElement("button");
-    closeBtn.type = "button";
-    closeBtn.className = "usage-close";
-    closeBtn.textContent = "\u00d7";
-    closeBtn.title = "Close";
-    closeBtn.addEventListener("click", () => this.close());
+    this.closeBtn = document.createElement("button");
+    this.closeBtn.type = "button";
+    this.closeBtn.className = "usage-close";
+    this.closeBtn.textContent = "×";
+    this.closeBtn.title = "Close";
+    this.closeBtn.addEventListener("click", () => this.close());
 
-    actions.append(this.refreshBtn, closeBtn);
+    actions.append(this.refreshBtn, this.closeBtn);
     header.append(title, actions);
 
     this.body = document.createElement("div");
     this.body.className = "usage-body";
 
-    const footer = document.createElement("footer");
-    footer.className = "usage-footer";
+    this.footer = document.createElement("footer");
+    this.footer.className = "usage-footer";
+    this.el.append(header, this.body, this.footer);
+    this.paintFooter();
+
+    for (const btn of [this.refreshBtn, this.closeBtn]) {
+      attachButtonSpring(btn);
+    }
+  }
+
+  private paintFooter(): void {
+    this.footer.replaceChildren();
+
+    const doneBtn = document.createElement("button");
+    doneBtn.type = "button";
+    doneBtn.className = "usage-footer-btn";
+    doneBtn.textContent = "Close";
+    doneBtn.addEventListener("click", () => this.close());
+
+    if (this.isContextOnly) {
+      const left = document.createElement("div");
+      left.className = "usage-footer-left";
+
+      const compactBtn = document.createElement("button");
+      compactBtn.type = "button";
+      compactBtn.className = "usage-footer-btn";
+      compactBtn.textContent = "Run /compact";
+      compactBtn.title = "Run /compact in the active session";
+      compactBtn.addEventListener("click", () => {
+        this.close();
+        this.onRunSlash("/compact");
+      });
+
+      const refreshBtn = document.createElement("button");
+      refreshBtn.type = "button";
+      refreshBtn.className = "usage-footer-btn";
+      refreshBtn.textContent = "Refresh";
+      refreshBtn.title = "Refresh context usage from this session's saved transcript";
+      refreshBtn.addEventListener("click", () => this.onRefreshContext());
+
+      left.append(refreshBtn, compactBtn);
+      this.footer.append(left, doneBtn);
+      for (const btn of [refreshBtn, compactBtn, doneBtn]) {
+        attachButtonSpring(btn);
+      }
+      return;
+    }
 
     const statsBtn = document.createElement("button");
     statsBtn.type = "button";
@@ -175,27 +271,30 @@ export class UsageModal {
       this.onOpenStatsCallback();
     });
 
-    const doneBtn = document.createElement("button");
-    doneBtn.type = "button";
-    doneBtn.className = "usage-footer-btn";
-    doneBtn.textContent = "Close";
-    doneBtn.addEventListener("click", () => this.close());
-
-    footer.append(statsBtn, doneBtn);
-    this.el.append(header, this.body, footer);
-
-    for (const btn of [this.refreshBtn, closeBtn, statsBtn, doneBtn]) {
+    this.footer.append(statsBtn, doneBtn);
+    for (const btn of [statsBtn, doneBtn]) {
       attachButtonSpring(btn);
     }
   }
 
   private paintBody(opts: { entrance: boolean }): void {
+    this.paintFooter();
     this.body.replaceChildren();
     if (this.loading) {
       renderUsageSkeleton(this.body);
       return;
     }
-    renderUsageCards(this.body, this.reports);
+
+    if (this.isContextOnly) {
+      renderContextCard(this.body, this.contextUsage);
+    } else {
+      // Combined view: Render Context card if selected as "combined" or if context usage exists
+      if (this.dockContextStyle === "combined" || this.contextUsage) {
+        renderContextCard(this.body, this.contextUsage);
+      }
+      renderUsageCards(this.body, this.reports, this.getProviderIconUrls());
+    }
+
     if (opts.entrance) animateUsageReveal(this.body);
   }
 }

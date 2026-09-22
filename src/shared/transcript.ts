@@ -57,6 +57,44 @@ export type TranscriptRow =
   | { type: "entry"; entry: TranscriptEntry }
   | { type: "marker"; marker: TranscriptMarker };
 
+/** Exact static category totals obtained from an earlier OMP `/context` report. */
+export interface DetailedContextBreakdown {
+  usedTokens: number;
+  contextWindow: number;
+  systemPromptTokens: number;
+  systemToolsTokens: number;
+  systemContextTokens: number;
+  skillsTokens: number;
+  messagesTokens: number;
+  freeTokens: number;
+  autoCompactBufferTokens: number;
+}
+
+export interface ContextUsageSnapshot {
+  promptTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  outputTokens: number;
+  nonMessageTokens: number;
+  historyRewriteTokensRemoved: number;
+  totalTokens: number;
+  contextWindow: number;
+  percent: number; // 0 - 100
+  modelId: string | null;
+  /** Raw chars/4 estimates per message category; scaled to `messages` in partitionContextWindow. */
+  messageBreakdown?: ContextMessageBreakdown | null;
+  /** Exact category totals captured from OMP's `/context` legend. */
+  detailedBreakdown?: DetailedContextBreakdown;
+}
+
+/** Rough per-category token shares estimated from transcript text (chars/4). */
+export interface ContextMessageBreakdown {
+  userTokens: number;
+  thinkingTokens: number;
+  outputTokens: number;
+  toolTokens: number;
+}
+
 export interface TranscriptSnapshot {
   /** PiShift PTY session id this snapshot belongs to. */
   ptySessionId: string;
@@ -67,6 +105,33 @@ export interface TranscriptSnapshot {
   /** true = replace everything rendered; false = append `rows` after the last rendered row. */
   replace: boolean;
   rows: TranscriptRow[];
+  /** Latest context usage snapshot for the active parent chain. */
+  contextUsage?: ContextUsageSnapshot | null;
+}
+
+/** Token counts and costs as omp records on assistant messages. */
+export interface RawMessageUsage {
+  input?: number;
+  output?: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+  totalTokens?: number;
+  reasoningTokens?: number;
+  cost?: {
+    input?: number;
+    output?: number;
+    cacheRead?: number;
+    cacheWrite?: number;
+    total?: number;
+  };
+}
+
+/** Context snapshot recorded by omp at message evaluation. */
+export interface RawMessageContextSnapshot {
+  promptTokens?: number;
+  nonMessageTokens?: number;
+  compactionEpoch?: number;
+  historyRewriteTokensRemoved?: number;
 }
 
 /** Assistant/user/toolResult payload as omp writes it. */
@@ -77,6 +142,8 @@ interface RawMessage {
   toolCallId?: unknown;
   isError?: unknown;
   content?: unknown;
+  usage?: RawMessageUsage;
+  contextSnapshot?: RawMessageContextSnapshot;
 }
 
 /** One `message.content[]` element; the union is discriminated by `type`. */
@@ -170,6 +237,70 @@ function joinContentText(content: unknown): string {
   }
   return chunks.join("\n");
 }
+/** Rough per-category token counts (chars/4) from the active chain's message text. */
+function estimateMessageBreakdown(chain: readonly TranscriptNode[]): ContextMessageBreakdown | null {
+  let userChars = 0;
+  let thinkingChars = 0;
+  let outputChars = 0;
+  let toolChars = 0;
+  for (const node of chain) {
+    const msg = node.message;
+    if (!msg) continue;
+    const role = msg.role;
+    if (typeof role !== "string") continue;
+    if (role === "user") {
+      userChars += joinContentText(msg.content).length;
+    } else if (role === "assistant") {
+      const content = msg.content;
+      if (typeof content === "string") {
+        outputChars += content.length;
+        continue;
+      }
+      if (!Array.isArray(content)) continue;
+      for (const part of content as RawPart[]) {
+        if (!part) continue;
+        if (part.type === "thinking" && typeof part.thinking === "string") {
+          thinkingChars += part.thinking.length;
+        } else if (part.type === "toolCall") {
+          if (typeof part.name === "string") toolChars += part.name.length;
+          try {
+            toolChars += (JSON.stringify(part.arguments) ?? "").length;
+          } catch {
+            toolChars += String(part.arguments ?? "").length;
+          }
+        } else if (typeof part.text === "string") {
+          outputChars += part.text.length;
+        }
+      }
+    } else if (role === "toolResult") {
+      toolChars += joinContentText(msg.content).length;
+    }
+  }
+  if (userChars + thinkingChars + outputChars + toolChars <= 0) return null;
+  const toTokens = (chars: number): number => (chars > 0 ? Math.max(1, Math.ceil(chars / 4)) : 0);
+  return {
+    userTokens: toTokens(userChars),
+    thinkingTokens: toTokens(thinkingChars),
+    outputTokens: toTokens(outputChars),
+    toolTokens: toTokens(toolChars),
+  };
+}
+
+/** Collect `image` parts from a `message.content[]`; text stays with `joinContentText`. */
+function extractContentImages(content: unknown): Extract<TranscriptPart, { kind: "image" }>[] {
+  if (!Array.isArray(content)) return [];
+  const images: Extract<TranscriptPart, { kind: "image" }>[] = [];
+  for (const part of content as RawPart[]) {
+    if (part && part.type === "image" && typeof part.data === "string" && part.data) {
+      images.push({
+        kind: "image",
+        src: part.data,
+        mimeType: typeof part.mimeType === "string" && part.mimeType ? part.mimeType : "image/png",
+      });
+    }
+  }
+  return images;
+}
 
 function userParts(content: unknown): TranscriptPart[] {
   if (typeof content === "string") {
@@ -230,6 +361,8 @@ function assistantParts(content: unknown, results: ToolResults | null): Transcri
         result: outcome ? outcome.text : null,
         isError: outcome ? outcome.isError : false,
       });
+      // Screenshots ride with their call so result-folding never drops them.
+      if (outcome) parts.push(...outcome.images);
       continue;
     }
 
@@ -277,7 +410,7 @@ function messageEntry(node: TranscriptNode, results: ToolResults | null): Transc
         args: "",
         result: joinContentText(msg.content),
         isError: msg.isError === true,
-      }],
+      }, ...extractContentImages(msg.content)],
     };
   }
 
@@ -285,7 +418,7 @@ function messageEntry(node: TranscriptNode, results: ToolResults | null): Transc
 }
 
 /** Tool outcomes indexed by `toolCallId`, so a call can absorb its own result. */
-type ToolResults = Map<string, { text: string; isError: boolean }>;
+type ToolResults = Map<string, { text: string; isError: boolean; images: Extract<TranscriptPart, { kind: "image" }>[] }>;
 
 /**
  * Index every tool result in the chain, and note which calls claim one.
@@ -309,6 +442,7 @@ function indexToolResults(chain: readonly TranscriptNode[]): {
       results.set(msg.toolCallId, {
         text: joinContentText(msg.content),
         isError: msg.isError === true,
+        images: extractContentImages(msg.content),
       });
       continue;
     }
@@ -451,4 +585,254 @@ export function buildTranscriptRows(nodes: readonly TranscriptNode[]): Transcrip
 /** Row identity, used to decide whether an update can append instead of replace. */
 export function transcriptRowId(row: TranscriptRow): string {
   return row.type === "entry" ? row.entry.id : row.marker.id;
+}
+
+/**
+ * Extracts the latest context window usage snapshot from the transcript's active parent chain.
+ *
+ * Walks backwards along the chain to find the most recent message with usage / contextSnapshot,
+ * respecting any reset boundary.
+ */
+export function extractContextUsage(
+  nodes: readonly TranscriptNode[],
+  modelContextWindow?: number,
+  fallbackModelId?: string | null,
+): ContextUsageSnapshot | null {
+  if (!nodes.length) return null;
+  const chain = parentChain(nodes);
+  if (!chain.length) return null;
+
+  let start = 0;
+  for (let i = chain.length - 1; i >= 0; i--) {
+    if (chain[i].type === "reset_boundary") {
+      start = i + 1;
+      break;
+    }
+  }
+
+  for (let i = chain.length - 1; i >= start; i--) {
+    const node = chain[i];
+    const msg = node.message;
+    if (!msg) continue;
+
+    const usage = msg.usage;
+    const snapshot = msg.contextSnapshot;
+    // An aborted/interrupted turn can record a `usage` object with every
+    // field zeroed and no `contextSnapshot` — that carries no real context
+    // data, so treat it the same as absent and keep walking back to the
+    // last turn that actually recorded token counts.
+    const usageIsEmpty =
+      !usage || (!usage.input && !usage.output && !usage.cacheRead && !usage.cacheWrite);
+    if (usageIsEmpty && !snapshot) continue;
+
+    const modelId = (typeof msg.model === "string" && msg.model) ? msg.model : (fallbackModelId ?? null);
+    const windowLimit = (typeof modelContextWindow === "number" && modelContextWindow > 0)
+      ? modelContextWindow
+      : 200_000;
+
+    const cacheRead = typeof usage?.cacheRead === "number" ? Math.max(0, usage.cacheRead) : 0;
+    const cacheWrite = typeof usage?.cacheWrite === "number" ? Math.max(0, usage.cacheWrite) : 0;
+    const output = typeof usage?.output === "number" ? Math.max(0, usage.output) : 0;
+    const nonMessage = typeof snapshot?.nonMessageTokens === "number" ? Math.max(0, snapshot.nonMessageTokens) : 0;
+    const historyRewrite =
+      typeof snapshot?.historyRewriteTokensRemoved === "number"
+        ? Math.max(0, snapshot.historyRewriteTokensRemoved)
+        : 0;
+
+    // Prompt tokens: either from snapshot.promptTokens, or (usage.input + cacheRead)
+    let prompt = 0;
+    if (typeof snapshot?.promptTokens === "number" && snapshot.promptTokens > 0) {
+      prompt = snapshot.promptTokens;
+    } else if (typeof usage?.input === "number") {
+      prompt = Math.max(0, usage.input + cacheRead);
+    }
+
+    const total = prompt + output;
+    const percent = Math.min(100, Math.max(0, Math.round((prompt / windowLimit) * 100)));
+    const messageBreakdown = estimateMessageBreakdown(chain.slice(start));
+
+    return {
+      promptTokens: prompt,
+      cacheReadTokens: cacheRead,
+      cacheWriteTokens: cacheWrite,
+      outputTokens: output,
+      nonMessageTokens: nonMessage,
+      historyRewriteTokensRemoved: historyRewrite,
+      totalTokens: total,
+      contextWindow: windowLimit,
+      percent,
+      modelId,
+      messageBreakdown,
+    };
+  }
+
+  return null;
+}
+
+export type ContextWindowSliceKind =
+  | "overhead"
+  | "systemPrompt"
+  | "systemTools"
+  | "systemContext"
+  | "skills"
+  | "messages"
+  | "user"
+  | "thinking"
+  | "output"
+  | "tools"
+  | "free"
+  | "buffer";
+
+export type ContextWindowSlice = {
+  kind: ContextWindowSliceKind;
+  label: string;
+  tokens: number;
+  colorVar: string;
+  hollow?: boolean;
+  hatched?: boolean;
+};
+
+/** Scale raw chars/4 category estimates to `messagesTotal` via largest remainder. */
+function scaleMessageBreakdown(
+  bd: ContextMessageBreakdown,
+  messagesTotal: number,
+): ContextWindowSlice[] | null {
+  const defs = [
+    { kind: "user" as const, label: "User input", tokens: bd.userTokens, colorVar: "--ctx-blue" },
+    { kind: "thinking" as const, label: "Thinking", tokens: bd.thinkingTokens, colorVar: "--ctx-purple" },
+    { kind: "output" as const, label: "Assistant output", tokens: bd.outputTokens, colorVar: "--ctx-green" },
+    { kind: "tools" as const, label: "Tool calls", tokens: bd.toolTokens, colorVar: "--ctx-messages" },
+  ];
+  const rawTotal = defs.reduce((n, d) => n + Math.max(0, d.tokens), 0);
+  if (rawTotal <= 0 || messagesTotal <= 0) return null;
+  const exact = defs.map((d) => (Math.max(0, d.tokens) / rawTotal) * messagesTotal);
+  const floors = exact.map((e) => Math.floor(e));
+  let remainder = messagesTotal - floors.reduce((a, b) => a + b, 0);
+  const order = exact.map((_, idx) => idx).sort((a, b) => exact[b] - floors[b] - (exact[a] - floors[a]));
+  for (const idx of order) {
+    if (remainder <= 0) break;
+    floors[idx] += 1;
+    remainder -= 1;
+  }
+  const slices: ContextWindowSlice[] = [];
+  defs.forEach((d, idx) => {
+    if (floors[idx] > 0) slices.push({ kind: d.kind, label: d.label, tokens: floors[idx], colorVar: d.colorVar });
+  });
+  return slices.length ? slices : null;
+}
+/**
+ * Retains a verified static breakdown while the transcript tail supplies newer
+ * per-session message usage. A changed static total means the tool/skill/system
+ * roster changed, so the aggregate JSONL snapshot wins rather than inventing a
+ * new split.
+ */
+export function reconcileDetailedContextUsage(
+  previous: ContextUsageSnapshot | null | undefined,
+  next: ContextUsageSnapshot | null,
+): ContextUsageSnapshot | null {
+  const detailed = previous?.detailedBreakdown;
+  if (!detailed || !next) return next;
+  if (previous.modelId && next.modelId && previous.modelId !== next.modelId) return next;
+
+  const staticTokens =
+    detailed.systemPromptTokens +
+    detailed.systemToolsTokens +
+    detailed.systemContextTokens +
+    detailed.skillsTokens;
+  if (next.nonMessageTokens !== staticTokens || detailed.contextWindow <= 0) return next;
+
+  const usedTokens = Math.max(
+    staticTokens,
+    next.promptTokens - (next.historyRewriteTokensRemoved ?? 0),
+  );
+  const autoCompactBufferTokens = Math.min(
+    detailed.autoCompactBufferTokens,
+    Math.max(0, detailed.contextWindow - usedTokens),
+  );
+  const freeTokens = Math.max(0, detailed.contextWindow - usedTokens - autoCompactBufferTokens);
+  const messagesTokens = usedTokens - staticTokens;
+
+  return {
+    ...next,
+    promptTokens: usedTokens,
+    totalTokens: usedTokens,
+    contextWindow: detailed.contextWindow,
+    percent: Math.min(100, Math.max(0, Math.round((usedTokens / detailed.contextWindow) * 100))),
+    detailedBreakdown: {
+      ...detailed,
+      usedTokens,
+      messagesTokens,
+      freeTokens,
+      autoCompactBufferTokens,
+    },
+  };
+}
+
+/** Mutually exclusive occupancy of the model window from JSONL snapshot fields. */
+export function partitionContextWindow(usage: ContextUsageSnapshot): {
+  usedTokens: number;
+  autoCompactBufferTokens: number;
+  freeTokens: number;
+  slices: ContextWindowSlice[];
+} {
+  const detailed = usage.detailedBreakdown;
+  if (detailed) {
+    const slices: ContextWindowSlice[] = [
+      { kind: "systemPrompt", label: "System prompt", tokens: detailed.systemPromptTokens, colorVar: "--ctx-system-prompt" },
+      { kind: "systemTools", label: "System tools", tokens: detailed.systemToolsTokens, colorVar: "--ctx-system-tools" },
+      { kind: "systemContext", label: "System context", tokens: detailed.systemContextTokens, colorVar: "--ctx-system-context" },
+      { kind: "skills", label: "Skills", tokens: detailed.skillsTokens, colorVar: "--ctx-skills" },
+      { kind: "messages", label: "Messages", tokens: detailed.messagesTokens, colorVar: "--ctx-messages" },
+      { kind: "free", label: "Free space", tokens: detailed.freeTokens, colorVar: "--ctx-free", hollow: true },
+      {
+        kind: "buffer",
+        label: "Autocompact buffer",
+        tokens: detailed.autoCompactBufferTokens,
+        colorVar: "--ctx-buffer",
+        hatched: true,
+      },
+    ];
+    return {
+      usedTokens: detailed.usedTokens,
+      autoCompactBufferTokens: detailed.autoCompactBufferTokens,
+      freeTokens: detailed.freeTokens,
+      slices,
+    };
+  }
+
+  const usedTokens = Math.max(0, usage.promptTokens - (usage.historyRewriteTokensRemoved ?? 0));
+  const overhead = Math.min(Math.max(0, usage.nonMessageTokens), usedTokens);
+  const messages = Math.max(0, usedTokens - overhead);
+  const window = usage.contextWindow;
+  const autoCompactBufferTokens =
+    window > 0
+      ? Math.min(Math.max(16384, Math.ceil(window * 0.15)), Math.max(0, window - usedTokens))
+      : 0;
+  const freeTokens = Math.max(0, window - usedTokens - autoCompactBufferTokens);
+
+  const slices: ContextWindowSlice[] = [];
+  if (overhead > 0) {
+    slices.push({ kind: "overhead", label: "System / Overhead", tokens: overhead, colorVar: "--ctx-amber" });
+  }
+  if (messages > 0) {
+    const detail = usage.messageBreakdown ? scaleMessageBreakdown(usage.messageBreakdown, messages) : null;
+    if (detail) {
+      slices.push(...detail);
+    } else {
+      slices.push({ kind: "messages", label: "Messages", tokens: messages, colorVar: "--ctx-messages" });
+    }
+  }
+  if (freeTokens > 0) {
+    slices.push({ kind: "free", label: "Free space", tokens: freeTokens, colorVar: "--ctx-free", hollow: true });
+  }
+  if (autoCompactBufferTokens > 0) {
+    slices.push({
+      kind: "buffer",
+      label: "Autocompact buffer",
+      tokens: autoCompactBufferTokens,
+      colorVar: "--ctx-buffer",
+      hatched: true,
+    });
+  }
+  return { usedTokens, autoCompactBufferTokens, freeTokens, slices };
 }

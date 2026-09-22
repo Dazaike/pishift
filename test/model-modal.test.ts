@@ -79,9 +79,12 @@ describe("ModelModal", () => {
     modal.open();
     const first = modal.el.querySelector(".model-row");
     expect(first).not.toBeNull();
+    const activeBefore = modal.el.querySelector(".model-row.active");
+    expect(activeBefore?.getAttribute("data-model-id")).toBe("gemini-3.7-flash");
     modal.setCurrentModel("grok-4.5");
     expect(modal.el.querySelector(".model-row")).toBe(first);
-    expect(modal.el.querySelector(".model-row.active")).toBeNull();
+    // setCurrentModel does not re-render, so the active indicator must not have moved.
+    expect(modal.el.querySelector(".model-row.active")).toBe(activeBefore);
   });
 
   it("selects the keyboard-highlighted model with Enter", () => {

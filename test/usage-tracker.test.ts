@@ -67,6 +67,13 @@ describe("usage tracker settings", () => {
     expect(normalizeUsageTrackerSettings({ combineAccountsMax: 150 as unknown as 100 }).combineAccountsMax).toBe(200);
     expect(normalizeUsageTrackerSettings({}).combineAccountsMax).toBe(200);
   });
+  it("normalizes dockContextStyle", () => {
+    expect(normalizeUsageTrackerSettings({ dockContextStyle: "button" }).dockContextStyle).toBe("button");
+    expect(normalizeUsageTrackerSettings({ dockContextStyle: "combined" }).dockContextStyle).toBe("combined");
+    expect(normalizeUsageTrackerSettings({ dockContextStyle: "off" }).dockContextStyle).toBe("off");
+    expect(normalizeUsageTrackerSettings({ dockContextStyle: "invalid" as unknown as "button" }).dockContextStyle).toBe("button");
+    expect(normalizeUsageTrackerSettings({}).dockContextStyle).toBe("button");
+  });
 });
 
 describe("buildCombinedReports max scale", () => {
@@ -140,12 +147,14 @@ describe("settings accordion state", () => {
       appearance: true,
       composer: false,
       "usage-tracker": true,
+      "context-tracker": false,
       interface: true,
       unknown: true,
     })).toEqual({
       appearance: true,
       composer: false,
       "usage-tracker": true,
+      "context-tracker": false,
       interface: true,
     });
     expect(normalizeSettingsSectionCollapsed({ appearance: "yes" })).toEqual({});
