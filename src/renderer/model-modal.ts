@@ -18,6 +18,7 @@ export class ModelModal {
   private readonly anchor: HTMLElement | null;
   private models: CustomModelConfig[] = [];
   private currentModel: string;
+  private editingModel: CustomModelConfig | null = null;
   private showAddForm = false;
   private isEditMode = false;
   private isReordering = false;
@@ -97,6 +98,7 @@ export class ModelModal {
     this.showAddForm = false;
     this.isEditMode = false;
     this.isReordering = false;
+    this.editingModel = null;
     this.kbIndex = -1;
     this.setTriggerOpen(true);
     this.render();
@@ -117,6 +119,7 @@ export class ModelModal {
       this.showAddForm = false;
       this.isEditMode = false;
       this.isReordering = false;
+      this.editingModel = null;
     });
   }
 
@@ -160,6 +163,7 @@ export class ModelModal {
     this.models.push(model);
     this.onModelsChange(this.models);
     this.showAddForm = false;
+    this.editingModel = null;
     this.render();
   }
 
@@ -184,7 +188,9 @@ export class ModelModal {
     header.className = "model-header";
     const title = document.createElement("h2");
     title.textContent = this.showAddForm
-      ? "Add Model"
+      ? this.editingModel
+        ? "Edit Model"
+        : "Add Model"
       : this.isEditMode
         ? "Manage Models"
         : "Switch Model";
@@ -199,6 +205,7 @@ export class ModelModal {
       backBtn.textContent = "Cancel";
       backBtn.addEventListener("click", () => {
         this.showAddForm = false;
+        this.editingModel = null;
         this.render();
       });
       headerActions.appendChild(backBtn);
@@ -229,7 +236,7 @@ export class ModelModal {
     this.el.appendChild(header);
 
     if (this.showAddForm) {
-      const form = this.renderAddForm();
+      const form = this.renderModelEditor();
       this.el.appendChild(form);
       return;
     }
@@ -244,6 +251,7 @@ export class ModelModal {
       addBtn.className = "model-btn-pill accent";
       addBtn.textContent = "+ Add Model";
       addBtn.addEventListener("click", () => {
+        this.editingModel = null;
         this.showAddForm = true;
         this.render();
       });
@@ -269,13 +277,25 @@ export class ModelModal {
 
     this.el.appendChild(listContainer);
   }
-  private renderAddForm(): HTMLElement {
+  private renderModelEditor(): HTMLElement {
     const wrap = document.createElement("div");
     wrap.className = "model-custom-form";
 
     const desc = document.createElement("p");
     desc.className = "model-custom-form-desc";
-    desc.textContent = "Add a model to your switcher:";
+    desc.textContent = this.editingModel
+      ? "Update this model in your switcher:"
+      : "Add a model to your switcher:";
+
+    const validationError = document.createElement("p");
+    validationError.className = "model-form-error";
+    validationError.hidden = true;
+
+    const showValidationError = (message: string): void => {
+      idInput.setAttribute("aria-invalid", "true");
+      validationError.textContent = message;
+      validationError.hidden = false;
+    };
 
     const submitForm = (): void => {
       const id = idInput.value.trim();
@@ -283,8 +303,38 @@ export class ModelModal {
       const provider = providerInput.value.trim() || "generic";
       const iconUrl = iconInput.value.trim() || undefined;
 
-      if (!id) return;
-      this.addModel({ provider, id, name, iconUrl });
+      if (!id) {
+        showValidationError("Model ID is required.");
+        return;
+      }
+
+      const model = { provider, id, name, iconUrl };
+      const target = this.editingModel;
+      if (!target) {
+        this.addModel(model);
+        return;
+      }
+
+      const targetIndex = this.models.indexOf(target);
+      if (targetIndex === -1) {
+        showValidationError("This model has been removed.");
+        return;
+      }
+
+      const hasConflict = this.models.some(
+        (existing, index) => index !== targetIndex && existing.id.toLowerCase() === id.toLowerCase(),
+      );
+      if (hasConflict) {
+        showValidationError("A model with this ID already exists.");
+        return;
+      }
+
+      const models = this.models.slice();
+      models[targetIndex] = model;
+      this.onModelsChange(models);
+      this.showAddForm = false;
+      this.editingModel = null;
+      this.render();
     };
 
     const nameInput = document.createElement("input");
@@ -311,6 +361,14 @@ export class ModelModal {
     iconInput.placeholder = "Icon Image URL (optional)";
     iconInput.spellcheck = false;
 
+    if (this.editingModel) {
+      const model = this.editingModel;
+      nameInput.value = model.name;
+      idInput.value = model.id;
+      providerInput.value = model.provider;
+      iconInput.value = model.iconUrl ?? "";
+    }
+
     const inputs = [nameInput, idInput, providerInput, iconInput];
     for (const inp of inputs) {
       inp.addEventListener("keydown", (ev) => {
@@ -325,10 +383,10 @@ export class ModelModal {
     const saveBtn = document.createElement("button");
     saveBtn.type = "button";
     saveBtn.className = "model-form-save";
-    saveBtn.textContent = "Save Model";
+    saveBtn.textContent = this.editingModel ? "Save Changes" : "Save Model";
     saveBtn.addEventListener("click", submitForm);
 
-    wrap.append(desc, nameInput, idInput, providerInput, iconInput, saveBtn);
+    wrap.append(desc, nameInput, idInput, providerInput, iconInput, validationError, saveBtn);
 
     if (this.models.length > 0) {
       const savedList = document.createElement("div");
@@ -488,6 +546,19 @@ export class ModelModal {
       }
 
       if (this.isEditMode && !this.isReordering) {
+        const editBtn = document.createElement("button");
+        editBtn.type = "button";
+        editBtn.className = "model-row-edit-btn";
+        editBtn.title = `Edit ${item.name}`;
+        editBtn.setAttribute("aria-label", `Edit ${item.name}`);
+        editBtn.textContent = "\u270e";
+        editBtn.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          this.editingModel = item;
+          this.showAddForm = true;
+          this.render();
+        });
+
         const delBtn = document.createElement("button");
         delBtn.type = "button";
         delBtn.className = "model-row-del-btn";
@@ -497,7 +568,7 @@ export class ModelModal {
           ev.stopPropagation();
           this.removeModel(item.id);
         });
-        card.appendChild(delBtn);
+        card.append(editBtn, delBtn);
       }
 
       if (this.isReordering) {
