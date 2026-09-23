@@ -331,6 +331,7 @@ export class ModelModal {
 
       const models = this.models.slice();
       models[targetIndex] = model;
+      this.models = models;
       this.onModelsChange(models);
       this.showAddForm = false;
       this.editingModel = null;

@@ -137,6 +137,8 @@ describe("ModelModal", () => {
       { id: "renamed-first", name: "Renamed First", provider: "updated-provider", iconUrl: undefined },
       { id: "second", name: "Second Model", provider: "second-provider" },
     ]);
+    expect(modal.el.querySelector(".model-row")?.getAttribute("data-model-id")).toBe("renamed-first");
+    expect(modal.el.querySelector(".model-row-name")?.textContent).toBe("Renamed First");
   });
 
   it("keeps the editor open without persisting a conflicting edited model ID", () => {
