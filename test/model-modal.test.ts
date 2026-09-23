@@ -95,4 +95,83 @@ describe("ModelModal", () => {
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
     expect(onSelect).toHaveBeenCalledWith("gemini-3.7-flash", "google");
   });
+
+  it("opens the model editor with the selected configuration populated", () => {
+    const models = [
+      { id: "first", name: "First Model", provider: "first-provider", iconUrl: "https://example.test/first.svg" },
+      { id: "second", name: "Second Model", provider: "second-provider" },
+    ];
+    const modal = new ModelModal(models, "first", vi.fn(), vi.fn());
+
+    modal.open();
+    modal.el.querySelector<HTMLButtonElement>(".model-header-actions .model-btn-pill")?.click();
+    modal.el.querySelector<HTMLButtonElement>(".model-row-edit-btn")?.click();
+
+    expect(modal.el.querySelector("h2")?.textContent).toBe("Edit Model");
+    const inputs = modal.el.querySelectorAll<HTMLInputElement>(".model-form-input");
+    expect(inputs[0]?.value).toBe("First Model");
+    expect(inputs[1]?.value).toBe("first");
+    expect(inputs[2]?.value).toBe("first-provider");
+    expect(inputs[3]?.value).toBe("https://example.test/first.svg");
+  });
+
+  it("replaces an edited model in place and clears a blank icon URL", () => {
+    const models = [
+      { id: "first", name: "First Model", provider: "first-provider", iconUrl: "https://example.test/first.svg" },
+      { id: "second", name: "Second Model", provider: "second-provider" },
+    ];
+    const onModelsChange = vi.fn();
+    const modal = new ModelModal(models, "first", vi.fn(), onModelsChange);
+
+    modal.open();
+    modal.el.querySelector<HTMLButtonElement>(".model-header-actions .model-btn-pill")?.click();
+    modal.el.querySelector<HTMLButtonElement>(".model-row-edit-btn")?.click();
+    const inputs = modal.el.querySelectorAll<HTMLInputElement>(".model-form-input");
+    inputs[0]!.value = "Renamed First";
+    inputs[1]!.value = "renamed-first";
+    inputs[2]!.value = "updated-provider";
+    inputs[3]!.value = "";
+    modal.el.querySelector<HTMLButtonElement>(".model-form-save")?.click();
+
+    expect(onModelsChange).toHaveBeenCalledWith([
+      { id: "renamed-first", name: "Renamed First", provider: "updated-provider", iconUrl: undefined },
+      { id: "second", name: "Second Model", provider: "second-provider" },
+    ]);
+  });
+
+  it("keeps the editor open without persisting a conflicting edited model ID", () => {
+    const models = [
+      { id: "first", name: "First Model", provider: "first-provider" },
+      { id: "second", name: "Second Model", provider: "second-provider" },
+    ];
+    const onModelsChange = vi.fn();
+    const modal = new ModelModal(models, "first", vi.fn(), onModelsChange);
+
+    modal.open();
+    modal.el.querySelector<HTMLButtonElement>(".model-header-actions .model-btn-pill")?.click();
+    modal.el.querySelector<HTMLButtonElement>(".model-row-edit-btn")?.click();
+    modal.el.querySelectorAll<HTMLInputElement>(".model-form-input")[1]!.value = "SECOND";
+    modal.el.querySelector<HTMLButtonElement>(".model-form-save")?.click();
+
+    expect(onModelsChange).not.toHaveBeenCalled();
+    expect(modal.el.querySelector(".model-form-error")?.textContent).toBe("A model with this ID already exists.");
+    expect(modal.el.querySelectorAll<HTMLInputElement>(".model-form-input")[1]?.value).toBe("SECOND");
+    modal.el.querySelector<HTMLButtonElement>(".model-header-actions .model-btn-pill")?.click();
+    expect(
+      Array.from(modal.el.querySelectorAll(".model-row"), (row) => row.getAttribute("data-model-id")),
+    ).toEqual(["first", "second"]);
+  });
+
+  it("hides row edit actions while reordering", () => {
+    const modal = new ModelModal(DEFAULT_USER_MODELS, "gemini-3.7-flash", vi.fn(), vi.fn());
+
+    modal.open();
+    modal.el.querySelector<HTMLButtonElement>(".model-header-actions .model-btn-pill")?.click();
+    expect(modal.el.querySelectorAll(".model-row-edit-btn")).toHaveLength(DEFAULT_USER_MODELS.length);
+    Array.from(modal.el.querySelectorAll<HTMLButtonElement>(".model-btn-pill"))
+      .find((button) => button.textContent === "Reorder")
+      ?.click();
+
+    expect(modal.el.querySelectorAll(".model-row-edit-btn")).toHaveLength(0);
+  });
 });
