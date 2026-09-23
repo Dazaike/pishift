@@ -66,7 +66,7 @@ No fake web-view wrappers pretending to be terminals. Just a genuine hardware-ac
 - **Clickable Workspace Path:** Click the current folder path in the dock to open it in File Explorer. Because copying paths into Explorer like it's 2008 was always a bad plan.
 
 ### 🧠 Model & Reasoning Control for the Indecisive
-- **Model Switcher:** Grid view, list view, drag-and-drop reordering to put your most-used models at the top.
+- **Model Switcher:** Grid view, list view, in-place editing for custom model details and icons, and drag-and-drop reordering to put your most-used models at the top.
 - **Thinking Effort Popover:** Stop typing `/m high` like a caveman. Click the thinking button to open a quick selector: `Off → Min → Low → Medium → High → XHigh → Max`.
 - **Honest Plan Mode:** One click always drives toward ON or OFF, but the button shows what omp is *actually* in — emerald `Plan: ON`, or `Plan: OFF` — amber-colored when omp is actually paused — and follows a `/plan` typed straight into the terminal. No optimistic lying.
 
@@ -134,10 +134,10 @@ No fake web-view wrappers pretending to be terminals. Just a genuine hardware-ac
 
 ### Download the binary (for people with places to be)
  Grab the latest release from the **[Releases](https://github.com/Dazaike/pishift/releases)** tab:
-- **`PiShift Setup 2.0.0.exe`** — Standard installer (Windows).
-- **`PiShift-2.0.0-win.zip`** — Portable zip if you have installer commitment issues (Windows).
-- **`PiShift-2.0.0.AppImage`** — Portable, no install needed (Linux, x64).
-- **`pishift_2.0.0_amd64.deb`** — Debian/Ubuntu package (Linux, x64).
+- **`PiShift Setup 2.0.1.exe`** — Standard installer (Windows).
+- **`PiShift-2.0.1-win.zip`** — Portable zip if you have installer commitment issues (Windows).
+- **`PiShift-2.0.1.AppImage`** — Portable, no install needed (Linux, x64).
+- **`pishift_2.0.1_amd64.deb`** — Debian/Ubuntu package (Linux, x64).
 ### Build from source (for hackers & tinkerers)
 
 ```bash
