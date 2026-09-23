@@ -3,6 +3,14 @@
 All notable changes to PiShift are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [v2.0.1] - 2026-09-22
+
+### Added
+- **Editable model entries.** Manage Models now lets you update a model's display name, ID, provider, and optional icon in place. Duplicate IDs are rejected without altering the other entry, and edited models keep their list position. ([e10305c](https://github.com/Dazaike/pishift/commit/e10305c))
+
+### Changed
+- Clarified the v2.0.0 changelog by removing an implementation detail. ([370f26a](https://github.com/Dazaike/pishift/commit/370f26a))
+
 ## [2.0.0] — 2026-09-21
 
 ### Added
