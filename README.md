@@ -134,10 +134,10 @@ No fake web-view wrappers pretending to be terminals. Just a genuine hardware-ac
 
 ### Download the binary (for people with places to be)
  Grab the latest release from the **[Releases](https://github.com/Dazaike/pishift/releases)** tab:
-- **`PiShift Setup 2.0.1.exe`** — Standard installer (Windows).
-- **`PiShift-2.0.1-win.zip`** — Portable zip if you have installer commitment issues (Windows).
-- **`PiShift-2.0.1.AppImage`** — Portable, no install needed (Linux, x64).
-- **`pishift_2.0.1_amd64.deb`** — Debian/Ubuntu package (Linux, x64).
+- **`PiShift Setup 2.0.2.exe`** — Standard installer (Windows).
+- **`PiShift-2.0.2-win.zip`** — Portable zip if you have installer commitment issues (Windows).
+- **`PiShift-2.0.2.AppImage`** — Portable, no install needed (Linux, x64).
+- **`pishift_2.0.2_amd64.deb`** — Debian/Ubuntu package (Linux, x64).
 ### Build from source (for hackers & tinkerers)
 
 ```bash

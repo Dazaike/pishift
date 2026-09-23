@@ -3,6 +3,11 @@
 All notable changes to PiShift are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [v2.0.2] - 2026-09-22
+
+### Fixed
+- Saving an edited model now updates the popover's in-memory list before redraw, so saved changes remain visible immediately. ([d0de940](https://github.com/Dazaike/pishift/commit/d0de940))
+
 ## [v2.0.1] - 2026-09-22
 
 ### Added
