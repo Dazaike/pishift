@@ -17,6 +17,14 @@ The real `omp` terminal, plus tabs, a chat view, model controls, live agent acti
 
 </div>
 
+
+
+
+https://github.com/user-attachments/assets/ae944588-142c-403a-bde3-13a83bec6c99
+
+
+
+
 ---
 
 ## Meet PiShift
