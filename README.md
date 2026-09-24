@@ -1,230 +1,241 @@
-<p align="center">
-  <img src="build/icon.png" width="128" height="128" alt="PiShift Logo" style="border-radius: 28px;" />
-</p>
+<div align="center">
 
-<h1 align="center">PiShift</h1>
+<img src="build/icon.png" alt="PiShift icon" width="112" height="112" />
 
-<p align="center">
-  <strong>Because rawdogging a CLI agent inside a janky CMD prompt in 2026 is a cry for help.</strong>
-</p>
+# PiShift
 
-<p align="center">
-  <img src="https://img.shields.io/badge/vibe-unapologetically%20fast-7aa2f7.svg" alt="Vibe" />
-  <img src="https://img.shields.io/badge/ConPTY-native%20or%20bust-34d399.svg" alt="ConPTY" />
-  <img src="https://img.shields.io/badge/BS%20level-0%25-f43f5e.svg" alt="No BS" />
-  <img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License" />
-</p>
+### A better desktop home for Oh My Pi.
 
----
+The real `omp` terminal, plus tabs, a chat view, model controls, live agent activity, and a workspace that doesn't fight you.
 
-## What is this?
+[![Latest release](https://img.shields.io/github/v/release/Dazaike/pishift?label=latest%20release)](https://github.com/Dazaike/pishift/releases/latest)
+[![Windows](https://img.shields.io/badge/Windows-supported-0078D4?logo=windows&logoColor=white)](https://github.com/Dazaike/pishift/releases/latest)
+[![Linux](https://img.shields.io/badge/Linux-supported-FCC624?logo=linux&logoColor=black)](https://github.com/Dazaike/pishift/releases/latest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-34d399.svg)](LICENSE)
 
-Let’s be real for a second: **Oh My Pi (`omp`)** is great, but running it in a stock Windows terminal with broken image rendering, scuffed key chords, zero tab organization, and an input box that feels like typing into a toaster isn't it.
+**[Download PiShift](https://github.com/Dazaike/pishift/releases/latest)** · **[See screenshots](#screenshots)** · **[Explore features](#features)** · **[Build from source](#build-from-source)**
 
-**PiShift** wraps the real `omp.exe` engine inside a sleek, GPU-accelerated ConPTY desktop shell that actually respects your time, your eyes, and your RAM.
-
-No fake web-view wrappers pretending to be terminals. Just a genuine hardware-accelerated terminal with a native control dock that does what you actually want it to do.
+</div>
 
 ---
 
-## 🖼️ Screenshots
+## Meet PiShift
 
-### Chat when you want it
-Follow the conversation, reasoning, and agent activity as it happens.
+[Oh My Pi (`omp`)](https://github.com/can1357/oh-my-pi) is powerful. Managing multiple sessions, switching models, following agent activity, and working with images shouldn't make the terminal the hardest part of your workflow.
+
+**PiShift puts a desktop interface around the actual `omp` engine.** You keep the terminal and gain a dedicated chat view, a control dock, searchable session history, split-screen workspaces, and live usage information. The terminal is rendered with xterm.js and WebGL; on Windows, it uses ConPTY to connect to the real CLI.
 
 <p align="center">
-  <img src="docs/screenshots/chat-view-in-work.png" alt="PiShift chat view showing an active agent conversation and activity" width="900" />
+  <img src="docs/screenshots/main-view.png" alt="PiShift desktop workspace showing the terminal, tabs, and control dock" width="920" />
 </p>
 
-### Terminal when you need it
-The real omp terminal, with sessions, workspace, model, and controls in one window.
+## Why use it?
+
+| Instead of… | You get… |
+| :--- | :--- |
+| Juggling separate terminal windows | Tabs, workspace switching, and two sessions side by side |
+| Reading every conversation in terminal scrollback | A structured chat view with transcript backfill |
+| Memorizing commands to change models and reasoning | Model and thinking-effort controls in the dock |
+| Guessing what an agent is doing | Live activity, tool calls, job status, and usage information |
+| Rebuilding your setup every time | Persistent interface settings, recent sessions, and 28 themes |
+
+## Download & install
+
+Get the latest build from **[GitHub Releases](https://github.com/Dazaike/pishift/releases/latest)**. Choose the file for your system:
+
+| Platform | Download type |
+| :--- | :--- |
+| Windows | Setup `.exe` installer or portable `.zip` |
+| Linux (x64) | Portable `.AppImage` or Debian/Ubuntu `.deb` package |
+
+> PiShift is a desktop interface for **Oh My Pi**. See the [Oh My Pi project](https://github.com/can1357/oh-my-pi) for information about the underlying CLI. Release filenames and version numbers may change, so use the latest release page rather than an old filename copied from this README.
+
+## Screenshots
+
+### Two ways to work
+
+**Chat view:** Read the conversation, reasoning, and tool activity in a structured layout.
 
 <p align="center">
-  <img src="docs/screenshots/main-view.png" alt="PiShift terminal view and session controls" width="900" />
+  <img src="docs/screenshots/chat-view-in-work.png" alt="PiShift chat view during an active agent conversation" width="920" />
 </p>
 
-### Controls within reach
-Switch models, inspect your context window, and adjust thinking effort from the dock.
+**Terminal view:** Work directly with the CLI without leaving the same app or workspace.
 
 <p align="center">
-  <img src="docs/screenshots/model-selector.png" alt="Model switcher" width="225" />
-  <img src="docs/screenshots/context.png" alt="Context window breakdown" width="550" />
-</p>
-<p align="center">
-  <img src="docs/screenshots/thinking-selector.png" alt="Thinking effort selector" width="381" />
+  <img src="docs/screenshots/main-view.png" alt="PiShift terminal view with sessions and controls" width="920" />
 </p>
 
-### Make it yours
-Choose a theme, tune the interface, and decide which usage data stays visible.
+### Model, thinking, and context controls
+
+Switch models, change thinking effort, or check how much context is left without digging through commands.
 
 <p align="center">
-  <img src="docs/screenshots/settings.png" alt="PiShift themes and appearance settings" width="800" />
+  <img src="docs/screenshots/model-selector.png" alt="Model selector" width="225" />
+  <img src="docs/screenshots/context.png" alt="Context-window usage breakdown" width="550" />
+</p>
+<p align="center">
+  <img src="docs/screenshots/thinking-selector.png" alt="Thinking-effort selector" width="381" />
+</p>
+
+### Make the workspace yours
+
+Pick a theme and adjust the interface, tabs, composer, and usage display.
+
+<p align="center">
+  <img src="docs/screenshots/settings.png" alt="PiShift appearance and settings panel" width="800" />
 </p>
 
 <details>
-<summary>More screenshots: sessions, usage, and settings</summary>
+<summary><strong>More screenshots</strong> · sessions, usage, and interface options</summary>
 
-### Find your work
+<br />
+
+**Recent sessions and workspaces**
 
 <p align="center">
-  <img src="docs/screenshots/recent-chats.png" alt="Recent chats with search and resume" width="380" />
+  <img src="docs/screenshots/recent-chats.png" alt="Search and resume recent chats" width="380" />
   <img src="docs/screenshots/recent-folders.png" alt="Recent folders and workspaces" width="350" />
 </p>
 
-### Keep an eye on usage
+**Live sessions and provider usage**
 
 <p align="center">
-  <img src="docs/screenshots/session-sidebar.png" alt="Session overview with tasks, jobs, and provider quotas" width="290" />
-  <img src="docs/screenshots/usage-modal.png" alt="Usage and provider quotas" width="350" />
+  <img src="docs/screenshots/session-sidebar.png" alt="Session sidebar showing agent jobs and provider quotas" width="290" />
+  <img src="docs/screenshots/usage-modal.png" alt="Provider usage and quota information" width="350" />
 </p>
 
-### Tune the details
+**Usage tracker and interface settings**
 
 <p align="center">
-  <img src="docs/screenshots/usage-tracker-settings-menu.png" alt="Usage tracker settings and live top bar preview" width="800" />
+  <img src="docs/screenshots/usage-tracker-settings-menu.png" alt="Usage tracker settings" width="800" />
 </p>
 <p align="center">
-  <img src="docs/screenshots/interface-settings-menu.png" alt="Interface settings including tab layout and thinking control" width="800" />
+  <img src="docs/screenshots/interface-settings-menu.png" alt="Interface and tab layout settings" width="800" />
 </p>
+
+**Chat view, ready for a new conversation**
+
 <p align="center">
-  <img src="docs/screenshots/chat-view.png" alt="PiShift chat view ready for a new conversation" width="800" />
+  <img src="docs/screenshots/chat-view.png" alt="Empty PiShift chat view" width="800" />
 </p>
 
 </details>
 
----
+## Features
 
-## ⚡ What makes it not suck
+### 🖥️ A real terminal, with a better interface
 
-### 🚀 Actual Terminal Hardware Acceleration
-- **WebGL xterm.js under the hood:** You type, it appears. Sub-millisecond. Groundbreaking concept, we know.
-- **Safe Image Attachments:** OMP presents images through its durable text attachment fallback, instead of feeding raw graphics frames into an xterm parser that can freeze your live session. Actual prompts and footers stay usable.
-- **Kitty Keyboard Protocol:** Your chords and modifier keys actually work instead of getting swallowed by Windows console legacy ghosts.
-- **Watermarked PTY Flow Control:** Output streams free until the renderer is genuinely megabytes behind, instead of stopping the agent dead after every single chunk. No more sessions frozen at "Thinking · 5s" because a repaint took one frame too long.
+- **WebGL-rendered xterm.js terminal** connected to the actual CLI. On Windows, PiShift uses ConPTY.
+- **Terminal and chat views** for each tab, including previous messages when you resume a session.
+- **Tabs and split screen:** organize workspaces, drag tabs into order, and run two sessions with a resizable divider. Your split ratio persists across restarts.
+- **Terminal tools in one place:** find, copy, paste, clear, zoom, expand the composer, and restart a session.
+- **Keyboard and image handling:** Kitty keyboard protocol support; drag-and-drop image chips with a full-resolution lightbox. OMP image content uses a text-attachment fallback in the terminal to avoid graphics-frame rendering problems.
 
-### 🎛️ A Dock That Doesn’t Get In Your Way
-- **Interactive Slash Autocomplete:** Stop memorizing 60+ slash commands. Type `/` and let the UI do the thinking.
-- **Multi-Line Expanded Sheet:** Hit `Ctrl+Shift+Enter` again once the composer is focused (or click `⤢`) when you need to write a thesis prompt instead of squinting at a single-line input.
-- **Long-Paste Attachments:** Anything past 10 lines or 1,000 characters collapses into a readable marker and can be attached as a wrapped block, a local file, or inline content—without turning the composer into a scrollback buffer.
-- **Paste Markers, Your Way:** Five marker styles (Content Tag, Footnote, Brackets, Local File, Dot) times five paints (Accent Pill, Document Fold + Glow, Highlighter Knockout, Underline Rail, Plain Accent Text), plus an optional flash when a paste lands. Yes, that is 25 combinations for pasting text. No, we will not apologize.
-- **Terminal & Tools Popover:** Copy, Paste, Clear, Find, Zoom In/Out/Reset, Expand Composer, Restart Session — one click each, no chord archaeology.
-- **Ask Sheets Answered In-App:** When omp asks you a question, it renders as a real modal and gets answered with synthesized keystrokes, instead of you counting arrow-downs in a TUI list.
-- **Drag-and-Drop Image Chips + Lightbox:** Drag an image in, get a nice thumbnail chip. Click it to zoom in full resolution. Shocking, right?
-- **Real-Time Markdown Highlighting:** Code blocks, bolding, URLs, and paths highlight as you type.
-- **Clickable Workspace Path:** Click the current folder path in the dock to open it in File Explorer. Because copying paths into Explorer like it's 2008 was always a bad plan.
+### 🧠 Control the agent without interrupting it
 
-### 🧠 Model & Reasoning Control for the Indecisive
-- **Model Switcher:** Grid view, list view, in-place editing for custom model details and icons, and drag-and-drop reordering to put your most-used models at the top.
-- **Thinking Effort Popover:** Stop typing `/m high` like a caveman. Click the thinking button to open a quick selector: `Off → Min → Low → Medium → High → XHigh → Max`.
-- **Honest Plan Mode:** One click always drives toward ON or OFF, but the button shows what omp is *actually* in — emerald `Plan: ON`, or `Plan: OFF` — amber-colored when omp is actually paused — and follows a `/plan` typed straight into the terminal. No optimistic lying.
+- **Model picker:** grid or list view, editable custom model details and icons, and drag-and-drop ordering.
+- **Thinking selector:** `Off`, `Min`, `Low`, `Medium`, `High`, `XHigh`, and `Max`.
+- **Context breakdown:** see total and available tokens, the auto-compaction reserve, and usage across input, thinking, output, and tool calls; trigger `/compact` from the popover.
+- **Plan mode:** shows the actual state reported by omp, including when it is paused, rather than assuming a button click succeeded.
+- **In-app prompts:** review plans and answer agent questions without navigating terminal menus. You can keep these interactions in the terminal instead if you prefer.
 
-### 🗂️ Tabs That Don’t Make You Want to Alt+F4
-- **Right-Click Power Context Menu:**
-  - *Open in File Explorer* (because searching folders in terminal navigation gets old fast).
-  - *Copy Directory Path* (one click, in your clipboard).
-  - *Duplicate Tab in Directory* (spawn identical workspace instantly).
-  - *Project Color Badges* (tag your tabs with colors so you stop mixing up repos).
-  - *Inline Rename*, *Close Other Tabs*, and *Close Tabs to the Right*.
-- **Split Screen Dual View:** Two sessions, one window, a drag-to-resize divider. Toggle from the top bar, the burger menu, a tab's right-click menu, or `Ctrl+\`. Double-click the divider when you want 50/50 without thinking. The split ratio survives restarts because of course it does.
-- **Drag-to-Reorder:** Because the tab you opened 5 hours ago shouldn't be trapped on the left forever.
-- **Drag the chrome, not the 8px caption lie:** The whole top bar is a window drag handle. Grab the tab strip, the usage gauges, whatever — it moves. Buttons stay clickable because we are not animals.
+### 📡 See what's happening live
 
-### 🔌 Zero-Config Telemetry Bridge
-- Uses an asynchronous UDP bridge on `127.0.0.1` — the port is negotiated per instance, so two PiShift windows never fight over one socket — to stream live agent activity (`idle`, `working`, `thinking`), in-flight tool calls, token usage, and model states with **zero polling**. A file-watch backstop covers dropped datagrams, so the UI never gets stuck claiming the agent is busy.
-- **Auto-installs** `control-bridge.ts` into your `~/.omp/agent/extensions/` on launch. You don't have to touch a config file. You're welcome.
+- **Live agent status:** track idle, working, and thinking states, active tool calls, model changes, and token usage.
+- **Background job monitor:** inspect runtime, reports, raw logs, and available thinking details; copy a finished report or stop a runaway job.
+- **Usage and provider quotas:** view model availability and provider limits, with optional gauges in the top bar.
+- **Session history:** search recent chats and folders, reopen workspaces, and restore the earlier conversation in Chat View.
+- **Completion and recovery cues:** optional completion chime, activity indicators, elapsed time for long-running tools, and explicit Resume or Kill controls for stalled output.
 
-### 🛰️ Async Job Monitor
-- Every background subagent gets a row with live runtime, so you know which one has been "almost done" for nine minutes.
-- **Artifact / Report** and **Raw Logs** tabs per job, plus a thinking-process view when the model bothered to show its work.
-- **Copy Markdown** lifts a finished job's report straight to your clipboard.
-- Kill a runaway job from the same panel instead of hunting PIDs in Task Manager.
+### 🎨 Make it feel like your workspace
 
-### 📊 It Reads omp's Own Databases
-- **Installed models**, grouped by provider, pulled from omp's model database — not a hardcoded list that rots in a week.
-- **Provider quota usage** with live limit gauges, optionally pinned in the header so you always know where you stand.
-- **Recent folders and recent chats** sourced from real session history, not a guess.
-- **Transcript backfill on resume:** reopen a past session and your earlier messages come back, instead of an empty scrollback pretending nothing happened.
-- **Chat View:** Toggle each tab between raw xterm and a structured conversation view with live reasoning/text, transcript backfill, and per-view expansion controls. Because terminal scrollback is a terrible chat client.
-- **Tool Density:** Two modes, one design. **Compact** (default) keeps every activity section, tool call, and thought folded; **Detailed** opens them all on arrival. Nothing else changes — expanded work looks identical either way, because shipping two different expanded layouts would be an admission of indecision. Compact also offers **Show Raw Text on Expand** for people who want the literal payload instead of the polished card.
-- **Inline Plan Review & Questions:** Plans and `ask` prompts answer inline at the conversation tail — full plan markdown with Approve / Compact / Refine / Quit buttons, and question cards with multi-select, `(Recommended)` markers, and an **Other** field. Or switch both off in Settings and keep them in the terminal, if you liked it the old way.
-- **Activity Orb:** The live activity header animates to what the agent is actually doing — solving, composing, searching, shaping, working — instead of a spinner that means nothing.
-- **Context Window Popover:** A circular usage ring with total and free tokens, the reserved auto-compaction buffer, and where the rest went: system overhead, your input, thinking, output, tool calls. One click to `/compact`.
+- **28 built-in themes**, including Tokyo Night, Catppuccin, Gruvbox, Nord, Cyberpunk, Rose Pine, and Synthwave.
+- **Three tab layouts:** docked vertical rail, floating/auto-hide rail, or compact horizontal tabs.
+- **Customizable chrome:** pin usage gauges, switch to icon-only controls, adjust top-bar layout, and preview inactive tabs.
+- **Composer options:** multi-line expansion, real-time Markdown highlighting, long-paste handling, and configurable paste-marker styles.
+- **Persistent preferences:** choose terminal fonts, activity-glow colors, scrolling behavior, recent-menu placement, and completion-sound volume.
 
-### 🎨 28 Themes Because Aesthetics Matter
-- 28 built-in palettes (Tokyo Night, Catppuccin, Gruvbox, Nord, Cyberpunk, Rose Pine, Synthwave...).
-- Syncs the window background and frame color to your active theme so your dark mode doesn't get ruined by a blinding white caption bar.
+<details>
+<summary><strong>Explore advanced features and implementation details</strong></summary>
 
-### ⚙️ Settings That Actually Have Settings
-- **Themes & Settings** in one modal: palette picker, **Terminal Font Family** override, and interface toggles that persist.
-- **Composer Glow Colors:** pick a glow per agent activity, optionally color the tab busy indicators to match, and **Reset to defaults** when your palette experiment goes badly.
-- **Live Provider Quotas & Usage Tracker:** Pin live provider limits directly in the top bar with customizable gauge styles (Bar, Battery, Circle), tier-colored percentages (green/yellow/red), clickable order swapping (◀/▶ and ▲/▼ buttons), and custom refresh intervals.
-- **Interface Options:** pin token/cost usage in the header, go icons-only in the top bar or the dock, collapse the top bar into a burger menu (☰), set **Recent Menus Placement** (Top Right, Center Screen, Top Center, Bottom Center), live **Hover Tab Previews** to peek at inactive session buffers, and tune **Scroll Wheel Steps**.
-- **Tab Layout:** pick how sessions live — **Vertical Rail (Docked Icons)** (48px left strip of glyphs that expands titles on hover, with glowing busy sweeps on background tabs), **Vertical Rail (Floating / Auto-hide)** (edge pill that blooms into the full rail), or **Horizontal (Compact)** (tiny top-bar tabs with wheel/nudge overflow).
-- **Long Paste behavior:** *Ask Each Time* by default, or lock it to always attach as a wrapped block, always attach as a local file, or always paste inline.
-- **Completion chime:** play a sound when the agent finishes working, with a volume slider and a **Test** button so you can pick something that won't make you hate your job.
-### 🗃️ Quick-Switch Everything
-- **Recent Chats Popover:** Search and resume any past session by working directory without leaving the keyboard.
-- **Recent Folders Popover:** Jump straight to any workspace you've opened before.
-- **App Menu Popover:** The old "Usage" window is now a fast vertical popover (Todo, Settings, Split Screen, Relaunch, Quit) instead of a separate window — matches the Model/Thinking menu feel.
-- **Native-Feeling Ask & Confirm Dialogs:** In-app modals replace blocking OS prompts for destructive actions and quick input.
-- **Live Activity Sync:** Tab titles and status reflect the agent's actual state (`idle`, `working`, `thinking`) in real time instead of the generic "Temp" default.
-- **Stall Recovery That Doesn’t Lie:** A frozen terminal output stream gets an explicit Resume or Kill action; long-running tools show elapsed time instead of pretending they vanished into the void.
+<br />
 
-### 🔄 In-App OMP Updater
-- **Automated OMP Update Prompts:** Glowing amber update button in the top chrome row whenever a new OMP release is detected.
-- **One-Click Update & Auto-Restart:** Click to download and install the latest `omp` release directly inside PiShift and automatically restart your active session.
-- **Auto-Update on Open Toggle:** Configure PiShift in Settings to automatically update OMP upon opening the app.
-- **Header Version Badge:** Monospace version badge in the top far left of the header bar.
+#### Session and workspace controls
 
----
+- Right-click tabs to open the directory in File Explorer, copy its path, duplicate the tab in the same directory, assign a project color, rename it, or close neighboring tabs.
+- Toggle split screen from the top bar, menu, tab context menu, or `Ctrl+\`. Drag the divider to resize; double-click it to return to an even split.
+- Use the top bar as a window drag surface while keeping its buttons interactive.
+- Switch recent chats and recent folders from searchable popovers. Tab titles and busy indicators follow the agent's reported state.
 
-## 🛠️ How to run it
+#### Composer and interaction details
 
-### Download the binary (for people with places to be)
- Grab the latest release from the **[Releases](https://github.com/Dazaike/pishift/releases)** tab:
-- **`PiShift Setup 2.0.2.exe`** — Standard installer (Windows).
-- **`PiShift-2.0.2-win.zip`** — Portable zip if you have installer commitment issues (Windows).
-- **`PiShift-2.0.2.AppImage`** — Portable, no install needed (Linux, x64).
-- **`pishift_2.0.2_amd64.deb`** — Debian/Ubuntu package (Linux, x64).
-### Build from source (for hackers & tinkerers)
+- Type `/` for interactive slash-command suggestions.
+- Press `Ctrl+Shift+Enter` to focus the composer; press it again to expand the prompt sheet.
+- Long pastes (over 10 lines or 1,000 characters) can become a wrapped block, a local file, or inline text. Choose per paste or set a default.
+- Customize paste markers with five styles and five visual treatments, plus an optional arrival flash.
+- Answer `ask` prompts in an in-app modal; use inline question cards with multi-select, recommended choices, and an Other field.
+- Review a plan with Approve, Compact, Refine, or Quit actions. The terminal-based interaction remains available in Settings.
+- Open a workspace path directly in File Explorer from the dock.
+
+#### Live integration with omp
+
+- PiShift uses an asynchronous, loopback-only UDP bridge on `127.0.0.1` with a per-instance negotiated port. It streams agent activity and usage without repeatedly polling the agent.
+- A file-watch fallback helps recover status when a datagram is missed. PTY output uses watermarked flow control to reduce unnecessary stalls when rendering falls behind.
+- On launch, PiShift installs `control-bridge.ts` into `~/.omp/agent/extensions/` to connect the interface with agent activity.
+- Installed models, recent sessions, and provider quota data come from omp's own data rather than a manually maintained model list.
+- A compact activity layout keeps tools and thoughts folded by default; Detailed opens them on arrival. You can also show raw text when expanding an item.
+- An activity orb reflects the agent's current work, while background jobs expose reports and logs separately.
+
+#### Updates and settings
+
+- PiShift can show an update prompt for the underlying OMP engine, update it in-app, and restart the active session.
+- Optionally check for and apply OMP updates when PiShift opens. The header displays the OMP version.
+- Configure quota-gauge style (bar, battery, or circle), ordering, refresh interval, and whether gauges appear in the header.
+- Adjust composer glow by activity, busy-tab indicator colors, hover previews, scroll-wheel steps, and window layout.
+
+</details>
+
+## Keyboard shortcuts
+
+| Shortcut | Action |
+| :--- | :--- |
+| `Ctrl+Shift+Enter` | Focus composer; press again to expand it |
+| `Ctrl+Shift+T` | Open a tab in the current working directory |
+| `Ctrl+Shift+W` | Close the active tab |
+| `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous tab |
+| `Ctrl+\` | Toggle split screen |
+| `Ctrl+Shift+U` | Toggle Chat View / terminal |
+| `Ctrl+Shift+F` | Find in terminal output |
+| `Ctrl+=` / `Ctrl+-` / `Ctrl+0` | Zoom in / out / reset |
+| `Ctrl+C` | Copy selection, or send `^C` if nothing is selected |
+| `Alt+↑ ↓ ← →` | Send arrow keys to the agent from the composer |
+| `Esc` | Cancel or dismiss the active overlay |
+
+## Build from source
 
 ```bash
-# Clone the repo
 git clone https://github.com/Dazaike/pishift.git
 cd pishift
 
-# Install dependencies (fast)
 bun install
-
-# Run the dev app
 bun run dev
+```
 
-# Package production installer & portable zip
+To create distributable builds:
+
+```bash
 bun run dist
 ```
 
----
+> These are the development and packaging commands provided by the project. Platform-specific build prerequisites and output formats may depend on your environment.
 
-## ⌨️ Shortcuts You'll Actually Use
+## License
 
-| Shortcut | What it does |
-| :--- | :--- |
-| `Ctrl+Shift+Enter` | Focus the composer — press again to expand the big prompt sheet |
-| `Ctrl+Shift+T` | New tab in the current working directory |
-| `Ctrl+Shift+W` | Close the active tab |
-| `Ctrl+Tab` / `Ctrl+Shift+Tab` | Cycle tabs forward / back |
-| `Ctrl+\` | Toggle split screen (two sessions, one window) |
-| `Ctrl+Shift+F` | Find text in terminal output |
-| `Ctrl+Shift+U` | Toggle Chat View / terminal for the active tab |
-| `Ctrl+=` / `Ctrl+-` / `Ctrl+0` | Zoom in / Zoom out / Reset font size |
-| `Ctrl+C` | Copy the selection when there is one, otherwise send `^C` |
-| `Alt+↑ ↓ ← →` | Forward arrows straight to the agent without leaving the composer |
-| `Esc` | Cancel / dismiss overlay / stop the "working" chrome |
+Released under the **MIT License**. Do whatever you want with it, just PLEASE don't make it worse😭.
 
-Clear Terminal, Find, Expand Composer, and Restart Session also live as click actions in the dock's **Terminal & Tools** popover.
+<div align="center">
 
----
+**[Download PiShift](https://github.com/Dazaike/pishift/releases/latest)** · [Back to top](#pishift)
 
-## 📜 License
-
-MIT © [Dazaike](https://github.com/Dazaike). Do whatever you want with it, just don't make slow software.
+</div>
