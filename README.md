@@ -29,20 +29,68 @@ No fake web-view wrappers pretending to be terminals. Just a genuine hardware-ac
 
 ## 🖼️ Screenshots
 
-### Main Window
+### Chat when you want it
+Follow the conversation, reasoning, and agent activity as it happens.
+
 <p align="center">
-  <img src="https://images.guns.lol/fb790494e15181d40c662760276c78639851a223/6eCNL1.jpg" alt="PiShift main window" width="900" />
+  <img src="docs/screenshots/chat-view-in-work.png" alt="PiShift chat view showing an active agent conversation and activity" width="900" />
 </p>
 
-### Settings Window
+### Terminal when you need it
+The real omp terminal, with sessions, workspace, model, and controls in one window.
+
 <p align="center">
-  <img src="https://images.guns.lol/fb790494e15181d40c662760276c78639851a223/UnCqFr.png" alt="PiShift settings window" width="900" />
+  <img src="docs/screenshots/main-view.png" alt="PiShift terminal view and session controls" width="900" />
 </p>
 
-### Custom Theme
+### Controls within reach
+Switch models, inspect your context window, and adjust thinking effort from the dock.
+
 <p align="center">
-  <img src="https://images.guns.lol/fb790494e15181d40c662760276c78639851a223/Iw58pF.jpg" alt="PiShift custom theme" width="900" />
+  <img src="docs/screenshots/model-selector.png" alt="Model switcher" width="225" />
+  <img src="docs/screenshots/context.png" alt="Context window breakdown" width="550" />
 </p>
+<p align="center">
+  <img src="docs/screenshots/thinking-selector.png" alt="Thinking effort selector" width="381" />
+</p>
+
+### Make it yours
+Choose a theme, tune the interface, and decide which usage data stays visible.
+
+<p align="center">
+  <img src="docs/screenshots/settings.png" alt="PiShift themes and appearance settings" width="800" />
+</p>
+
+<details>
+<summary>More screenshots: sessions, usage, and settings</summary>
+
+### Find your work
+
+<p align="center">
+  <img src="docs/screenshots/recent-chats.png" alt="Recent chats with search and resume" width="380" />
+  <img src="docs/screenshots/recent-folders.png" alt="Recent folders and workspaces" width="350" />
+</p>
+
+### Keep an eye on usage
+
+<p align="center">
+  <img src="docs/screenshots/session-sidebar.png" alt="Session overview with tasks, jobs, and provider quotas" width="290" />
+  <img src="docs/screenshots/usage-modal.png" alt="Usage and provider quotas" width="350" />
+</p>
+
+### Tune the details
+
+<p align="center">
+  <img src="docs/screenshots/usage-tracker-settings-menu.png" alt="Usage tracker settings and live top bar preview" width="800" />
+</p>
+<p align="center">
+  <img src="docs/screenshots/interface-settings-menu.png" alt="Interface settings including tab layout and thinking control" width="800" />
+</p>
+<p align="center">
+  <img src="docs/screenshots/chat-view.png" alt="PiShift chat view ready for a new conversation" width="800" />
+</p>
+
+</details>
 
 ---
 
