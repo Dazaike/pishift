@@ -18,7 +18,7 @@ The real `omp` terminal, plus tabs, a chat view, model controls, live agent acti
 </div>
 
 
-https://github.com/user-attachments/assets/77893a2d-dee0-4c13-bcfa-d7c2438e195d
+https://github.com/user-attachments/assets/a6323b2b-66b9-4bf3-a165-4933de0c1d55
 
 
 ---
