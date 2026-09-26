@@ -3,14 +3,16 @@
 All notable changes to PiShift are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [v2.0.3] - 2026-09-26
 
 ### Added
-- A dedicated Search button in the terminal dock opens the existing scrollback search.
+- **Terminal scrollback search.** A dock Search button opens the existing find overlay; every match is highlighted, the active result is stronger, and colors follow the selected theme. ([7301b8c](https://github.com/Dazaike/pishift/commit/7301b8c))
 
 ### Changed
-- Increased the default Vesper terminal selection highlight contrast.
-- Scrollback search highlights every match using colors derived from the active terminal theme, with a stronger active-match highlight.
+- Increased the default Vesper terminal selection highlight contrast. ([7301b8c](https://github.com/Dazaike/pishift/commit/7301b8c))
+- Refreshed the README feature overview and added the product screenshot gallery. ([1eaee55](https://github.com/Dazaike/pishift/commit/1eaee55), [dd2d4eb](https://github.com/Dazaike/pishift/commit/dd2d4eb))
+- Corrected README screenshot asset links. ([f496e4d](https://github.com/Dazaike/pishift/commit/f496e4d), [a1991c9](https://github.com/Dazaike/pishift/commit/a1991c9), [75e4e23](https://github.com/Dazaike/pishift/commit/75e4e23), [0f82450](https://github.com/Dazaike/pishift/commit/0f82450))
+- Release build scripts rely on the existing `publish: null` configuration and avoid blockmap artifacts. ([7301b8c](https://github.com/Dazaike/pishift/commit/7301b8c))
 
 ## [v2.0.2] - 2026-09-22
 
