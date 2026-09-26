@@ -2931,6 +2931,10 @@ const dock = new Dock({
   },
 });
 
+document.getElementById("dock-search-btn")?.addEventListener("click", () => {
+  active?.view?.openSearch();
+});
+
 function openModelSelector(): void {
   if (!modelModal) {
     modelModal = new ModelModal(

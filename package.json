@@ -13,8 +13,8 @@
     "start": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
-    "dist": "electron-vite build && electron-builder --win --publish never",
-    "dist:linux": "electron-vite build && electron-builder --linux --publish never"
+    "dist": "electron-vite build && electron-builder --win",
+    "dist:linux": "electron-vite build && electron-builder --linux"
   },
   "dependencies": {
     "border-beam": "^1.3.0",

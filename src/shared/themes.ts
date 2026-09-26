@@ -642,7 +642,7 @@ export const THEME_PRESETS: readonly ThemePreset[] = [
     fgDim: "#a0a0a0",
     accent: "#ffc799",
     termCursor: "#ffc799",
-    termSelection: "#2a2a2a",
+    termSelection: "#614a38",
     ansi: {
       black: "#101010",
       red: "#ff8080",

@@ -2446,6 +2446,10 @@ body[data-view-mode="chat"] #dock-cwd-wrap {
   display: none;
 }
 
+body[data-view-mode="chat"] #dock-search-wrap {
+  display: none;
+}
+
 /* Large clean image preview card without clutter text */
 .chip-image-card {
   position: relative;
@@ -3183,6 +3187,7 @@ body[data-paste-paint="rail"] .hl-paste {
 /* Hide Button Names in Bottom Dock (Icons Only) - Generously spaced */
 body.hide-bottom-button-labels #dock-change-dir span,
 body.hide-bottom-button-labels #dock-tools-btn span:not(.dock-tools-icon),
+body.hide-bottom-button-labels #dock-search-btn span,
 body.hide-bottom-button-labels #dock-usage-btn span,
 body.hide-bottom-button-labels #dock-context-btn .dock-context-label,
 body.hide-bottom-button-labels #dock-plan .dock-plan-label,
@@ -3198,6 +3203,7 @@ body.hide-bottom-button-labels #dock-controls {
 
 body.hide-bottom-button-labels #dock-change-dir,
 body.hide-bottom-button-labels #dock-tools-btn,
+body.hide-bottom-button-labels #dock-search-btn,
 body.hide-bottom-button-labels #dock-usage-btn,
 body.hide-bottom-button-labels #dock-context-btn,
 body.hide-bottom-button-labels #dock-plan,
@@ -3283,6 +3289,7 @@ body.hide-bottom-button-labels #dock-context-btn .dock-context-percent {
 }
 
 #dock-tools-wrap,
+#dock-search-wrap,
 #dock-usage-wrap,
 #dock-context-wrap,
 #dock-model-wrap,
