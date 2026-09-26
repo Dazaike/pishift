@@ -133,7 +133,7 @@ Pick a theme and adjust the interface, tabs, composer, and usage display.
 - **WebGL-rendered xterm.js terminal** connected to the actual CLI. On Windows, PiShift uses ConPTY.
 - **Terminal and chat views** for each tab, including previous messages when you resume a session.
 - **Tabs and split screen:** organize workspaces, drag tabs into order, and run two sessions with a resizable divider. Your split ratio persists across restarts.
-- **Terminal tools in one place:** find, copy, paste, clear, zoom, expand the composer, and restart a session.
+- **Terminal tools in one place:** search scrollback with theme-aware highlights for every match, copy, paste, clear, zoom, expand the composer, and restart a session.
 - **Keyboard and image handling:** Kitty keyboard protocol support; drag-and-drop image chips with a full-resolution lightbox. OMP image content uses a text-attachment fallback in the terminal to avoid graphics-frame rendering problems.
 
 ### 🧠 Control the agent without interrupting it

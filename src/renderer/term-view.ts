@@ -44,6 +44,43 @@ const CHIP_ID = "key-target-indicator";
 /** Must match the `gap` on #key-target-row in styles.css. */
 const CHIP_GAP_PX = 8;
 
+function invertHexColor(color: string): string {
+  const value = Number.parseInt(color.slice(1), 16);
+  return `#${(0xffffff ^ value).toString(16).padStart(6, "0")}`;
+}
+
+function mixHexColors(base: string, tint: string, tintWeight: number): string {
+  const baseValue = Number.parseInt(base.slice(1), 16);
+  const tintValue = Number.parseInt(tint.slice(1), 16);
+  const mixChannel = (shift: number): number => {
+    const baseChannel = (baseValue >> shift) & 0xff;
+    const tintChannel = (tintValue >> shift) & 0xff;
+    return Math.round(baseChannel * (1 - tintWeight) + tintChannel * tintWeight);
+  };
+  return `#${[mixChannel(16), mixChannel(8), mixChannel(0)]
+    .map((channel) => channel.toString(16).padStart(2, "0"))
+    .join("")}`;
+}
+
+// Search decorations paint every hit; inverted theme backgrounds keep the hits
+// distinct in both dark and light palettes without hard-coded theme colors.
+function buildSearchOptions(themePreset?: ThemePreset) {
+  const background = themePreset?.bg ?? "#12131a";
+  const accent = themePreset?.accent ?? "#7aa2f7";
+  const cursor = themePreset?.termCursor ?? accent;
+  const invertedBackground = invertHexColor(background);
+  return {
+    decorations: {
+      matchBackground: mixHexColors(background, invertedBackground, 0.3),
+      matchBorder: accent,
+      matchOverviewRuler: accent,
+      activeMatchBackground: mixHexColors(background, invertedBackground, 0.55),
+      activeMatchBorder: cursor,
+      activeMatchColorOverviewRuler: invertHexColor(accent),
+    },
+  };
+}
+
 export const MIN_SCROLL_STEPS = 1;
 export const MAX_SCROLL_STEPS = 12;
 export const DEFAULT_SCROLL_STEPS = 3;
@@ -135,6 +172,7 @@ export class TermView {
   private keyMode: KeyMode = "legacy";
   private currentFontSize = FONT_SIZE;
   private searchBar: HTMLDivElement | null = null;
+  private searchOptions = buildSearchOptions();
   private onFontSizeChange: ((size: number) => void) | null = null;
   private jumpBtn: HTMLButtonElement | null = null;
   private atBottom = true;
@@ -150,6 +188,7 @@ export class TermView {
     themePreset?: ThemePreset,
     initialFontSize?: number,
   ) {
+    this.searchOptions = buildSearchOptions(themePreset);
     this.el = document.createElement("div");
     this.el.className = "view";
 
@@ -572,6 +611,9 @@ export class TermView {
 
   setTheme(preset: ThemePreset): void {
     this.term.options.theme = buildXtermTheme(preset);
+    this.searchOptions = buildSearchOptions(preset);
+    const input = this.searchBar?.querySelector<HTMLInputElement>("input");
+    if (input?.value) this.search.findNext(input.value, this.searchOptions);
   }
 
   zoomIn(): void {
@@ -1220,14 +1262,8 @@ export class TermView {
     this.searchBar = bar;
     input.focus();
 
-    const options = {
-      decorations: {
-        matchOverviewRuler: "#7aa2f7",
-        activeMatchColorOverviewRuler: "#e0af68",
-      },
-    };
     input.addEventListener("input", () => {
-      if (input.value) this.search.findNext(input.value, options);
+      if (input.value) this.search.findNext(input.value, this.searchOptions);
       else this.search.clearDecorations();
     });
     input.addEventListener("keydown", (ev) => {
@@ -1237,8 +1273,8 @@ export class TermView {
       } else if (ev.key === "Enter") {
         ev.preventDefault();
         if (!input.value) return;
-        if (ev.shiftKey) this.search.findPrevious(input.value, options);
-        else this.search.findNext(input.value, options);
+        if (ev.shiftKey) this.search.findPrevious(input.value, this.searchOptions);
+        else this.search.findNext(input.value, this.searchOptions);
       }
     });
   }

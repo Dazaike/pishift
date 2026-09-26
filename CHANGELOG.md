@@ -3,6 +3,15 @@
 All notable changes to PiShift are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+- A dedicated Search button in the terminal dock opens the existing scrollback search.
+
+### Changed
+- Increased the default Vesper terminal selection highlight contrast.
+- Scrollback search highlights every match using colors derived from the active terminal theme, with a stronger active-match highlight.
+
 ## [v2.0.2] - 2026-09-22
 
 ### Fixed
