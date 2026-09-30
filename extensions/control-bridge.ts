@@ -831,6 +831,16 @@ export default function controlBridge(pi: ExtensionAPI) {
   let pendingDurable = false;
   let activityPublishPending = false;
   let running = false;
+  /**
+   * omp reported a continuation (retry, hidden turn) after `agent_end`; until
+   * this deadline an idle host is expected and must not be read as a stuck UI.
+   */
+  let continueUntil = 0;
+  /** First tick at which the host was idle while the tracker still claimed a live turn. */
+  let staleLiveSince = 0;
+  /** Tracker/host disagreement this long means a turn boundary event was missed. */
+  const STALE_LIVE_MS = 3000;
+  const CONTINUATION_GRACE_MS = 60_000;
   let planMode: PlanMode = "off";
   let planLeafId: string | null = null;
   let publishedPlanMode: PlanMode | null = null;
@@ -1046,6 +1056,38 @@ export default function controlBridge(pi: ExtensionAPI) {
     );
   }
 
+  /**
+   * Self-heal a turn that "never ended". The tracker is event-driven, so one
+   * event arriving after `agent_end` (or a `before_agent_start` whose turn never
+   * ran) leaves it live forever and the UI shows a busy Cancel button over an
+   * idle terminal. The host's own `isIdle()` is the ground truth: when it holds
+   * for STALE_LIVE_MS while the tracker disagrees, drop the stale turn.
+   */
+  function settleStaleActivity(ctx: ExtensionContext): void {
+    if (!ctx || !ctx.hasUI) return;
+    const now = Date.now();
+    const hostIdle =
+      typeof ctx.isIdle === "function" &&
+      ctx.isIdle() &&
+      !(typeof ctx.hasPendingMessages === "function" && ctx.hasPendingMessages());
+    if (tracker.activity === "idle" || !hostIdle || now < continueUntil) {
+      staleLiveSince = 0;
+      return;
+    }
+    if (staleLiveSince === 0) {
+      staleLiveSince = now;
+      return;
+    }
+    if (now - staleLiveSince < STALE_LIVE_MS) return;
+    staleLiveSince = 0;
+    tracker.reset();
+    pendingAsk = null;
+    stream.clear();
+    liveSteps = [];
+    streamingArgs.clear();
+    syncActivity(ctx, true);
+  }
+
   function toolCallKey(event: unknown, toolName: string | undefined): string {
     if (event && typeof event === "object" && "toolCallId" in event && typeof event.toolCallId === "string") {
       return event.toolCallId;
@@ -1254,6 +1296,7 @@ export default function controlBridge(pi: ExtensionAPI) {
       // leaf-id cache in readPlanMode makes an idle tick one cheap call.
       ctx.setInterval(() => {
         checkAndExecuteCancel(ctx);
+        settleStaleActivity(ctx);
         if (readPlanMode(ctx) !== publishedPlanMode) {
           publish(ctx, true);
           return;
@@ -1286,6 +1329,7 @@ export default function controlBridge(pi: ExtensionAPI) {
     async (_event, ctx) => {
       if (!ctx || !ctx.hasUI) return;
       tracker.agentStart();
+      continueUntil = 0;
       stream.clear();
       liveSteps = [];
       streamingArgs.clear();
@@ -1296,6 +1340,7 @@ export default function controlBridge(pi: ExtensionAPI) {
   pi.on("agent_start", async (_event, ctx) => {
     if (!ctx || !ctx.hasUI) return;
     tracker.agentStart();
+    continueUntil = 0;
     // Last turn's text is now in the transcript; the live row must not repeat it.
     stream.clear();
     liveSteps = [];
@@ -1441,6 +1486,7 @@ export default function controlBridge(pi: ExtensionAPI) {
     const willContinue =
       Boolean(event) && typeof event === "object" && "willContinue" in event && event.willContinue === true;
     tracker.agentEnd(willContinue);
+    continueUntil = willContinue ? Date.now() + CONTINUATION_GRACE_MS : 0;
     // omp has persisted the message by now; the transcript owns it from here.
     stream.clear();
     liveSteps = [];
