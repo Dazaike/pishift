@@ -1,7 +1,7 @@
 {
   "name": "pishift",
   "productName": "PiShift",
-  "version": "2.0.3",
+  "version": "2.0.4",
   "author": "Dazaike",
   "desktopName": "dev.ohmypi.pishift",
   "private": true,

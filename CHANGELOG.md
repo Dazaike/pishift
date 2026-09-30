@@ -3,6 +3,11 @@
 All notable changes to PiShift are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [v2.0.4] - 2026-09-30
+
+### Fixed
+- **Stuck "Waiting" state after a turn finishes.** If a lifecycle event reached the bridge after `agent_end`, the session stayed marked as working — Waiting timer running, Stop button showing — over an idle terminal. The bridge now checks omp's own idle state and clears a stale turn after 3 seconds, except while omp has announced a retry or continuation.
+
 ## [v2.0.3] - 2026-09-26
 
 ### Added
