@@ -886,7 +886,8 @@ export default function controlBridge(pi: ExtensionAPI) {
       }
 
       if (typeof ctx.invokeTool === "function") {
-        void ctx.invokeTool("hub", { op: "cancel", ids: [targetId] });
+        // `hub` is deprecated since omp 18.3.0; `write proc://<id>/kill` is the supported cancel.
+        void Promise.resolve(ctx.invokeTool("write", { path: `proc://${targetId}/kill` })).catch(() => {});
       }
 
       try {

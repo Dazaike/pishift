@@ -3,6 +3,14 @@
 All notable changes to PiShift are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [v2.0.7] - 2026-10-03
+
+### Changed
+- Chat view now switches to the terminal when you send a report command that omp 18.5.0+ no longer writes to the session transcript (`/changelog`, `/context`, `/tools`, `/hotkeys`, `/jobs`, `/mcp list|help|resources|prompts|notifications`, `/ssh list|help`, `/memory view|queue|stats|diagnostics`, `/advisor status`), so the report is visible instead of an empty chat.
+
+### Fixed
+- Background-job cancel in the control bridge now uses `write proc://<id>/kill` instead of the `hub` tool, which omp deprecated in 18.3.0.
+
 ## [v2.0.6] - 2026-10-02
 
 ### Added
