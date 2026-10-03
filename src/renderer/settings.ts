@@ -114,6 +114,7 @@ export class SettingsModal {
   private autoExpandActivity: boolean;
   private showAskPopups: boolean;
   private showPlanReviewPopups: boolean;
+  private folderTabNames: boolean;
   private tabLayout: TabLayout;
   private tabRailSide: TabRailSide;
   private tabRailHoverReachPx: number;
@@ -149,6 +150,7 @@ export class SettingsModal {
   private onToggleAutoExpandActivity: (enabled: boolean) => void;
   private onToggleShowAskPopups: (enabled: boolean) => void;
   private onToggleShowPlanReviewPopups: (enabled: boolean) => void;
+  private onToggleFolderTabNames: (enabled: boolean) => void;
   private onTabLayoutChange: (layout: TabLayout) => void;
   private onTabRailSideChange: (side: TabRailSide) => void;
   private onTabRailHoverReachChange: (px: number) => void;
@@ -214,6 +216,8 @@ export class SettingsModal {
     onToggleTabPreviews: (enabled: boolean) => void;
     onToggleShowAskPopups: (enabled: boolean) => void;
     onToggleShowPlanReviewPopups: (enabled: boolean) => void;
+    folderTabNames: boolean | undefined;
+    onToggleFolderTabNames: (enabled: boolean) => void;
     tabLayout?: TabLayout | undefined;
     onTabLayoutChange: (layout: TabLayout) => void;
     tabRailSide?: TabRailSide | undefined;
@@ -267,6 +271,7 @@ export class SettingsModal {
     this.tabPreviews = opts.tabPreviews ?? true;
     this.showAskPopups = opts.showAskPopups ?? true;
     this.showPlanReviewPopups = opts.showPlanReviewPopups ?? true;
+    this.folderTabNames = opts.folderTabNames ?? false;
     this.tabLayout = opts.tabLayout ?? DEFAULT_TAB_LAYOUT;
     this.tabRailSide = opts.tabRailSide ?? DEFAULT_TAB_RAIL_SIDE;
     this.tabRailHoverReachPx = clampTabRailHoverReachPx(
@@ -294,6 +299,7 @@ export class SettingsModal {
     this.onToggleTabPreviews = opts.onToggleTabPreviews;
     this.onToggleShowAskPopups = opts.onToggleShowAskPopups;
     this.onToggleShowPlanReviewPopups = opts.onToggleShowPlanReviewPopups;
+    this.onToggleFolderTabNames = opts.onToggleFolderTabNames;
     this.onTabLayoutChange = opts.onTabLayoutChange;
     this.onTabRailSideChange = opts.onTabRailSideChange;
     this.onTabRailHoverReachChange = opts.onTabRailHoverReachChange;
@@ -377,6 +383,7 @@ export class SettingsModal {
     tabPreviews?: boolean;
     showAskPopups?: boolean;
     showPlanReviewPopups?: boolean;
+    folderTabNames?: boolean;
     tabLayout?: TabLayout;
     tabRailSide?: TabRailSide;
     tabRailHoverReachPx?: number;
@@ -448,6 +455,9 @@ export class SettingsModal {
     }
     if (typeof state.showPlanReviewPopups === "boolean") {
       this.showPlanReviewPopups = state.showPlanReviewPopups;
+    }
+    if (typeof state.folderTabNames === "boolean") {
+      this.folderTabNames = state.folderTabNames;
     }
     if (isTabLayout(state.tabLayout)) {
       this.tabLayout = state.tabLayout;
@@ -1337,6 +1347,21 @@ export class SettingsModal {
       "Off keeps the plan-review menu in the terminal — no sheet, chime, or notification.";
     planReviewPopupsLabel.append(planReviewPopupsCheck, planReviewPopupsText);
 
+    const folderTabNamesLabel = document.createElement("label");
+    folderTabNamesLabel.className = "settings-check-label";
+    const folderTabNamesCheck = document.createElement("input");
+    folderTabNamesCheck.type = "checkbox";
+    folderTabNamesCheck.checked = this.folderTabNames;
+    folderTabNamesCheck.addEventListener("change", () => {
+      this.folderTabNames = folderTabNamesCheck.checked;
+      this.onToggleFolderTabNames(this.folderTabNames);
+    });
+    const folderTabNamesText = document.createElement("span");
+    folderTabNamesText.textContent = "Name Tabs After Folder";
+    folderTabNamesText.title =
+      "Tab labels use the working folder's name instead of the session title. Manual renames still apply.";
+    folderTabNamesLabel.append(folderTabNamesCheck, folderTabNamesText);
+
 
     // Option 7: Wheel scroll steps
     const scrollRow = document.createElement("div");
@@ -1524,6 +1549,7 @@ export class SettingsModal {
     optionsList.append(
       usageLabel,
       tabPreviewsLabel,
+      folderTabNamesLabel,
       askPopupsLabel,
       planReviewPopupsLabel,
       topLabelsLabel,

@@ -321,6 +321,8 @@ let tabPreviewsEnabled = startupAppearance.tabPreviews ?? DEFAULT_PERSISTED_SETT
 let showAskPopups = DEFAULT_PERSISTED_SETTINGS.showAskPopups ?? true;
 /** Surface omp plan-review menu as sheet + toast + chime; off answers in the terminal. */
 let showPlanReviewPopups = DEFAULT_PERSISTED_SETTINGS.showPlanReviewPopups ?? true;
+/** Label tabs with the cwd folder name instead of omp's auto-title. Manual renames still win. */
+let folderTabNames = DEFAULT_PERSISTED_SETTINGS.folderTabNames ?? false;
 let usageTrackerSettings: UsageTrackerSettings = DEFAULT_PERSISTED_SETTINGS.usageTracker
   ? { ...DEFAULT_PERSISTED_SETTINGS.usageTracker }
   : {
@@ -990,7 +992,7 @@ function cleanAutoTitle(raw: string | undefined): string | undefined {
 /** Prefer manual rename, then omp auto-title, then folder name. Default temp dir displays app name. */
 function tabDisplayName(tab: Tab): string {
   if (tab.customTitle?.trim()) return tab.customTitle.trim();
-  const auto = cleanAutoTitle(tab.title);
+  const auto = folderTabNames ? undefined : cleanAutoTitle(tab.title);
   if (auto) return auto;
   const folder = basename(tab.cwd);
   if (!folder || folder.toLowerCase() === "temp" || folder.toLowerCase() === "tmp") {
@@ -1042,6 +1044,7 @@ function persist(): void {
     tabPreviews: tabPreviewsEnabled,
     showAskPopups,
     showPlanReviewPopups,
+    folderTabNames,
     usageTracker: usageTrackerSettings,
     settingsSectionCollapsed,
     splitRatio: splitRatio !== 0.5 ? splitRatio : undefined,
@@ -1088,7 +1091,11 @@ function renderTabs(): void {
       tab.colorDot.style.display = "none";
     }
 
-    const source = tab.customTitle ? "manual" : cleanAutoTitle(tab.title) ? "auto" : "folder";
+    const source = tab.customTitle
+      ? "manual"
+      : !folderTabNames && cleanAutoTitle(tab.title)
+        ? "auto"
+        : "folder";
     tab.button.title = `${name} (${tab.cwd}) — ${source} · right-click for options · double-click to rename`;
   }
   tabRail.sync();
@@ -3532,6 +3539,13 @@ function openSettingsModal(): void {
         persist();
       },
       showPlanReviewPopups,
+      folderTabNames,
+      onToggleFolderTabNames: (enabled) => {
+        folderTabNames = enabled;
+        renderTabs();
+        if (active) document.title = `${tabDisplayName(active)} · PiShift`;
+        persist();
+      },
       onToggleShowPlanReviewPopups: (enabled) => {
         showPlanReviewPopups = enabled;
         if (!enabled) planReviewModal?.close();
@@ -3632,6 +3646,7 @@ function openSettingsModal(): void {
     tabPreviews: tabPreviewsEnabled,
     showAskPopups,
     showPlanReviewPopups,
+    folderTabNames,
     pasteMode,
     autoUpdateOmpOnOpen,
     pasteMarkerStyle,
@@ -3995,6 +4010,9 @@ async function boot(): Promise<void> {
   if (typeof state.showPlanReviewPopups === "boolean") {
     showPlanReviewPopups = state.showPlanReviewPopups;
     planReviewModal?.close();
+  }
+  if (typeof state.folderTabNames === "boolean") {
+    folderTabNames = state.folderTabNames;
   }
   usageTrackerSettings = normalizeUsageTrackerSettings(state.usageTracker);
   settingsSectionCollapsed = {

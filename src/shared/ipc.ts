@@ -442,6 +442,8 @@ export type PersistedState = {
   showAskPopups?: boolean;
   /** Surface omp plan-review menu as a sheet, chime, and notification. Off leaves it answerable in the terminal. */
   showPlanReviewPopups?: boolean;
+  /** Label tabs with the cwd folder name instead of omp's auto-title. Manual renames still win. */
+  folderTabNames?: boolean;
   /** Presentation of sessions: vertical session rail vs scaled-down compact horizontal strip. */
   tabLayout?: TabLayout;
   /** Vertical rail edge. Ignored while tabLayout is horizontal. */

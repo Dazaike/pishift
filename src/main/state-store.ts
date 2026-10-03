@@ -116,6 +116,8 @@ export function normalizeSettings(
       typeof raw.showPlanReviewPopups === "boolean"
         ? raw.showPlanReviewPopups
         : defaults.showPlanReviewPopups,
+    folderTabNames:
+      typeof raw.folderTabNames === "boolean" ? raw.folderTabNames : defaults.folderTabNames,
     tabLayout: isTabLayout(raw.tabLayout) ? raw.tabLayout : defaults.tabLayout,
     tabRailSide: isTabRailSide(raw.tabRailSide) ? raw.tabRailSide : defaults.tabRailSide,
     tabRailHoverReachPx:
