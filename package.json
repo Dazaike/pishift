@@ -12,7 +12,6 @@
     "build": "electron-vite build",
     "start": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "vitest run",
     "dist": "electron-vite build && electron-builder --win",
     "dist:linux": "electron-vite build && electron-builder --linux"
   },
@@ -39,7 +38,6 @@
     "electron-builder": "26.15.3",
     "electron-vite": "5.0.0",
     "typescript": "5.9.3",
-    "vite": "7.3.6",
-    "vitest": "4.1.11"
+    "vite": "7.3.6"
   }
 }
