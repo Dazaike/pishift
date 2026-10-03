@@ -3,6 +3,11 @@
 All notable changes to PiShift are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [v2.0.6] - 2026-10-02
+
+### Added
+- **Name Tabs After Folder** setting (off by default). When on, side-rail tab labels use the working folder's name instead of omp's auto-title; manual renames still take precedence.
+
 ## [v2.0.5] - 2026-10-02
 
 ### Changed
