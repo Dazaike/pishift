@@ -24,6 +24,7 @@ import {
 } from "../shared/ipc";
 import { reconcileDetailedContextUsage, type ContextUsageSnapshot } from "../shared/transcript";
 import { parseModelSlashCommand } from "../shared/model-command";
+import { isTerminalOnlyCommand } from "../shared/terminal-only-commands";
 import { findInstalledModel } from "../shared/model-match";
 import { ASK_ENTER_GAP_MS, ASK_KEY_GAP_MS, buildAskDialogSteps, type AskAnswer } from "../shared/ask-keys";
 import { formatElapsed } from "../shared/elapsed";
@@ -2583,9 +2584,14 @@ async function submitDock(payload: DockPayload): Promise<void> {
       return;
     }
   }
+  const terminalOnly = !hasFiles && hasText && isTerminalOnlyCommand(text);
+  if (terminalOnly) {
+    // omp keeps these reports out of the transcript; chat would show nothing.
+    setViewMode(tab, "terminal");
+  }
   const body = text.replace(/\r\n/g, "\n");
   const historyText = renderPasteMarkersForHistory(body);
-  tab.chat?.showPendingUser(historyText, payload.imagePaths);
+  if (!terminalOnly) tab.chat?.showPendingUser(historyText, payload.imagePaths);
 
 
   if (hasImages) {
