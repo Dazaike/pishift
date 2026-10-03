@@ -3,6 +3,16 @@
 All notable changes to PiShift are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [v2.0.5] - 2026-10-02
+
+### Changed
+- Shortened the bridge's continuation grace period from 60 seconds to 8 seconds, so a stale working state clears sooner after omp announces a retry or continuation. ([51429cc](https://github.com/Dazaike/pishift/commit/51429cc))
+
+### Removed
+- The vitest suite (`test/`), `vitest.config.ts`, the `test` script and the `vitest` dev dependency. ([80569aa](https://github.com/Dazaike/pishift/commit/80569aa))
+- `package-lock.json`; `bun.lock` is the only lockfile. ([80569aa](https://github.com/Dazaike/pishift/commit/80569aa))
+- Unused `scripts/unlock-release.ps1`. ([80569aa](https://github.com/Dazaike/pishift/commit/80569aa))
+
 ## [v2.0.4] - 2026-09-30
 
 ### Fixed
