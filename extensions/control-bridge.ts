@@ -840,7 +840,7 @@ export default function controlBridge(pi: ExtensionAPI) {
   let staleLiveSince = 0;
   /** Tracker/host disagreement this long means a turn boundary event was missed. */
   const STALE_LIVE_MS = 3000;
-  const CONTINUATION_GRACE_MS = 60_000;
+  const CONTINUATION_GRACE_MS = 8_000;
   let planMode: PlanMode = "off";
   let planLeafId: string | null = null;
   let publishedPlanMode: PlanMode | null = null;
