@@ -447,16 +447,6 @@ export class ChatView {
       this.scroll.scrollTo({ top: this.scroll.scrollHeight, behavior: "smooth" });
     });
     this.loadEarlier.addEventListener("click", () => this.showEarlier());
-    this.scroll.addEventListener(
-      "wheel",
-      (ev) => {
-        if (!ev.ctrlKey) return;
-        ev.preventDefault();
-        if (ev.deltaY < 0) this.zoomIn();
-        else this.zoomOut();
-      },
-      { passive: false },
-    );
 
     // Markdown links must open in the user's browser; letting the renderer
     // navigate would replace the whole app window.

@@ -534,8 +534,9 @@ body[data-tab-rail-side="right"]:not([data-tab-layout="horizontal"]) #dock {
   /* Fixed row width: the panel clips it while collapsed, so expanding the rail
      never reflows label text. */
   width: calc(var(--tab-rail-open-w) - 16px);
-  height: var(--tab-row-h);
-  padding: 0 6px 0 0;
+  min-height: var(--tab-row-h);
+  /* 3px + 1px border + 36px glyph = the 44px one-line row; a wrapped label grows the row. */
+  padding: 3px 6px 3px 0;
   border: 1px solid transparent !important;
   border-radius: 10px;
   background: transparent !important;
@@ -574,6 +575,13 @@ body[data-tab-rail-side="right"]:not([data-tab-layout="horizontal"]) #dock {
   line-height: 1;
   letter-spacing: 0.02em;
   color: var(--fg);
+}
+
+.tab.has-emoji-icon .tab-glyph-text {
+  font-family: "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif;
+  font-size: 20px;
+  font-weight: 400;
+  letter-spacing: 0;
 }
 
 .tab.has-app-icon .tab-glyph-text {
@@ -683,10 +691,14 @@ body[data-tab-rail-side="right"]:not([data-tab-layout="horizontal"]) #dock {
 .tab-label {
   will-change: transform;
   min-width: 0;
-  display: inline-block;
-  white-space: nowrap;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  white-space: normal;
+  overflow-wrap: anywhere;
   overflow: hidden;
-  text-overflow: ellipsis;
+  line-height: 1.25;
   font-weight: 500;
 }
 
@@ -719,6 +731,49 @@ body[data-tab-rail-side="right"]:not([data-tab-layout="horizontal"]) #dock {
 .tab.busy .tab-busy {
   opacity: 1;
   animation: pulse 1.1s ease-in-out infinite;
+}
+
+/* Finished while out of view: steady green dot, top-left of the icon (busy is top-right, colour tag bottom-right). */
+.tab-done {
+  position: absolute;
+  left: 1px;
+  top: -1px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #22c55e;
+  border: 1.5px solid #101010;
+  box-shadow: 0 0 6px #22c55e;
+  display: none;
+}
+
+.tab.unseen-done:not(.busy) .tab-done {
+  display: block;
+}
+
+/* Session runs as administrator: amber shield, bottom-left of the icon (busy top-right, done top-left, colour tag bottom-right). */
+.tab-elevated {
+  position: absolute;
+  left: -3px;
+  bottom: -3px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #f5b301;
+  color: #1a1300;
+  border: 1.5px solid #101010;
+  display: none;
+  align-items: center;
+  justify-content: center;
+}
+
+.tab-elevated svg {
+  width: 8px;
+  height: 8px;
+}
+
+.tab.elevated .tab-elevated {
+  display: flex;
 }
 
 /* Busy tab: faint rail plus one luminous segment sweeping down its left edge. */
@@ -1011,6 +1066,7 @@ body[data-tab-layout="horizontal"] #new-tab svg {
 
 /* Scaled down, compact horizontal tabs */
 body[data-tab-layout="horizontal"] .tab {
+  min-height: 0;
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -1076,6 +1132,26 @@ body[data-tab-layout="horizontal"] .tab-busy {
   box-shadow: 0 0 6px var(--tab-glow, var(--accent));
 }
 
+body[data-tab-layout="horizontal"] .tab-done {
+  position: static;
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+}
+
+body[data-tab-layout="horizontal"] .tab-elevated {
+  position: static;
+  width: 11px;
+  height: 11px;
+  flex: 0 0 auto;
+  border: none;
+}
+
+body[data-tab-layout="horizontal"] .tab-elevated svg {
+  width: 7px;
+  height: 7px;
+}
+
 body[data-tab-layout="horizontal"] .tab.busy::before {
   left: 3px;
   right: 3px;
@@ -1121,12 +1197,21 @@ body[data-tab-layout="horizontal"] .tab.busy::after {
 }
 
 body[data-tab-layout="horizontal"] .tab-label {
+  display: inline-block;
+  -webkit-line-clamp: unset;
+  line-clamp: unset;
+  line-height: normal;
   font-size: 11px;
   font-weight: 500;
   max-width: 85px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+body[data-tab-layout="horizontal"] .tab.has-emoji-icon .tab-glyph-text {
+  display: inline;
+  font-size: 11px;
 }
 
 body[data-tab-layout="horizontal"] .tab-close {
@@ -1152,6 +1237,20 @@ body[data-tab-layout="horizontal"] .tab.active .tab-close {
 body[data-tab-layout="horizontal"] .tab-close:hover {
   opacity: 1 !important;
   background: color-mix(in srgb, var(--fg) 14%, transparent);
+}
+
+/* High Contrast: stronger focus rings and borders on top of the lifted theme variables. */
+body[data-high-contrast="true"] :focus-visible {
+  outline: 2px solid var(--fg);
+  outline-offset: 1px;
+}
+
+body[data-high-contrast="true"] .tab-indicator {
+  border-color: var(--fg);
+}
+
+body[data-high-contrast="true"] .term-search {
+  border-color: var(--fg);
 }
 
 body[data-tab-layout="horizontal"] .tab-indicator {
@@ -4292,6 +4391,79 @@ body.hide-bottom-button-labels #dock-action-group {
   background: color-mix(in srgb, #e36d7c 32%, var(--bg-tab));
 }
 
+/* Crash-recovery banner: slides down from the top, overlaying the draggable header. */
+#crash-banner {
+  position: fixed;
+  top: 8px;
+  left: 0;
+  right: 0;
+  /* Centered without a transform: motion animates `y` through `transform`. */
+  margin: 0 auto;
+  width: max-content;
+  max-width: calc(100vw - 32px);
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border: 1px solid color-mix(in srgb, #ffd23f 55%, var(--border));
+  border-radius: 12px;
+  background: var(--bg-raised);
+  color: var(--fg);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.55);
+  -webkit-app-region: no-drag;
+}
+
+.crash-banner-icon {
+  color: #ffd23f;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.crash-banner-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13px;
+}
+
+.crash-banner-text span {
+  color: var(--fg-dim);
+}
+
+.crash-banner-reopen,
+.crash-banner-dismiss {
+  padding: 6px 14px;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 120ms ease;
+  -webkit-app-region: no-drag;
+}
+
+.crash-banner-reopen {
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: var(--bg);
+  font-weight: 600;
+}
+
+.crash-banner-reopen:hover {
+  filter: brightness(1.1);
+}
+
+.crash-banner-dismiss {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--fg);
+}
+
+.crash-banner-dismiss:hover {
+  border-color: var(--accent);
+}
+
 .settings-header {
   display: flex;
   align-items: center;
@@ -5903,6 +6075,9 @@ body.hide-bottom-button-labels #dock-action-group {
   top: 10px;
   right: 18px;
   z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 4px;
   padding: 4px;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -5919,6 +6094,23 @@ body.hide-bottom-button-labels #dock-action-group {
   color: var(--fg);
   font: inherit;
   user-select: text;
+}
+
+.term-search-close {
+  border: none;
+  background: transparent;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 16px;
+  line-height: 1;
+  padding: 2px 7px;
+  border-radius: 6px;
+  cursor: default;
+}
+
+.term-search-close:hover {
+  background: color-mix(in srgb, var(--fg) 14%, transparent);
+  color: var(--fg);
 }
 
 /* Jump-to-latest — lives in #key-target-row, immediately right of the keystroke

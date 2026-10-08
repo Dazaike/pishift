@@ -22,6 +22,7 @@ export type {
 
 export const CH = {
   ptySpawn: "pty:spawn",
+  isAppElevated: "pty:is-app-elevated",
   ptyWrite: "pty:write",
   ptyResize: "pty:resize",
   ptyAck: "pty:ack",
@@ -56,6 +57,7 @@ export const CH = {
   copyText: "app:copy-text",
   quitApp: "app:quit",
   relaunchApp: "app:relaunch",
+  dismissCrashRecovery: "app:dismiss-crash-recovery",
   defaultCwd: "app:default-cwd",
   getRecentFolders: "app:get-recent-folders",
   addRecentFolder: "app:add-recent-folder",
@@ -340,21 +342,54 @@ export type ProviderUsageStat = {
   reports?: ProviderUsageReport[];
 };
 
+/**
+ * omp session ids are UUIDs (`01a11bb7-4066-75e2-9bd0-df3403f641e0`). Validated before an id
+ * is handed to `omp --resume=`; the pattern also guarantees it can never start with `-`.
+ */
+export const OMP_SESSION_ID = /^[0-9A-Za-z][0-9A-Za-z-]{5,63}$/;
+
 export type SpawnRequest = {
   cwd: string;
   cols: number;
   rows: number;
-  resume?: boolean;
+  /** Resume this omp chat instead of starting a fresh one. Unknown or invalid ids start fresh. */
+  resumeSessionId?: string;
+  /** Run this session as administrator. Shows a UAC prompt; Windows only. */
+  elevated?: boolean;
 };
 
-export type SpawnResult = { id: string; pid: number } | { error: string };
+/**
+ * `elevated` reports what the session actually runs as (true also when the whole app was started
+ * as administrator). `elevationCancelled` means the user declined the UAC prompt.
+ */
+export type SpawnResult =
+  | { id: string; pid: number; elevated: boolean }
+  | { error: string; elevationCancelled?: true };
 
 export type PtyData = { id: string; data: string };
 export type PtyExit = { id: string; exitCode: number };
 export type PtyStall = { id: string; pausedMs: number };
 export type PtyStallCleared = { id: string };
 
-export type TabState = { cwd: string; customTitle?: string; colorTag?: string };
+export type TabState = {
+  cwd: string;
+  customTitle?: string;
+  colorTag?: string;
+  /** omp chat the tab was showing; lets crash recovery / reopen-closed resume it. */
+  ompSessionId?: string;
+  viewMode?: ViewMode;
+};
+
+/** Why the previous run is considered to have ended uncleanly. */
+export type CrashReason = "unclean-exit" | "renderer-gone";
+
+/** Snapshot of the tabs open when a crash was detected; kept until the user answers the prompt. */
+export type CrashRecovery = {
+  detectedAt: number;
+  reason: CrashReason;
+  tabs: TabState[];
+  activeIndex: number;
+};
 
 export type WindowBounds = { x: number; y: number; width: number; height: number };
 
@@ -444,6 +479,8 @@ export type PersistedState = {
   showPlanReviewPopups?: boolean;
   /** Label tabs with the cwd folder name instead of omp's auto-title. Manual renames still win. */
   folderTabNames?: boolean;
+  /** Maximise text, border and accent contrast across UI and terminal. */
+  highContrast?: boolean;
   /** Presentation of sessions: vertical session rail vs scaled-down compact horizontal strip. */
   tabLayout?: TabLayout;
   /** Vertical rail edge. Ignored while tabLayout is horizontal. */
@@ -463,6 +500,8 @@ export type PersistedState = {
   thinkingControlStyle?: ThinkingControlStyle;
   tabs: TabState[];
   activeIndex: number;
+  /** Set when the previous run crashed; cleared once the user reopens or dismisses. Never exported. */
+  crashRecovery?: CrashRecovery;
 };
 
 export type ThinkingControlStyle = "horizontal" | "vertical" | "list";

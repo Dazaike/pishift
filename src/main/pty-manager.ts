@@ -2,7 +2,6 @@ import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import type { IPty } from "node-pty";
 import { spawn as ptySpawn } from "node-pty";
 
 import {
@@ -12,14 +11,18 @@ import {
   type PtyStall,
   type PtyStallCleared,
   type SpawnRequest,
+  OMP_SESSION_ID,
 } from "../shared/ipc";
 import { STATUS_DIR } from "./control-bridge-listener";
 import { resolveOmpPath } from "./omp-locate";
+import { transcriptExists } from "./transcript";
 import { buildPtyEnv } from "./pty-env";
+import { launchElevatedPty } from "./elevation";
+import type { PtyHandle } from "./pty-handle";
 
 type Session = {
   id: string;
-  pty: IPty;
+  pty: PtyHandle;
   cwd: string;
   exited: boolean;
   /** Bytes emitted to the renderer that have not been acked yet. */
@@ -74,21 +77,47 @@ export class PtyManager {
     private readonly controlBridgePort: () => number | null,
   ) {}
 
-  spawn(req: SpawnRequest): { id: string; pid: number } {
-    const id = randomUUID();
-    const exe = resolveOmpPath(this.ompPath());
-    const cwd = existsSync(req.cwd) ? req.cwd : process.env.USERPROFILE || process.cwd();
-
-    const child = ptySpawn(exe, req.resume ? ["--continue"] : [], {
-      name: "xterm-256color",
+  /** Everything both launch paths need, resolved once so elevated and normal tabs start identically. */
+  private launchSpec(req: SpawnRequest, id: string) {
+    // Missing, malformed, or unknown ids silently start a fresh session.
+    const resumeId =
+      req.resumeSessionId && OMP_SESSION_ID.test(req.resumeSessionId) && transcriptExists(req.resumeSessionId)
+        ? req.resumeSessionId
+        : null;
+    return {
+      exe: resolveOmpPath(this.ompPath()),
+      args: resumeId ? [`--resume=${resumeId}`] : [],
+      cwd: existsSync(req.cwd) ? req.cwd : process.env.USERPROFILE || process.cwd(),
       cols: Math.max(req.cols, 2),
       rows: Math.max(req.rows, 2),
-      cwd,
       env: buildPtyEnv(process.env, id, this.controlBridgePort()),
+    };
+  }
+
+  spawn(req: SpawnRequest): { id: string; pid: number } {
+    const id = randomUUID();
+    const spec = this.launchSpec(req, id);
+    const child = ptySpawn(spec.exe, spec.args, {
+      name: "xterm-256color",
+      cols: spec.cols,
+      rows: spec.rows,
+      cwd: spec.cwd,
+      env: spec.env,
       useConpty: true,
       useConptyDll: process.platform === "win32",
     });
+    return this.register(id, child, spec.cwd);
+  }
 
+  /** Same session, hosted by an elevated helper. Waits on the UAC prompt, so it can take a while or be declined. */
+  async spawnElevated(req: SpawnRequest): Promise<{ id: string; pid: number }> {
+    const id = randomUUID();
+    const spec = this.launchSpec(req, id);
+    const child = await launchElevatedPty(spec);
+    return this.register(id, child, spec.cwd);
+  }
+
+  private register(id: string, child: PtyHandle, cwd: string): { id: string; pid: number } {
     const session: Session = {
       id,
       pty: child,
@@ -201,7 +230,8 @@ export class PtyManager {
     } catch {
       // Already gone.
     }
-    this.scheduleForceReap(pid);
+    // An elevated child is out of this process's reach; its host reaps the tree itself.
+    if (!session.pty.elevated) this.scheduleForceReap(pid);
   }
 
   /**

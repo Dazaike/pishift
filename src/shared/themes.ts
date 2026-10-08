@@ -1,3 +1,4 @@
+import { contrastRatio, ensureContrast, mixHex } from "./contrast";
 import type { ITheme } from "@xterm/xterm";
 
 export type ThemePreset = {
@@ -877,6 +878,25 @@ export const DEFAULT_THEME_NAME = "Vesper";
 export function getThemeByName(name?: string): ThemePreset {
   const found = THEME_PRESETS.find((t) => t.name.toLowerCase() === (name ?? "").toLowerCase());
   return found ?? THEME_PRESETS[0]!;
+}
+
+/**
+ * Derives a high-contrast variant: text pushed to the pole (white/black) opposite the background,
+ * accent/dim text/borders lifted to WCAG AAA/AA ratios. Surfaces and ANSI colors are untouched
+ * (xterm's minimumContrastRatio handles ANSI legibility so TUI backgrounds are not inverted).
+ */
+export function toHighContrastPreset(p: ThemePreset): ThemePreset {
+  const pole = contrastRatio(p.bg, "#ffffff") >= contrastRatio(p.bg, "#000000") ? "#ffffff" : "#000000";
+  const accent = ensureContrast(p.accent, p.bg, 7, pole);
+  return {
+    ...p,
+    fg: pole,
+    fgDim: ensureContrast(p.fgDim, p.bg, 7, pole),
+    accent,
+    border: ensureContrast(mixHex(p.bg, pole, 0.35), p.bg, 4.5, pole),
+    termCursor: pole,
+    termSelection: mixHex(p.bg, accent, 0.45),
+  };
 }
 
 export function buildXtermThemeFromPreset(preset: ThemePreset): ITheme {

@@ -150,15 +150,15 @@ Pick a theme and adjust the interface, tabs, composer, and usage display.
 - **Background job monitor:** inspect runtime, reports, raw logs, and available thinking details; copy a finished report or stop a runaway job.
 - **Usage and provider quotas:** view model availability and provider limits, with optional gauges in the top bar.
 - **Session history:** search recent chats and folders, reopen workspaces, and restore the earlier conversation in Chat View.
-- **Completion and recovery cues:** optional completion chime, activity indicators, elapsed time for long-running tools, and explicit Resume or Kill controls for stalled output.
+- **Completion and recovery cues:** optional completion chime, a green dot and OS notification when a session finishes while you are looking elsewhere, activity indicators, elapsed time for long-running tools, and explicit Resume or Kill controls for stalled output.
 
 ### 🎨 Make it feel like your workspace
 
 - **28 built-in themes**, including Tokyo Night, Catppuccin, Gruvbox, Nord, Cyberpunk, Rose Pine, and Synthwave.
-- **Three tab layouts:** docked vertical rail, floating/auto-hide rail, or compact horizontal tabs.
+- **Three tab layouts:** docked vertical rail, floating/auto-hide rail, or compact horizontal tabs. Session titles drop omp's `π` and spinner glyphs, a leading emoji becomes the tab's icon, and long titles wrap.
 - **Customizable chrome:** pin usage gauges, switch to icon-only controls, adjust top-bar layout, and preview inactive tabs.
 - **Composer options:** multi-line expansion, real-time Markdown highlighting, long-paste handling, and configurable paste-marker styles.
-- **Persistent preferences:** choose terminal fonts, activity-glow colors, scrolling behavior, recent-menu placement, and completion-sound volume.
+- **Persistent preferences:** choose terminal fonts, activity-glow colors, scrolling behavior, recent-menu placement, and completion-sound volume. A High Contrast toggle (Settings > Appearance) lifts text, border, accent and Find-highlight contrast across the interface and terminal.
 
 <details>
 <summary><strong>Explore advanced features and implementation details</strong></summary>
@@ -167,10 +167,12 @@ Pick a theme and adjust the interface, tabs, composer, and usage display.
 
 #### Session and workspace controls
 
-- Right-click tabs to open the directory in File Explorer, copy its path, duplicate the tab in the same directory, assign a project color, rename it, or close neighboring tabs.
+- Right-click tabs to open the directory in File Explorer, copy its path, duplicate the tab in the same directory, assign a project color, rename it, close neighboring tabs, or reopen the last closed tab. Reopening restores the folder, exact omp chat, tab position, view mode, name and color; middle-click **New Session** does the same.
+- On Windows, **Restart as Administrator** in the tab menu elevates only that session, after a UAC prompt, and resumes the same chat; the app itself stays unelevated. An amber shield marks elevated tabs, and elevation is never restored automatically.
 - Toggle split screen from the top bar, menu, tab context menu, or `Ctrl+\`. Drag the divider to resize; double-click it to return to an even split.
 - Use the top bar as a window drag surface while keeping its buttons interactive.
 - Switch recent chats and recent folders from searchable popovers. Tab titles and busy indicators follow the agent's reported state.
+- If the previous run crashed or was killed, a banner offers to reopen every tab on the chat it had. Clean quits and relaunches never show it.
 
 #### Composer and interaction details
 
@@ -193,7 +195,7 @@ Pick a theme and adjust the interface, tabs, composer, and usage display.
 
 #### Updates and settings
 
-- PiShift can show an update prompt for the underlying OMP engine, update it in-app, and restart the active session.
+- PiShift can show an update prompt for the underlying OMP engine, update it in-app, and restart idle sessions on their existing chats. A failed or unrecognized update check never hides the update button, a startup auto-update retries once, and the installed version is verified after updating.
 - Optionally check for and apply OMP updates when PiShift opens. The header displays the OMP version.
 - Configure quota-gauge style (bar, battery, or circle), ordering, refresh interval, and whether gauges appear in the header.
 - Adjust composer glow by activity, busy-tab indicator colors, hover previews, scroll-wheel steps, and window layout.
@@ -210,8 +212,8 @@ Pick a theme and adjust the interface, tabs, composer, and usage display.
 | `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous tab |
 | `Ctrl+\` | Toggle split screen |
 | `Ctrl+Shift+U` | Toggle Chat View / terminal |
-| `Ctrl+Shift+F` | Find in terminal output |
-| `Ctrl+=` / `Ctrl+-` / `Ctrl+0` | Zoom in / out / reset |
+| `Ctrl+Shift+F` | Find in terminal output (the bar also has a × close button) |
+| `Ctrl+=` / `Ctrl+-` / `Ctrl+0` | Zoom in / out / reset; `Ctrl+Wheel` zooms in / out |
 | `Ctrl+C` | Copy selection, or send `^C` if nothing is selected |
 | `Alt+↑ ↓ ← →` | Send arrow keys to the agent from the composer |
 | `Esc` | Cancel or dismiss the active overlay |

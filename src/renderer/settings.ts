@@ -115,6 +115,7 @@ export class SettingsModal {
   private showAskPopups: boolean;
   private showPlanReviewPopups: boolean;
   private folderTabNames: boolean;
+  private highContrast: boolean;
   private tabLayout: TabLayout;
   private tabRailSide: TabRailSide;
   private tabRailHoverReachPx: number;
@@ -151,6 +152,7 @@ export class SettingsModal {
   private onToggleShowAskPopups: (enabled: boolean) => void;
   private onToggleShowPlanReviewPopups: (enabled: boolean) => void;
   private onToggleFolderTabNames: (enabled: boolean) => void;
+  private onToggleHighContrast: (enabled: boolean) => void;
   private onTabLayoutChange: (layout: TabLayout) => void;
   private onTabRailSideChange: (side: TabRailSide) => void;
   private onTabRailHoverReachChange: (px: number) => void;
@@ -218,6 +220,8 @@ export class SettingsModal {
     onToggleShowPlanReviewPopups: (enabled: boolean) => void;
     folderTabNames: boolean | undefined;
     onToggleFolderTabNames: (enabled: boolean) => void;
+    highContrast: boolean | undefined;
+    onToggleHighContrast: (enabled: boolean) => void;
     tabLayout?: TabLayout | undefined;
     onTabLayoutChange: (layout: TabLayout) => void;
     tabRailSide?: TabRailSide | undefined;
@@ -272,6 +276,7 @@ export class SettingsModal {
     this.showAskPopups = opts.showAskPopups ?? true;
     this.showPlanReviewPopups = opts.showPlanReviewPopups ?? true;
     this.folderTabNames = opts.folderTabNames ?? false;
+    this.highContrast = opts.highContrast ?? false;
     this.tabLayout = opts.tabLayout ?? DEFAULT_TAB_LAYOUT;
     this.tabRailSide = opts.tabRailSide ?? DEFAULT_TAB_RAIL_SIDE;
     this.tabRailHoverReachPx = clampTabRailHoverReachPx(
@@ -300,6 +305,7 @@ export class SettingsModal {
     this.onToggleShowAskPopups = opts.onToggleShowAskPopups;
     this.onToggleShowPlanReviewPopups = opts.onToggleShowPlanReviewPopups;
     this.onToggleFolderTabNames = opts.onToggleFolderTabNames;
+    this.onToggleHighContrast = opts.onToggleHighContrast;
     this.onTabLayoutChange = opts.onTabLayoutChange;
     this.onTabRailSideChange = opts.onTabRailSideChange;
     this.onTabRailHoverReachChange = opts.onTabRailHoverReachChange;
@@ -384,6 +390,7 @@ export class SettingsModal {
     showAskPopups?: boolean;
     showPlanReviewPopups?: boolean;
     folderTabNames?: boolean;
+    highContrast?: boolean;
     tabLayout?: TabLayout;
     tabRailSide?: TabRailSide;
     tabRailHoverReachPx?: number;
@@ -458,6 +465,9 @@ export class SettingsModal {
     }
     if (typeof state.folderTabNames === "boolean") {
       this.folderTabNames = state.folderTabNames;
+    }
+    if (typeof state.highContrast === "boolean") {
+      this.highContrast = state.highContrast;
     }
     if (isTabLayout(state.tabLayout)) {
       this.tabLayout = state.tabLayout;
@@ -879,8 +889,23 @@ export class SettingsModal {
     fontInput.addEventListener("change", onFontUpdate);
     fontRow.append(fontLabel, fontInput);
     fontSection.append(fontHeader, fontRow);
+    const highContrastLabel = document.createElement("label");
+    highContrastLabel.className = "settings-check-label";
+    const highContrastCheck = document.createElement("input");
+    highContrastCheck.type = "checkbox";
+    highContrastCheck.checked = this.highContrast;
+    highContrastCheck.addEventListener("change", () => {
+      this.highContrast = highContrastCheck.checked;
+      this.onToggleHighContrast(this.highContrast);
+    });
+    const highContrastText = document.createElement("span");
+    highContrastText.textContent = "High Contrast";
+    highContrastText.title =
+      "Maximizes text, border and accent contrast across the interface and terminal, and makes Find highlights stand out.";
+    highContrastLabel.append(highContrastCheck, highContrastText);
+
     this.markSection(themeSection, "appearance");
-    this.appendSectionBody(themeSection, themeList, fontSection);
+    this.appendSectionBody(themeSection, highContrastLabel, themeList, fontSection);
 
     // Section 3: Composer Glow Colors
     const activitySection = this.renderActivityColors();
