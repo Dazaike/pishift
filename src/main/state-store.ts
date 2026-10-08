@@ -1,7 +1,13 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-import type { PersistedState, TabState } from "../shared/ipc";
+import {
+  OMP_SESSION_ID,
+  type CrashReason,
+  type CrashRecovery,
+  type PersistedState,
+  type TabState,
+} from "../shared/ipc";
 import { DEFAULT_PERSISTED_SETTINGS } from "../shared/defaults";
 import {
   normalizeSettingsSectionCollapsed,
@@ -16,11 +22,12 @@ import {
 import { isToolDensity } from "../shared/tool-summary";
 
 /** The subset of `PersistedState` that is a portable "setting" — excludes window
- * bounds, the local omp executable path, recent folders, and the active tab list,
- * all of which are machine/session-specific and never travel with export/import. */
+ * bounds, the local omp executable path, recent folders, the active tab list and
+ * any pending crash prompt, all of which are machine/session-specific and never
+ * travel with export/import. */
 export type PersistedSettings = Omit<
   PersistedState,
-  "tabs" | "activeIndex" | "bounds" | "ompPath" | "recentFolders"
+  "tabs" | "activeIndex" | "bounds" | "ompPath" | "recentFolders" | "crashRecovery"
 >;
 
 /** Normalizes an arbitrary (partial, possibly malformed) object into a full settings
@@ -118,6 +125,7 @@ export function normalizeSettings(
         : defaults.showPlanReviewPopups,
     folderTabNames:
       typeof raw.folderTabNames === "boolean" ? raw.folderTabNames : defaults.folderTabNames,
+    highContrast: typeof raw.highContrast === "boolean" ? raw.highContrast : defaults.highContrast,
     tabLayout: isTabLayout(raw.tabLayout) ? raw.tabLayout : defaults.tabLayout,
     tabRailSide: isTabRailSide(raw.tabRailSide) ? raw.tabRailSide : defaults.tabRailSide,
     tabRailHoverReachPx:
@@ -154,6 +162,40 @@ export function normalizeSettings(
       : defaults.settingsSectionCollapsed,
   };
 }
+
+/** Validates persisted/imported tabs: drops entries whose folder is gone and any field that fails its check. */
+export function normalizeTabs(raw: unknown): TabState[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((t): t is TabState => typeof t?.cwd === "string" && existsSync(t.cwd))
+    .map((t) => ({
+      cwd: t.cwd,
+      ...(typeof t.customTitle === "string" && t.customTitle ? { customTitle: t.customTitle } : {}),
+      ...(typeof t.colorTag === "string" && t.colorTag ? { colorTag: t.colorTag } : {}),
+      ...(typeof t.ompSessionId === "string" && OMP_SESSION_ID.test(t.ompSessionId)
+        ? { ompSessionId: t.ompSessionId }
+        : {}),
+      ...(t.viewMode === "chat" || t.viewMode === "terminal" ? { viewMode: t.viewMode } : {}),
+    }));
+}
+
+/** Validates a persisted crash snapshot; undefined when malformed or it holds no restorable tab. */
+export function normalizeCrashRecovery(raw: unknown): CrashRecovery | undefined {
+  if (typeof raw !== "object" || raw === null) return undefined;
+  const r = raw as Partial<CrashRecovery>;
+  if (typeof r.detectedAt !== "number" || !Number.isFinite(r.detectedAt)) return undefined;
+  if (r.reason !== "unclean-exit" && r.reason !== "renderer-gone") return undefined;
+  const tabs = normalizeTabs(r.tabs);
+  if (tabs.length === 0) return undefined;
+  const index = typeof r.activeIndex === "number" && Number.isFinite(r.activeIndex) ? Math.trunc(r.activeIndex) : 0;
+  return {
+    detectedAt: r.detectedAt,
+    reason: r.reason,
+    tabs,
+    activeIndex: Math.min(Math.max(index, 0), tabs.length - 1),
+  };
+}
+
 const DEBOUNCE_MS = 500;
 
 /** Window bounds, tab list and settings, persisted to `userData/state.json`. */
@@ -184,19 +226,7 @@ export class StateStore {
       }
 
       const raw = JSON.parse(readFileSync(this.file, "utf8")) as Partial<PersistedState>;
-      const tabs = Array.isArray(raw.tabs)
-        ? raw.tabs
-            .filter((t): t is TabState => typeof t?.cwd === "string" && existsSync(t.cwd))
-            .map((t) => ({
-              cwd: t.cwd,
-              ...(typeof t.customTitle === "string" && t.customTitle
-                ? { customTitle: t.customTitle }
-                : {}),
-              ...(typeof t.colorTag === "string" && t.colorTag
-                ? { colorTag: t.colorTag }
-                : {}),
-            }))
-        : [];
+      const tabs = normalizeTabs(raw.tabs);
       return {
         bounds: raw.bounds,
         ompPath: raw.ompPath,
@@ -205,6 +235,7 @@ export class StateStore {
           : undefined,
         ...normalizeSettings(raw, defaults),
         tabs,
+        crashRecovery: normalizeCrashRecovery(raw.crashRecovery),
         activeIndex: Math.min(
           Math.max(raw.activeIndex ?? 0, 0),
           Math.max(tabs.length - 1, 0),
@@ -271,6 +302,28 @@ export class StateStore {
 
   clearRecentFolders(): void {
     this.patch({ recentFolders: [] });
+  }
+
+  /**
+   * Records the current tab list so the next renderer can offer to reopen it. An unanswered
+   * earlier crash is never overwritten: a later boot only holds a placeholder tab.
+   */
+  markCrashed(reason: CrashReason): void {
+    if (this.state.crashRecovery || this.state.tabs.length === 0) return;
+    this.patch({
+      crashRecovery: {
+        detectedAt: Date.now(),
+        reason,
+        tabs: this.state.tabs,
+        activeIndex: this.state.activeIndex,
+      },
+    });
+    this.flush();
+  }
+
+  dismissCrashRecovery(): void {
+    this.patch({ crashRecovery: undefined });
+    this.flush();
   }
 
   patch(next: Partial<PersistedState>): void {

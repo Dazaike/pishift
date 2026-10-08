@@ -17,6 +17,7 @@ import {
   type PanelPosition,
   type PendingAsk,
   type ProviderUsageReport,
+  type CrashRecovery,
   type TabState,
   type ThinkingControlStyle,
   type ViewMode,
@@ -48,6 +49,9 @@ import {
   type PasteMarkerStyle,
 } from "../shared/paste-attach";
 import { DEFAULT_PERSISTED_SETTINGS } from "../shared/defaults";
+import { CrashBanner } from "./crash-banner";
+import { toHighContrastPreset } from "../shared/themes";
+import { splitTabName, stripOmpTitleDecoration } from "../shared/tab-title";
 import { isToolDensity, type ToolDensity } from "../shared/tool-summary";
 import {
   FONT_FAMILY,
@@ -187,6 +191,8 @@ type Tab = {
   sessionKey: string | null;
   /** omp's own session id; names the on-disk transcript the chat view renders. */
   ompSessionId: string | null;
+  /** Spawn omp with --resume=<ompSessionId> on the next startSession. */
+  resumeOnStart: boolean;
   /** PTY process pid (best-effort match to control-bridge pid). */
   ompPid: number | null;
   /** Bytes produced before the PTY id is known. */
@@ -224,6 +230,10 @@ type Tab = {
   pendingAsk: PendingAsk | null;
   /** omp is blocked on an unanswered question. */
   awaitingAsk: boolean;
+  /** Finished a turn while not in view; cleared when the user looks at the tab. */
+  unseenDone: boolean;
+  /** The live session runs as administrator, via its own UAC-elevated host or because the whole app does. */
+  elevated: boolean;
   /** In-flight delivery of ask answers to omp's AskDialogComponent. */
   askSend: { seq: number } | null;
   askSendSeq: number;
@@ -295,6 +305,8 @@ let autoUpdateOmpOnOpen = DEFAULT_PERSISTED_SETTINGS.autoUpdateOmpOnOpen ?? fals
 let ompUpdateAvailable = false;
 let ompLatestVersion: string | null = null;
 let ompUpdating = false;
+/** The whole app was started as administrator: every session is elevated and per-tab elevation is moot. */
+let appElevated = false;
 let panelPosition: PanelPosition = DEFAULT_PERSISTED_SETTINGS.panelPosition ?? "top-right";
 /** View mode new tabs open in; per-tab mode diverges freely from it. */
 let defaultViewMode: ViewMode = DEFAULT_PERSISTED_SETTINGS.defaultViewMode ?? "terminal";
@@ -324,6 +336,8 @@ let showAskPopups = DEFAULT_PERSISTED_SETTINGS.showAskPopups ?? true;
 let showPlanReviewPopups = DEFAULT_PERSISTED_SETTINGS.showPlanReviewPopups ?? true;
 /** Label tabs with the cwd folder name instead of omp's auto-title. Manual renames still win. */
 let folderTabNames = DEFAULT_PERSISTED_SETTINGS.folderTabNames ?? false;
+/** Maximise text, border and accent contrast across UI and terminal. */
+let highContrast = DEFAULT_PERSISTED_SETTINGS.highContrast ?? false;
 let usageTrackerSettings: UsageTrackerSettings = DEFAULT_PERSISTED_SETTINGS.usageTracker
   ? { ...DEFAULT_PERSISTED_SETTINGS.usageTracker }
   : {
@@ -562,20 +576,27 @@ usageTrackerAnchor.appendChild(usageTracker.el);
 
 const activityTab = new ActivityTab();
 
+/** `currentPreset` holds the BASE preset (theme cards, persisted name); this is what actually paints. */
+function effectivePreset(): ThemePreset {
+  return highContrast ? toHighContrastPreset(currentPreset) : currentPreset;
+}
+
 function applyTheme(preset: ThemePreset): void {
   currentPreset = preset;
+  const p = effectivePreset();
   const root = document.documentElement;
-  root.style.setProperty("--bg", preset.bg);
-  root.style.setProperty("--bg-raised", preset.bgRaised);
-  root.style.setProperty("--bg-tab", preset.bgTab);
-  root.style.setProperty("--border", preset.border);
-  root.style.setProperty("--fg", preset.fg);
-  root.style.setProperty("--fg-dim", preset.fgDim);
-  root.style.setProperty("--accent", preset.accent);
+  root.style.setProperty("--bg", p.bg);
+  root.style.setProperty("--bg-raised", p.bgRaised);
+  root.style.setProperty("--bg-tab", p.bgTab);
+  root.style.setProperty("--border", p.border);
+  root.style.setProperty("--fg", p.fg);
+  root.style.setProperty("--fg-dim", p.fgDim);
+  root.style.setProperty("--accent", p.accent);
+  document.body.dataset.highContrast = highContrast ? "true" : "false";
   // Keep Windows caption-button strip color-matched to the app chrome.
-  api.setChromeColors(preset.bgRaised, preset.fg);
+  api.setChromeColors(p.bgRaised, p.fg);
   for (const tab of tabs) {
-    tab.view?.setTheme(preset);
+    tab.view?.setTheme(p, highContrast);
   }
 }
 
@@ -759,6 +780,26 @@ function clearAskSend(tab: Tab): void {
   tab.askSend = null;
 }
 
+/** True when the user is looking at this tab right now (visible pane in a focused window). */
+function isTabInView(tab: Tab): boolean {
+  const visible = tab === active || (splitMode && (tab === primaryTab || tab === secondaryTab));
+  return visible && document.hasFocus();
+}
+
+function raiseDoneAttention(tab: Tab): void {
+  // Ask / plan-review already carry their own cue and toast; a second toast would duplicate it.
+  if (tab.awaitingAsk || tab.awaitingPlanReview) return;
+  if (isTabInView(tab)) return;
+  tab.unseenDone = true; // the caller's renderTabs() paints it
+  api.notify(tabDisplayName(tab), "Finished — ready for your next message");
+}
+
+function clearUnseenDone(tab: Tab): void {
+  if (!tab.unseenDone) return;
+  tab.unseenDone = false;
+  renderTabs();
+}
+
 function raiseAskAttention(tab: Tab, ask: PendingAsk): void {
   tab.awaitingAsk = true;
   renderTabs();
@@ -768,7 +809,7 @@ function raiseAskAttention(tab: Tab, ask: PendingAsk): void {
   if (document.hasFocus() && tab === active) return;
   const first = ask.questions[0]?.question ?? "omp needs an answer";
   const body = first.length > 120 ? `${first.slice(0, 119)}…` : first;
-  api.notify(tab.customTitle || tab.title || basename(tab.cwd), body);
+  api.notify(tabDisplayName(tab), body);
 }
 
 function clearAskAttention(tab: Tab): void {
@@ -784,7 +825,7 @@ function raisePlanReviewAttention(tab: Tab): void {
   doneSound.play();
   if (document.hasFocus() && tab === active) return;
   api.notify(
-    tab.customTitle || tab.title || basename(tab.cwd),
+    tabDisplayName(tab),
     "Plan ready — choose next step",
   );
 }
@@ -985,7 +1026,9 @@ function cleanAutoTitle(raw: string | undefined): string | undefined {
   t = t.split(/\s+-\s+/)[0]?.trim() || t;
   // omp's own breadcrumb ("π > tmp") is redundant noise, not a real session title.
   if (/^\W+\s*>\s*\S/.test(t)) return undefined;
-  if (t.length > 48) t = `${t.slice(0, 45).trimEnd()}…`;
+  t = stripOmpTitleDecoration(t);
+  const cps = Array.from(t);
+  if (cps.length > 48) t = `${cps.slice(0, 45).join("").trimEnd()}…`;
   if (GENERIC_TITLES.has(t.toLowerCase())) return undefined;
   return t || undefined;
 }
@@ -1007,6 +1050,8 @@ function persist(): void {
     cwd: tab.cwd,
     customTitle: tab.customTitle,
     colorTag: tab.colorTag,
+    ompSessionId: tab.ompSessionId ?? undefined,
+    viewMode: tab.viewMode,
   }));
   api.saveState({
     tabs: state,
@@ -1046,6 +1091,7 @@ function persist(): void {
     showAskPopups,
     showPlanReviewPopups,
     folderTabNames,
+    highContrast,
     usageTracker: usageTrackerSettings,
     settingsSectionCollapsed,
     splitRatio: splitRatio !== 0.5 ? splitRatio : undefined,
@@ -1068,6 +1114,8 @@ function renderTabs(): void {
     tab.button.classList.toggle("tab-split-secondary", isSecSplit);
     tab.button.classList.toggle("busy", tab.busy);
     tab.button.classList.toggle("awaiting-ask", tab.awaitingAsk || tab.awaitingPlanReview);
+    tab.button.classList.toggle("unseen-done", tab.unseenDone);
+    tab.button.classList.toggle("elevated", tab.elevated);
     if (tab.busy || tab.activity !== "idle") {
       const act = tab.activity !== "idle" ? tab.activity : "working";
       const color = activityColors[act] ?? DEFAULT_ACTIVITY_COLORS[act] ?? "var(--accent)";
@@ -1075,8 +1123,10 @@ function renderTabs(): void {
     } else {
       tab.button.style.removeProperty("--tab-glow");
     }
-    tab.label.textContent = name;
-    tab.glyph.textContent = (name.trim()[0] ?? "\u2022").toUpperCase();
+    const { icon, text, glyph } = splitTabName(name);
+    tab.label.textContent = text;
+    tab.glyph.textContent = glyph;
+    tab.button.classList.toggle("has-emoji-icon", icon !== null);
 
     const isPiShift = name === "PiShift";
     tab.appIcon.style.display = isPiShift ? "inline-block" : "none";
@@ -1097,7 +1147,7 @@ function renderTabs(): void {
       : !folderTabNames && cleanAutoTitle(tab.title)
         ? "auto"
         : "folder";
-    tab.button.title = `${name} (${tab.cwd}) — ${source} · right-click for options · double-click to rename`;
+    tab.button.title = `${name} (${tab.cwd}) — ${source}${tab.elevated ? " · Administrator" : ""} · right-click for options · double-click to rename`;
   }
   tabRail.sync();
   syncTabNudges();
@@ -1215,7 +1265,10 @@ function syncTabBusy(tab: Tab): void {
   } else if (finished) {
     // Cancels and exits also land on idle; only an unforced finish is "done".
     if (tab.suppressDoneSound) tab.suppressDoneSound = false;
-    else doneSound.play();
+    else {
+      doneSound.play();
+      raiseDoneAttention(tab);
+    }
   }
   renderTabs();
   if (tab === active) {
@@ -1404,6 +1457,7 @@ function subscribeTranscript(tab: Tab): void {
 function setViewMode(tab: Tab, mode: ViewMode): void {
   if (tab.viewMode === mode) return;
   tab.viewMode = mode;
+  persist();
 
   if (mode === "chat") {
     const chat = ensureChatView(tab);
@@ -1561,6 +1615,7 @@ async function toggleSplitScreen(targetTab?: Tab): Promise<void> {
 }
 
 function activate(tab: Tab): void {
+  clearUnseenDone(tab);
   if (splitMode) {
     if (tab === primaryTab) {
       focusPane("primary");
@@ -1685,9 +1740,45 @@ function activate(tab: Tab): void {
   syncElapsedTicker();
 }
 
-function closeTab(tab: Tab): void {
+type ClosedTabRecord = {
+  cwd: string;
+  customTitle?: string;
+  colorTag?: string;
+  ompSessionId: string | null;
+  viewMode: ViewMode;
+  index: number;
+};
+const MAX_CLOSED_TABS = 20;
+const closedTabs: ClosedTabRecord[] = [];
+
+/** Reopen the most recently closed tab: same folder, omp chat, position, view mode, name and colour. */
+async function reopenClosedTab(): Promise<void> {
+  const rec = closedTabs.pop();
+  if (!rec) {
+    dock.showToast("No recently closed tabs", 1800);
+    return;
+  }
+  await openTab(rec.cwd, true, rec.customTitle, rec.colorTag, {
+    ompSessionId: rec.ompSessionId,
+    viewMode: rec.viewMode,
+    index: rec.index,
+  });
+}
+
+function closeTab(tab: Tab, remember = true): void {
   const index = tabs.indexOf(tab);
   if (index < 0) return;
+  if (remember) {
+    closedTabs.push({
+      cwd: tab.cwd,
+      customTitle: tab.customTitle,
+      colorTag: tab.colorTag,
+      ompSessionId: tab.ompSessionId,
+      viewMode: tab.viewMode,
+      index,
+    });
+    if (closedTabs.length > MAX_CLOSED_TABS) closedTabs.shift();
+  }
   tabs.splice(index, 1);
   if (tab.sessionId) {
     api.kill(tab.sessionId);
@@ -1813,7 +1904,8 @@ function closeTabsToRight(target: Tab): void {
   void requestCloseTabs(tabs.slice(index + 1));
 }
 
-async function restartSession(tab: Tab): Promise<void> {
+async function restartSession(tab: Tab, keepChat = false, elevated = tab.elevated): Promise<void> {
+  const resumeId = keepChat ? tab.ompSessionId : null;
   if (tab.sessionId) {
     api.kill(tab.sessionId);
     api.unsubscribeTranscript(tab.sessionId);
@@ -1823,6 +1915,9 @@ async function restartSession(tab: Tab): Promise<void> {
     tab.ompSessionId = null;
     tab.ompPid = null;
   }
+  tab.ompSessionId = resumeId;
+  tab.resumeOnStart = resumeId !== null;
+  tab.elevated = elevated;
   tab.transcriptSubscribed = false;
   tab.view?.dispose();
   tab.view = null;
@@ -1831,6 +1926,20 @@ async function restartSession(tab: Tab): Promise<void> {
   clearRenderStallBanner(tab);
   await startSession(tab);
   renderTabs();
+}
+
+/** Restart a tab's session with or without administrator rights, resuming the same chat. */
+async function setTabElevated(tab: Tab, elevated: boolean): Promise<void> {
+  if (tab.elevated === elevated) return;
+  if (isTabBusy(tab)) {
+    const ok = await confirmDialog.confirm(
+      elevated ? "Restart as Administrator?" : "Restart without Administrator?",
+      `"${tabDisplayName(tab)}" is actively running. Restarting it interrupts the current turn; the conversation resumes afterward.`,
+      "Restart",
+    );
+    if (!ok) return;
+  }
+  await restartSession(tab, true, elevated);
 }
 
 const notifiedVersions = new Set<string>();
@@ -1890,6 +1999,11 @@ async function refreshOmpUpdateStatus(notify = false): Promise<void> {
   if (ompUpdating) return;
   try {
     const check = await api.checkOmpUpdate();
+    // A failed check says nothing about whether an update exists: leave the button and state alone.
+    if (check.error) {
+      console.warn("OMP update check failed:", check.error);
+      return;
+    }
     if (check.updateAvailable && check.latestVersion && isValidSemver(check.latestVersion)) {
       handleOmpUpdateDetected(check.latestVersion, "check", notify);
     } else {
@@ -1900,7 +2014,19 @@ async function refreshOmpUpdateStatus(notify = false): Promise<void> {
   }
 }
 
-async function triggerOmpUpdate(): Promise<void> {
+/** Restart every idle session on its own chat so it picks up the new omp; never interrupts a running turn. */
+async function restartIdleSessions(): Promise<void> {
+  const live = tabs.filter((t) => t.view);
+  // An elevated tab would raise a UAC prompt on its own, which an unattended update must not do.
+  const idle = live.filter((t) => !isTabBusy(t) && !t.elevated);
+  for (const t of idle) await restartSession(t, true);
+  const skipped = live.length - idle.length;
+  if (skipped > 0) {
+    dock.showToast(`${skipped} busy or administrator session${skipped === 1 ? "" : "s"} will use the new OMP after restart`, 6000);
+  }
+}
+
+async function triggerOmpUpdate(origin: "manual" | "auto" = "manual"): Promise<void> {
   if (ompUpdating) return;
   ompUpdating = true;
 
@@ -1913,12 +2039,14 @@ async function triggerOmpUpdate(): Promise<void> {
   dock.showToast("Updating OMP...", 4000);
 
   try {
-    const res = await api.performOmpUpdate();
+    const updatedTo = ompLatestVersion;
+    const res = await api.performOmpUpdate(updatedTo ?? undefined);
     if (res.success) {
       handleOmpUpdateCompleted();
-      dock.showToast("OMP updated! Restarting session...", 3000);
-      if (active) {
-        await restartSession(active);
+      dock.showToast("OMP updated! Restarting sessions...", 3000);
+      await restartIdleSessions();
+      if (origin === "auto") {
+        api.notify("OMP Updated", `OMP updated to ${updatedTo ?? "the latest version"} and sessions restarted.`);
       }
       window.setTimeout(() => void refreshOmpUpdateStatus(false), 3000);
     } else {
@@ -2151,7 +2279,7 @@ function createView(tab: Tab): TermView {
       },
       notify: (body) => {
         if (document.hasFocus() && tab === active) return;
-        api.notify(tab.customTitle || tab.title || basename(tab.cwd), body);
+        api.notify(tabDisplayName(tab), body);
       },
       onUserCancel: () => {
         // Esc / bare Ctrl+C — drop working chrome immediately; bridge will confirm.
@@ -2174,9 +2302,10 @@ function createView(tab: Tab): TermView {
         else clearRenderStallBanner(tab);
       },
     },
-    currentPreset,
+    effectivePreset(),
     terminalFontSize,
   );
+  view.setTheme(effectivePreset(), highContrast);
   if (customFontFamily) view.setFontFamily(customFontFamily || FONT_FAMILY);
   view.setScrollSteps(terminalScrollSteps);
   view.setFontSizeChangeHandler((size) => {
@@ -2202,13 +2331,32 @@ async function startSession(tab: Tab): Promise<void> {
     panePrimaryEl.appendChild(view.el);
   }
 
-  const result = await api.spawn({ cwd: tab.cwd, cols: view.cols, rows: view.rows });
+  const resumeSessionId = tab.resumeOnStart && tab.ompSessionId ? tab.ompSessionId : undefined;
+  tab.resumeOnStart = false;
+  const request = { cwd: tab.cwd, cols: view.cols, rows: view.rows, resumeSessionId };
+  if (tab.elevated && !appElevated) dock.showToast("Waiting for the Windows administrator prompt…", 6000);
+  let result = await api.spawn({ ...request, elevated: tab.elevated });
+  if ("error" in result && result.elevationCancelled) {
+    // A declined prompt must not leave the tab dead: carry on, unelevated, on the same chat.
+    dock.showToast("Administrator access was declined — session restarted without it", 5000);
+    tab.elevated = false;
+    result = await api.spawn(request);
+  }
+  // The prompt can stay open for minutes; the tab may have been closed or restarted meanwhile.
+  const stale = !tabs.includes(tab) || tab.view !== view;
   if ("error" in result) {
+    if (stale) return;
+    tab.elevated = false;
     view.dispose();
     tab.view = null;
     showNotice(tab, result.error);
     return;
   }
+  if (stale) {
+    api.kill(result.id); // never adopt a session nobody is looking at: it could be an orphaned administrator shell
+    return;
+  }
+  tab.elevated = result.elevated;
   tab.sessionId = result.id;
   tab.sessionKey = result.id;
   bySession.set(result.id, tab);
@@ -2228,7 +2376,9 @@ async function startSession(tab: Tab): Promise<void> {
   }
 }
 
-function makeTab(cwd: string, customTitle?: string, colorTag?: string): Tab {
+type TabRestore = { ompSessionId: string | null; viewMode?: ViewMode; index?: number };
+
+function makeTab(cwd: string, customTitle?: string, colorTag?: string, restore?: TabRestore): Tab {
   const button = document.createElement("button");
   button.type = "button";
   button.className = "tab";
@@ -2246,9 +2396,16 @@ function makeTab(cwd: string, customTitle?: string, colorTag?: string): Tab {
   const glyph = document.createElement("span");
   glyph.className = "tab-glyph-text";
   glyph.textContent = (customTitle?.trim()[0] ?? "P").toUpperCase();
+  const doneDot = document.createElement("span");
+  doneDot.className = "tab-done";
+  const elevatedBadge = document.createElement("span");
+  elevatedBadge.className = "tab-elevated";
+  elevatedBadge.title = "Administrator";
+  elevatedBadge.innerHTML =
+    '<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 1 2 3.2v4.3c0 3.6 2.5 6.1 6 7.5 3.5-1.4 6-3.9 6-7.5V3.2z"/></svg>';
   const glyphCell = document.createElement("span");
   glyphCell.className = "tab-glyph";
-  glyphCell.append(appIconEl, glyph, colorDot, busy);
+  glyphCell.append(appIconEl, glyph, colorDot, busy, doneDot, elevatedBadge);
   const label = document.createElement("span");
   label.className = "tab-label";
   label.textContent = customTitle || "PiShift";
@@ -2277,7 +2434,8 @@ function makeTab(cwd: string, customTitle?: string, colorTag?: string): Tab {
     view: null,
     sessionId: null,
     sessionKey: null,
-    ompSessionId: null,
+    ompSessionId: restore?.ompSessionId ?? null,
+    resumeOnStart: Boolean(restore?.ompSessionId),
     ompPid: null,
     pending: [],
     title: "",
@@ -2302,6 +2460,8 @@ function makeTab(cwd: string, customTitle?: string, colorTag?: string): Tab {
     dock: undefined,
     pendingAsk: null,
     awaitingAsk: false,
+    unseenDone: false,
+    elevated: false,
     askSend: null,
     askSendSeq: 0,
     dismissedAskToolCallId: null,
@@ -2319,7 +2479,7 @@ function makeTab(cwd: string, customTitle?: string, colorTag?: string): Tab {
     pasteMenuSeen: false,
     statusScanBuffer: "",
     statusScanTimer: null,
-    viewMode: defaultViewMode,
+    viewMode: restore?.viewMode ?? defaultViewMode,
     chat: null,
     transcriptSubscribed: false,
   };
@@ -2339,6 +2499,7 @@ function makeTab(cwd: string, customTitle?: string, colorTag?: string): Tab {
   // Right click context menu
   button.addEventListener("contextmenu", (ev) => {
     ev.preventDefault();
+    const canReopenClosed = closedTabs.length > 0;
     tabContextMenu.open(ev.clientX, ev.clientY, tab, {
       onOpenExplorer: (t) => {
         void api.openPath(t.cwd);
@@ -2373,6 +2534,10 @@ function makeTab(cwd: string, customTitle?: string, colorTag?: string): Tab {
       onCloseRight: (_t) => {
         closeTabsToRight(tab);
       },
+      canReopenClosed,
+      onReopenClosed: () => void reopenClosedTab(),
+      canElevate: api.canElevate && !appElevated,
+      onToggleElevation: () => void setTabElevated(tab, !tab.elevated),
     });
   });
 
@@ -2431,9 +2596,7 @@ function makeTab(cwd: string, customTitle?: string, colorTag?: string): Tab {
     tabs.splice(fromIdx, 1);
     const insertIdx = fromIdx < toIdx ? toIdx - 1 : toIdx;
     tabs.splice(insertIdx, 0, draggedTab);
-    for (const t of tabs) {
-      tabRailList.appendChild(t.button);
-    }
+    syncTabButtonOrder();
     renderTabs();
     persist();
   });
@@ -2455,13 +2618,28 @@ function makeTab(cwd: string, customTitle?: string, colorTag?: string): Tab {
   return tab;
 }
 
+function syncTabButtonOrder(): void {
+  for (const t of tabs) tabRailList.appendChild(t.button);
+}
+
+function moveTabToIndex(tab: Tab, index: number): void {
+  const from = tabs.indexOf(tab);
+  const to = Math.max(0, Math.min(index, tabs.length - 1));
+  if (from < 0 || from === to) return;
+  tabs.splice(from, 1);
+  tabs.splice(to, 0, tab);
+  syncTabButtonOrder();
+}
+
 async function openTab(
   cwd: string,
   makeActive: boolean,
   customTitle?: string,
   colorTag?: string,
+  restore?: TabRestore,
 ): Promise<Tab> {
-  const tab = makeTab(cwd, customTitle, colorTag);
+  const tab = makeTab(cwd, customTitle, colorTag, restore);
+  if (restore?.index !== undefined) moveTabToIndex(tab, restore.index);
   if (makeActive) activate(tab);
   else renderTabs();
   await startSession(tab);
@@ -2879,18 +3057,9 @@ const dock = new Dock({
         onFind: () => {
           active?.view?.openSearch();
         },
-        onZoomIn: () => {
-          if (active?.viewMode === "chat") active.chat?.zoomIn();
-          else active?.view?.zoomIn();
-        },
-        onZoomOut: () => {
-          if (active?.viewMode === "chat") active.chat?.zoomOut();
-          else active?.view?.zoomOut();
-        },
-        onZoomReset: () => {
-          if (active?.viewMode === "chat") active.chat?.resetZoom();
-          else active?.view?.resetZoom();
-        },
+        onZoomIn: () => zoomActive("in"),
+        onZoomOut: () => zoomActive("out"),
+        onZoomReset: () => zoomActive("reset"),
         onToggleExpand: () => {
           dock.toggleExpand();
         },
@@ -3045,7 +3214,10 @@ document.addEventListener("focusout", () => {
   queueMicrotask(() => updateKeyTargetIndicator());
 });
 window.addEventListener("blur", () => setKeyTargetVisible(false));
-window.addEventListener("focus", () => updateKeyTargetIndicator());
+window.addEventListener("focus", () => {
+  updateKeyTargetIndicator();
+  for (const t of tabs) if (isTabInView(t)) clearUnseenDone(t);
+});
 updateKeyTargetIndicator();
 api.onData(({ id, data }) => {
   const tab = bySession.get(id);
@@ -3115,6 +3287,7 @@ function applyControlBridgeStatus(status: ControlBridgeState | null | undefined)
     // one id to another is a real `/new` or `/resume` and must start clean.
     if (tab.ompSessionId !== null) tab.chat?.clearTranscript();
     tab.ompSessionId = ompId;
+    persist();
     if (tab.planFile) loadPlanText(tab, tab.planFile);
     subscribeTranscript(tab);
   }
@@ -3233,11 +3406,13 @@ api.onExit(({ id, exitCode }) => {
   tab.sessionKey = null;
   tab.ompSessionId = null;
   tab.ompPid = null;
+  persist();
   tab.suppressDoneSound = true;
   setTabActivity(tab, "idle");
   clearAskSend(tab);
   tab.view?.dispose();
   tab.view = null;
+  tab.elevated = false;
   showNotice(tab, `omp exited (code ${exitCode})`);
   clearStallBanner(tab);
   renderTabs();
@@ -3278,6 +3453,14 @@ installWindowDnd({
 });
 
 newTabButton.addEventListener("click", () => void addTab());
+newTabButton.addEventListener("mousedown", (ev) => {
+  if (ev.button === 1) ev.preventDefault(); // no autoscroll cursor
+});
+newTabButton.addEventListener("auxclick", (ev) => {
+  if (ev.button !== 1) return;
+  ev.preventDefault();
+  void reopenClosedTab();
+});
 attachButtonSpring(newTabButton);
 
 const chromeActionsRow = document.querySelector(".chrome-actions-row") as HTMLElement | null;
@@ -3546,6 +3729,12 @@ function openSettingsModal(): void {
       },
       showPlanReviewPopups,
       folderTabNames,
+      highContrast,
+      onToggleHighContrast: (enabled) => {
+        highContrast = enabled;
+        applyTheme(currentPreset);
+        persist();
+      },
       onToggleFolderTabNames: (enabled) => {
         folderTabNames = enabled;
         renderTabs();
@@ -3653,6 +3842,7 @@ function openSettingsModal(): void {
     showAskPopups,
     showPlanReviewPopups,
     folderTabNames,
+    highContrast,
     pasteMode,
     autoUpdateOmpOnOpen,
     pasteMarkerStyle,
@@ -3858,20 +4048,17 @@ window.addEventListener(
     }
     if (key === "=" || key === "+") {
       claim();
-      if (active.viewMode === "chat") active.chat?.zoomIn();
-      else active.view?.zoomIn();
+      zoomActive("in");
       return;
     }
     if (key === "-" || key === "_") {
       claim();
-      if (active.viewMode === "chat") active.chat?.zoomOut();
-      else active.view?.zoomOut();
+      zoomActive("out");
       return;
     }
     if (key === "0") {
       claim();
-      if (active.viewMode === "chat") active.chat?.resetZoom();
-      else active.view?.resetZoom();
+      zoomActive("reset");
       return;
     }
     if (key === "tab") {
@@ -3882,6 +4069,37 @@ window.addEventListener(
   { capture: true },
 );
 
+function zoomActive(step: "in" | "out" | "reset"): void {
+  const target = active?.viewMode === "chat" ? active.chat : active?.view;
+  if (!target) return;
+  if (step === "in") target.zoomIn();
+  else if (step === "out") target.zoomOut();
+  else target.resetZoom();
+}
+
+// Ctrl+wheel zoom. xterm.js consumes wheel events on its inner element, so per-view bubble
+// listeners fire only some of the time; one window-level capture listener always sees them.
+const WHEEL_ZOOM_STEP_PX = 50;
+const WHEEL_ZOOM_IDLE_MS = 200;
+let wheelZoomAccum = 0;
+let wheelZoomAt = 0;
+window.addEventListener(
+  "wheel",
+  (ev) => {
+    if (!ev.ctrlKey || !active) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    const now = performance.now();
+    if (now - wheelZoomAt > WHEEL_ZOOM_IDLE_MS) wheelZoomAccum = 0;
+    wheelZoomAt = now;
+    wheelZoomAccum += ev.deltaY * (ev.deltaMode === 1 ? 40 : 1); // 1 = DOM_DELTA_LINE
+    if (Math.abs(wheelZoomAccum) < WHEEL_ZOOM_STEP_PX) return;
+    zoomActive(wheelZoomAccum < 0 ? "in" : "out");
+    wheelZoomAccum = 0;
+  },
+  { capture: true, passive: false },
+);
+
 window.addEventListener("beforeunload", () => {
   persist();
   for (const tab of tabs) {
@@ -3889,10 +4107,61 @@ window.addEventListener("beforeunload", () => {
   }
 });
 
+/**
+ * Startup auto-update. A failed check retries once after a minute instead of waiting for the
+ * 4-hour poll. `triggerOmpUpdate` owns the `ompUpdating` flag, so the manual button and the
+ * periodic check cannot start a second concurrent update.
+ */
+async function autoUpdateOmp(attempt = 0): Promise<void> {
+  try {
+    const check = await api.checkOmpUpdate();
+    if (check.error) {
+      if (attempt < 1) window.setTimeout(() => void autoUpdateOmp(attempt + 1), 60_000);
+      return;
+    }
+    if (check.updateAvailable && check.latestVersion && isValidSemver(check.latestVersion)) {
+      // "stream" skips the in-terminal banner; the toast and OS notification below cover it.
+      handleOmpUpdateDetected(check.latestVersion, "stream", false);
+      await triggerOmpUpdate("auto");
+    } else {
+      handleOmpUpdateCompleted();
+    }
+  } catch (err) {
+    console.error("Auto-update OMP on open error:", err);
+  }
+}
+
+let crashPlaceholder: Tab | null = null;
+
+/** Asks whether to reopen the tabs that were open when the previous run crashed, and restores them with their chats. */
+async function offerCrashRecovery(recovery: CrashRecovery): Promise<void> {
+  const choice = await new CrashBanner().show(recovery.tabs.length);
+  if (choice === "dismiss") {
+    api.dismissCrashRecovery();
+    return;
+  }
+  const activeIdx = Math.min(recovery.activeIndex, recovery.tabs.length - 1);
+  for (const [i, entry] of recovery.tabs.entries()) {
+    await openTab(entry.cwd, i === activeIdx, entry.customTitle, entry.colorTag, {
+      ompSessionId: entry.ompSessionId ?? null,
+      viewMode: entry.viewMode,
+    });
+  }
+  // Only after every tab opened: a failure midway leaves the prompt for the next launch.
+  api.dismissCrashRecovery();
+  const placeholder = crashPlaceholder;
+  if (placeholder && tabs.includes(placeholder) && placeholder.sentMessages.length === 0 && !isTabBusy(placeholder)) {
+    closeTab(placeholder, false); // untouched stand-in tab; not worth remembering
+  }
+  dock.showToast(`Reopened ${recovery.tabs.length} tab${recovery.tabs.length === 1 ? "" : "s"}`, 2500);
+}
+
 async function boot(): Promise<void> {
   const state = await api.loadState();
-  if (state.themeName) {
-    applyTheme(getThemeByName(state.themeName));
+  if (api.canElevate) appElevated = await api.isAppElevated();
+  if (typeof state.highContrast === "boolean") highContrast = state.highContrast;
+  if (state.themeName || highContrast) {
+    applyTheme(state.themeName ? getThemeByName(state.themeName) : currentPreset);
   }
   if (typeof state.fontFamily === "string" && state.fontFamily) {
     applyFont(state.fontFamily);
@@ -4033,16 +4302,21 @@ async function boot(): Promise<void> {
     viewsEl.style.setProperty("--split-ratio", `${(splitRatio * 100).toFixed(1)}%`);
   }
 
-  const list = state.tabs.length
-    ? state.tabs
-    : [{ cwd: (await api.pickDirectory()) ?? (await api.homeDir()) }];
+  // After a crash, boot with one placeholder tab; the real tabs wait for the user's answer.
+  const recovery = state.crashRecovery;
+  const list: TabState[] = recovery
+    ? [{ cwd: await api.defaultCwd() }]
+    : state.tabs.length
+      ? state.tabs
+      : [{ cwd: (await api.pickDirectory()) ?? (await api.homeDir()) }];
   for (const [index, entry] of list.entries()) {
-    await openTab(
+    const opened = await openTab(
       entry.cwd,
       index === Math.min(state.activeIndex, list.length - 1),
       entry.customTitle,
       entry.colorTag,
     );
+    if (recovery) crashPlaceholder = opened;
   }
   document.getElementById("boot-skeleton")?.remove();
   dock.focus();
@@ -4065,33 +4339,7 @@ async function boot(): Promise<void> {
 
   // OMP Update Check on Startup
   if (autoUpdateOmpOnOpen) {
-    void (async () => {
-      try {
-        const check = await api.checkOmpUpdate();
-        if (check.updateAvailable && check.latestVersion && isValidSemver(check.latestVersion)) {
-          dock.showToast(`Updating OMP to ${check.latestVersion}...`, 4000);
-          const res = await api.performOmpUpdate();
-          if (res.success) {
-            handleOmpUpdateCompleted();
-            dock.showToast(`OMP updated to ${check.latestVersion} and terminal restarted.`, 4000);
-            api.notify(
-              "OMP Updated",
-              `OMP updated to ${check.latestVersion} and terminal restarted.`,
-            );
-            if (active) {
-              await restartSession(active);
-            }
-          } else {
-            handleOmpUpdateDetected(check.latestVersion, "check", true);
-            dock.showToast(`OMP auto-update failed: ${res.error ?? "Unknown error"}`, 6000);
-          }
-        } else {
-          handleOmpUpdateCompleted();
-        }
-      } catch (err) {
-        console.error("Auto-update OMP on open error:", err);
-      }
-    })();
+    void autoUpdateOmp();
   } else {
     // Default: Never auto-update or auto-restart without user clicking the button
     window.setTimeout(() => void refreshOmpUpdateStatus(true), 2000);
@@ -4099,6 +4347,7 @@ async function boot(): Promise<void> {
 
   // Periodic background check every 4 hours
   window.setInterval(() => void refreshOmpUpdateStatus(true), 4 * 60 * 60 * 1000);
+  if (recovery) void offerCrashRecovery(recovery);
 }
 
 void boot();

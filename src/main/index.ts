@@ -39,9 +39,13 @@ import { loadSkillCommands } from "./omp-skills";
 import { loadJobActivity } from "./job-activity";
 import { checkOmpUpdate, performOmpUpdate } from "./omp-updater";
 import { PtyManager } from "./pty-manager";
+import { SessionLock } from "./session-lock";
 import { StateStore } from "./state-store";
 import { getThemeByName } from "../shared/themes";
 import { ControlBridgeListener } from "./control-bridge-listener";
+import { ElevationCancelledError, cancelPendingElevations, isProcessElevated } from "./elevation";
+import { runPtyHost } from "./pty-host";
+import { PTY_HOST_FLAG } from "./pty-host-protocol";
 import { TranscriptWatcher, readSessionPlan, readTranscriptBlob } from "./transcript";
 
 const DEFAULT_CHROME_BG = "#191b24";
@@ -63,6 +67,7 @@ export function getDefaultCwd(): string {
 }
 let win: BrowserWindow | null = null;
 let store: StateStore;
+let lock: SessionLock;
 let ptys: PtyManager;
 let bridgeListener: ControlBridgeListener | null = null;
 let transcripts: TranscriptWatcher | null = null;
@@ -107,6 +112,7 @@ function createWindow(): BrowserWindow {
         `--pishift-collapse-top-bar=${state.collapseTopBarToMenu ? "1" : "0"}`,
         `--pishift-show-header-usage=${state.showUsageInHeader ? "1" : "0"}`,
         `--pishift-tab-previews=${state.tabPreviews === false ? "0" : "1"}`,
+        `--pishift-high-contrast=${state.highContrast ? "1" : "0"}`,
       ],
     },
   });
@@ -133,6 +139,22 @@ function createWindow(): BrowserWindow {
   window.on("close", () => {
     persistBounds();
     store.flush();
+  });
+  // Windows logoff/shutdown ends the session without emitting `before-quit`.
+  window.on("session-end", () => {
+    store.flush();
+    lock.release();
+  });
+
+  let lastCrashReload = 0;
+  window.webContents.on("render-process-gone", (_e, details) => {
+    if (details.reason === "clean-exit") return;
+    store.markCrashed("renderer-gone");
+    ptys.killAll(); // the renderer that owned every PTY id is gone
+    const now = Date.now();
+    if (window.isDestroyed() || now - lastCrashReload < 10_000) return; // never reload-loop
+    lastCrashReload = now;
+    window.webContents.reload();
   });
 
   window.webContents.setWindowOpenHandler(({ url }) => {
@@ -166,13 +188,20 @@ function createWindow(): BrowserWindow {
 }
 
 function registerIpc(): void {
-  ipcMain.handle(CH.ptySpawn, (_e, req: SpawnRequest): SpawnResult => {
+  ipcMain.handle(CH.ptySpawn, async (_e, req: SpawnRequest): Promise<SpawnResult> => {
     try {
-      return ptys.spawn(req);
+      const appElevated = await isProcessElevated();
+      // An already-elevated app needs no helper: every session it spawns inherits its token.
+      if (req.elevated === true && !appElevated) {
+        return { ...(await ptys.spawnElevated(req)), elevated: true };
+      }
+      return { ...ptys.spawn(req), elevated: appElevated };
     } catch (err) {
+      if (err instanceof ElevationCancelledError) return { error: err.message, elevationCancelled: true };
       return { error: err instanceof Error ? err.message : String(err) };
     }
   });
+  ipcMain.handle(CH.isAppElevated, () => isProcessElevated());
 
   ipcMain.on(CH.ptyWrite, (_e, id: string, data: string) => ptys.write(id, data));
   ipcMain.on(CH.ptyResize, (_e, id: string, cols: number, rows: number) =>
@@ -299,13 +328,16 @@ function registerIpc(): void {
   ipcMain.handle(CH.readClipboardText, () => clipboard.readText());
   ipcMain.handle(CH.loadState, (): PersistedState => store.get());
   ipcMain.on(CH.saveState, (_e, next: Partial<PersistedState>) => store.patch(next));
+  ipcMain.on(CH.dismissCrashRecovery, () => store.dismissCrashRecovery());
   ipcMain.handle(CH.homeDir, () => app.getPath("home"));
   ipcMain.handle(CH.defaultCwd, () => getDefaultCwd());
   ipcMain.handle(CH.getModels, () => loadInstalledModels());
   ipcMain.handle(CH.getProviderUsage, () => queryOmpUsage());
   ipcMain.handle(CH.readControlBridgeStatus, () => bridgeListener?.currentStates ?? []);
   ipcMain.handle(CH.checkOmpUpdate, () => checkOmpUpdate(store.ompPath));
-  ipcMain.handle(CH.performOmpUpdate, () => performOmpUpdate(store.ompPath));
+  ipcMain.handle(CH.performOmpUpdate, (_e, expectedVersion?: unknown) =>
+    performOmpUpdate(store.ompPath, typeof expectedVersion === "string" ? expectedVersion : undefined),
+  );
   ipcMain.handle(CH.getRecentFolders, () => loadRecentFolders(store.recentFolders));
   ipcMain.handle(CH.getAppVersion, () => app.getVersion());
   ipcMain.handle(CH.addRecentFolder, (_e, folder: string) => store.addRecentFolder(folder));
@@ -415,6 +447,7 @@ function registerIpc(): void {
     } else {
       app.relaunch();
     }
+    lock.release(); // app.exit bypasses before-quit
     app.exit(0);
   });
 }
@@ -448,10 +481,14 @@ async function ensureControlBridgeInstalled(): Promise<void> {
   }
 }
 
+const ptyHostMode = process.argv.includes(PTY_HOST_FLAG);
 const isDev = process.env.NODE_ENV === "development" || !app.isPackaged;
-const hasLock = isDev ? true : app.requestSingleInstanceLock();
+const hasLock = ptyHostMode || isDev ? true : app.requestSingleInstanceLock();
 
-if (!hasLock) {
+if (ptyHostMode) {
+  // The elevated copy of the app that hosts exactly one session; it never opens a window or touches app state.
+  runPtyHost(process.argv);
+} else if (!hasLock) {
   app.quit();
 } else {
   if (!isDev) {
@@ -463,9 +500,12 @@ if (!hasLock) {
   }
 
   void app.whenReady().then(async () => {
+    void isProcessElevated(); // warm the cache so the first spawn does not wait on it
     await ensureControlBridgeInstalled();
     nativeTheme.themeSource = "dark";
     store = new StateStore(app.getPath("userData"), getDefaultCwd());
+    lock = new SessionLock(app.getPath("userData"));
+    if (lock.acquire()) store.markCrashed("unclean-exit");
     ptys = new PtyManager(send, () => store.ompPath, () => bridgeListener?.port ?? null);
     bridgeListener = new ControlBridgeListener((channel, payload) => {
       if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
@@ -486,8 +526,10 @@ if (!hasLock) {
   // Windows ignores kill signals for ConPTY children; abandoned sessions leak an
   // OpenConsole.exe each, so every session must be torn down explicitly.
   app.on("before-quit", () => {
+    cancelPendingElevations();
     ptys.killAll();
     store.flush();
+    lock.release();
     bridgeListener?.close();
     transcripts?.dispose();
   });

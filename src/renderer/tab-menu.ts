@@ -16,6 +16,8 @@ export const TAB_COLOR_PRESETS: TabColorTag[] = [
 export interface TabMenuTarget {
   cwd: string;
   colorTag?: string;
+  /** The tab's live session runs as administrator. */
+  elevated?: boolean;
 }
 
 export interface TabMenuCallbacks {
@@ -28,6 +30,11 @@ export interface TabMenuCallbacks {
   onClose: (target: TabMenuTarget) => void;
   onCloseOthers: (target: TabMenuTarget) => void;
   onCloseRight: (target: TabMenuTarget) => void;
+  canReopenClosed: boolean;
+  onReopenClosed: () => void;
+  /** Per-tab elevation is offered only where it means something: Windows, and an app that is not already elevated. */
+  canElevate: boolean;
+  onToggleElevation: (target: TabMenuTarget) => void;
 }
 
 export class TabContextMenu {
@@ -124,6 +131,14 @@ export class TabContextMenu {
         <span class="menu-icon">&#x25EB;</span>
         <span>Split Screen (Dual View)</span>
       </div>
+      ${
+        cb.canElevate
+          ? `<div class="menu-item" data-action="elevate">
+        <span class="menu-icon">&#128737;</span>
+        <span>${target.elevated ? "Restart without Administrator" : "Restart as Administrator"}</span>
+      </div>`
+          : ""
+      }
       <div class="menu-separator"></div>
       <div class="menu-section-label">Tab Color Tag</div>
       <div class="menu-color-row">
@@ -149,6 +164,14 @@ export class TabContextMenu {
       <div class="menu-item" data-action="close-right">
         <span>Close Tabs to the Right</span>
       </div>
+      ${
+        cb.canReopenClosed
+          ? `<div class="menu-item" data-action="reopen">
+        <span class="menu-icon">&#8634;</span>
+        <span>Reopen Closed Tab</span>
+      </div>`
+          : ""
+      }
     `;
 
     // Bind action clicks
@@ -162,9 +185,11 @@ export class TabContextMenu {
         else if (action === "duplicate") cb.onDuplicate(target);
         else if (action === "rename") cb.onRename(target);
         else if (action === "split") cb.onSplit?.(target);
+        else if (action === "elevate") cb.onToggleElevation(target);
         else if (action === "close") cb.onClose(target);
         else if (action === "close-others") cb.onCloseOthers(target);
         else if (action === "close-right") cb.onCloseRight(target);
+        else if (action === "reopen") cb.onReopenClosed();
       });
     }
 

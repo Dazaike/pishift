@@ -26,7 +26,7 @@ import {
   type TranscriptSnapshot,
 } from "../shared/ipc";
 import type { SlashCommand } from "../shared/slash-commands";
-import { getThemeByName } from "../shared/themes";
+import { getThemeByName, toHighContrastPreset } from "../shared/themes";
 
 // Preload runs before the HTML root exists, so touching
 // `document.documentElement` here silently failed and left the default theme
@@ -37,7 +37,8 @@ try {
   const prefix = "--pishift-theme=";
   const arg = process.argv.find((candidate) => candidate.startsWith(prefix));
   if (arg) {
-    const preset = getThemeByName(decodeURIComponent(arg.slice(prefix.length)));
+    const base = getThemeByName(decodeURIComponent(arg.slice(prefix.length)));
+    const preset = process.argv.includes("--pishift-high-contrast=1") ? toHighContrastPreset(base) : base;
     void webFrame.insertCSS(
       `:root:root {
         --bg: ${preset.bg};
@@ -82,6 +83,9 @@ const api = {
   ack: (id: string, bytes: number): void => ipcRenderer.send(CH.ptyAck, id, bytes),
   kill: (id: string): void => ipcRenderer.send(CH.ptyKill, id),
   resumeFlow: (id: string): void => ipcRenderer.send(CH.ptyResumeFlow, id),
+  /** Per-tab administrator elevation relies on UAC, so it is a Windows-only capability. */
+  canElevate: process.platform === "win32",
+  isAppElevated: (): Promise<boolean> => ipcRenderer.invoke(CH.isAppElevated),
 
   // xterm needs ConPTY compat flags: without them a row increase replaces rows
   // instead of pulling scrollback back into the viewport, losing output.
@@ -145,7 +149,8 @@ const api = {
   getModels: (): Promise<InstalledModelGroup[]> => ipcRenderer.invoke(CH.getModels),
   getProviderUsage: (): Promise<ProviderUsageReport[]> => ipcRenderer.invoke(CH.getProviderUsage),
   checkOmpUpdate: (): Promise<OmpUpdateCheckResult> => ipcRenderer.invoke(CH.checkOmpUpdate),
-  performOmpUpdate: (): Promise<OmpUpdateResult> => ipcRenderer.invoke(CH.performOmpUpdate),
+  performOmpUpdate: (expectedVersion?: string): Promise<OmpUpdateResult> =>
+    ipcRenderer.invoke(CH.performOmpUpdate, expectedVersion),
   getRecentFolders: (): Promise<string[]> => ipcRenderer.invoke(CH.getRecentFolders),
   addRecentFolder: (folder: string): Promise<string[]> => ipcRenderer.invoke(CH.addRecentFolder, folder),
   removeRecentFolder: (folder: string): Promise<string[]> => ipcRenderer.invoke(CH.removeRecentFolder, folder),
@@ -180,6 +185,7 @@ const api = {
   copyText: (text: string): void => ipcRenderer.send(CH.copyText, text),
   quitApp: (): void => ipcRenderer.send(CH.quitApp),
   relaunchApp: (): void => ipcRenderer.send(CH.relaunchApp),
+  dismissCrashRecovery: (): void => ipcRenderer.send(CH.dismissCrashRecovery),
   // `File.path` was removed in Electron 32; this is the only way to recover the
   // on-disk path of a dropped file. Returns "" for in-memory Files.
   getPathForFile: (file: File): string => webUtils.getPathForFile(file),

@@ -3,6 +3,32 @@
 All notable changes to PiShift are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [v2.0.8] - 2026-10-08
+
+### Added
+- **Per-tab administrator elevation (Windows).** Right-click a tab > **Restart as Administrator** restarts just that session with admin rights on the same chat, after one UAC prompt; the rest of the app stays unelevated. Elevated tabs show an amber shield and **Restart without Administrator** reverses it. Declining the prompt keeps the tab running unelevated. Elevation is never persisted or restored: crash recovery, reopen-closed-tab and unattended OMP updates open or leave such tabs unelevated rather than raising a prompt on their own.
+- **Crash recovery.** After an unclean exit or a renderer crash, a banner slides down offering to reopen all tabs, each resumed on its chat. A crashed renderer now reloads itself (at most once every 10 seconds) instead of leaving a dead window.
+- **Reopen closed tab** from the tab context menu or by middle-clicking **New Session**. The tab returns in the same position with the same folder, exact omp chat, view mode, name and color.
+- **Session tab titles.** omp's `π` prefix and braille spinner glyphs are hidden, a leading emoji becomes the tab's left icon, and long titles wrap onto up to three lines instead of truncating.
+- **Finished-session indicator.** A session that completes a turn while you are not looking at it gets a steady green dot on its tab (cleared when you open it) and an OS notification, whether or not the chime is on.
+- **High Contrast** setting (Settings > Appearance): text, borders and accent are lifted to WCAG AAA/AA ratios in the interface and terminal, ANSI colors are kept legible, and Find highlights are stronger. It applies on the first painted frame.
+- Close (×) button on the terminal find bar.
+
+### Changed
+- A successful OMP update now restarts every idle session on its existing chat, instead of restarting only the active tab and dropping its conversation. Sessions that are mid-turn are skipped. A startup auto-update whose check fails retries once after a minute.
+- Notification titles follow **Name Tabs After Folder** and manual renames.
+- OMP update and check child processes no longer flash a console window and run with stdin closed.
+
+### Fixed
+- `Ctrl+Wheel` zoom worked only intermittently because xterm.js swallowed the event. One window-level handler, shared with `Ctrl+=` / `Ctrl+-`, now zooms on every notch.
+- A failed, timed-out or unrecognized `omp update --check` was treated as "up to date" and hid the update button. It is now reported as an error and leaves the button alone; checks retry once.
+- Large OMP downloads were killed after 3 minutes; the update timeout is now 10 minutes.
+- An update could report success without the installed version changing; it is now verified with `omp --version`.
+- The manual button or the periodic check could start a second `omp update` while the startup auto-update was running; updates are now single-flight.
+
+### Removed
+- `SpawnRequest.resume` (`--continue`), which no caller used; replaced by `resumeSessionId` (`--resume=<id>`).
+
 ## [v2.0.7] - 2026-10-03
 
 ### Changed

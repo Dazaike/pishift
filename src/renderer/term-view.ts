@@ -64,10 +64,23 @@ function mixHexColors(base: string, tint: string, tintWeight: number): string {
 
 // Search decorations paint every hit; inverted theme backgrounds keep the hits
 // distinct in both dark and light palettes without hard-coded theme colors.
-function buildSearchOptions(themePreset?: ThemePreset) {
+function buildSearchOptions(themePreset?: ThemePreset, highContrast = false) {
   const background = themePreset?.bg ?? "#12131a";
   const accent = themePreset?.accent ?? "#7aa2f7";
   const cursor = themePreset?.termCursor ?? accent;
+  if (highContrast) {
+    // The preset is already the high-contrast one: accent and cursor sit at pole contrast.
+    return {
+      decorations: {
+        matchBackground: mixHexColors(background, accent, 0.45),
+        matchBorder: accent,
+        matchOverviewRuler: accent,
+        activeMatchBackground: mixHexColors(background, accent, 0.75),
+        activeMatchBorder: cursor,
+        activeMatchColorOverviewRuler: cursor,
+      },
+    };
+  }
   const invertedBackground = invertHexColor(background);
   return {
     decorations: {
@@ -267,20 +280,7 @@ export class TermView {
       }
     });
 
-    this.el.addEventListener(
-      "wheel",
-      (ev) => {
-        if (ev.ctrlKey) {
-          ev.preventDefault();
-          if (ev.deltaY < 0) this.zoomIn();
-          else this.zoomOut();
-          return;
-        }
-        // Manual scrolling always wins over a resize anchor still in flight.
-        this.endRepin();
-      },
-      { passive: false },
-    );
+    this.el.addEventListener("wheel", () => this.endRepin(), { passive: true });
 
     this.skeletonEl = this.buildSkeleton();
     this.el.appendChild(this.skeletonEl);
@@ -609,9 +609,10 @@ export class TermView {
     return true;
   }
 
-  setTheme(preset: ThemePreset): void {
+  setTheme(preset: ThemePreset, highContrast = false): void {
     this.term.options.theme = buildXtermTheme(preset);
-    this.searchOptions = buildSearchOptions(preset);
+    this.term.options.minimumContrastRatio = highContrast ? 7 : 1;
+    this.searchOptions = buildSearchOptions(preset, highContrast);
     const input = this.searchBar?.querySelector<HTMLInputElement>("input");
     if (input?.value) this.search.findNext(input.value, this.searchOptions);
   }
@@ -1257,7 +1258,14 @@ export class TermView {
     input.type = "search";
     input.placeholder = "Find in scrollback";
     input.spellcheck = false;
-    bar.appendChild(input);
+    const closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = "term-search-close";
+    closeBtn.textContent = "\u00d7";
+    closeBtn.title = "Close (Esc)";
+    closeBtn.setAttribute("aria-label", "Close find");
+    closeBtn.addEventListener("click", () => this.toggleSearch());
+    bar.append(input, closeBtn);
     this.el.appendChild(bar);
     this.searchBar = bar;
     input.focus();

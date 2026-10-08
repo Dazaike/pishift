@@ -118,6 +118,7 @@ export const DEFAULT_PERSISTED_SETTINGS: Omit<PersistedState, "tabs" | "activeIn
   showAskPopups: true,
   showPlanReviewPopups: true,
   folderTabNames: false,
+  highContrast: false,
   tabLayout: "vertical" as TabLayout,
   tabRailSide: "left" as TabRailSide,
   tabRailHoverReachPx: 24,

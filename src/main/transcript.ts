@@ -168,6 +168,11 @@ function resolveTranscript(ompSessionId: string | null, cwd: string | null): str
   return best;
 }
 
+/** Whether a transcript for this omp session id exists on disk (file `<timestamp>_<id>.jsonl`). */
+export function transcriptExists(ompSessionId: string): boolean {
+  return resolveTranscript(ompSessionId, null) !== null;
+}
+
 export class TranscriptWatcher {
   private readonly subs = new Map<string, Subscription>();
   private timer: ReturnType<typeof setInterval> | null = null;
