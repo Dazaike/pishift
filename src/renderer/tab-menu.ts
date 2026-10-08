@@ -56,12 +56,18 @@ export class TabContextMenu {
       }
     });
 
-    document.addEventListener("contextmenu", (ev) => {
-      if (!this.isOpen) return;
-      if (!this.el.contains(ev.target as Node)) {
-        this.close();
-      }
-    });
+    // Capture phase: this must run before a tab's own `contextmenu` handler opens the menu. In the
+    // bubble phase it ran after, saw "open, target outside the menu", and closed it in the same event.
+    document.addEventListener(
+      "contextmenu",
+      (ev) => {
+        if (!this.isOpen) return;
+        if (!this.el.contains(ev.target as Node)) {
+          this.close();
+        }
+      },
+      true,
+    );
 
     document.addEventListener("keydown", (ev) => {
       if (this.isOpen && ev.key === "Escape") {

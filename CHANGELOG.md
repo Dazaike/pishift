@@ -3,6 +3,12 @@
 All notable changes to PiShift are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [v2.0.9] - 2026-10-08
+
+### Fixed
+- **The tab right-click menu could not stay open.** The tab's handler opened the menu, then the menu's own document-level `contextmenu` listener ran later in the same event, saw a click outside the menu, and closed it again. That listener now runs in the capture phase, so it closes any previous menu before the tab opens the new one. The ordering dates from the first release, so every tab menu entry was affected, including **Restart as Administrator** and **Reopen Closed Tab** from v2.0.8.
+- **Duplicate chime and notification when a turn finished.** At the end of a turn the tab could go busy, idle, busy and idle again within tens of milliseconds (26 ms was measured), and each idle counted as a separate finish: two chimes and two stacked "Finished — ready for your next message" toasts. An idle now counts as a finish only after it holds for 400 ms, so a turn gives one chime, one notification and one green dot. Cancels and exits remain silent, and closing a tab drops any pending finish.
+
 ## [v2.0.8] - 2026-10-08
 
 ### Added

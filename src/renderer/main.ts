@@ -232,6 +232,8 @@ type Tab = {
   awaitingAsk: boolean;
   /** Finished a turn while not in view; cleared when the user looks at the tab. */
   unseenDone: boolean;
+  /** Pending settle timer for a finish; a re-busy inside the window cancels it. */
+  doneTimer: number | null;
   /** The live session runs as administrator, via its own UAC-elevated host or because the whole app does. */
   elevated: boolean;
   /** In-flight delivery of ask answers to omp's AskDialogComponent. */
@@ -1254,6 +1256,13 @@ function syncElapsedTicker(): void {
   }
 }
 
+/**
+ * A turn can report idle, go busy again and idle once more within tens of milliseconds (a 26 ms
+ * gap was measured, which fired two chimes and two stacked toasts). An idle only counts as a
+ * finish once it has held this long, so one turn yields one chime and one notification.
+ */
+const DONE_SETTLE_MS = 400;
+
 function syncTabBusy(tab: Tab): void {
   const next = tab.progressBusy || tab.activity !== "idle";
   const finished = tab.busy && !next;
@@ -1262,12 +1271,22 @@ function syncTabBusy(tab: Tab): void {
     // A fresh run always re-arms: a cancel that never reached a busy state
     // must not swallow the next genuine completion.
     tab.suppressDoneSound = false;
+    if (tab.doneTimer !== null) {
+      window.clearTimeout(tab.doneTimer);
+      tab.doneTimer = null;
+    }
   } else if (finished) {
     // Cancels and exits also land on idle; only an unforced finish is "done".
-    if (tab.suppressDoneSound) tab.suppressDoneSound = false;
-    else {
-      doneSound.play();
-      raiseDoneAttention(tab);
+    if (tab.suppressDoneSound) {
+      tab.suppressDoneSound = false;
+    } else {
+      tab.doneTimer = window.setTimeout(() => {
+        tab.doneTimer = null;
+        if (tab.busy || !tabs.includes(tab)) return;
+        doneSound.play();
+        raiseDoneAttention(tab);
+        renderTabs();
+      }, DONE_SETTLE_MS);
     }
   }
   renderTabs();
@@ -1786,6 +1805,10 @@ function closeTab(tab: Tab, remember = true): void {
     bySession.delete(tab.sessionId);
   }
   tab.transcriptSubscribed = false;
+  if (tab.doneTimer !== null) {
+    window.clearTimeout(tab.doneTimer);
+    tab.doneTimer = null;
+  }
   if (tab.statusScanTimer !== null) {
     window.clearTimeout(tab.statusScanTimer);
     tab.statusScanTimer = null;
@@ -2461,6 +2484,7 @@ function makeTab(cwd: string, customTitle?: string, colorTag?: string, restore?:
     pendingAsk: null,
     awaitingAsk: false,
     unseenDone: false,
+    doneTimer: null,
     elevated: false,
     askSend: null,
     askSendSeq: 0,
