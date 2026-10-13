@@ -1,7 +1,7 @@
 import type { ProviderUsageReport } from "../shared/ipc";
 import { partitionContextWindow, type ContextUsageSnapshot } from "../shared/transcript";
 import { renderProviderIconEl } from "./provider-icons";
-import { usagePercentOfMax } from "../shared/usage-tracker";
+import { applyOrder, usagePercentOfMax, usageSectionKey, type UsageModalOrder } from "../shared/usage-tracker";
 import { safeAnimate, springPresets } from "./motion-utils";
 /** Shortest reset window first (5 Hour before Weekly) so related cards read top-to-bottom by urgency. */
 function windowRankMinutes(label: string): number {
@@ -48,11 +48,31 @@ function shortenLimitLabel(label: string): string {
     .trim();
 }
 
+export type OrderedUsageSection = {
+  key: string;
+  rep: ProviderUsageReport;
+  limits: ProviderUsageReport["limits"];
+};
+
+/** Sections and their limit cards in display order (saved order first, default order for the rest). */
+export function orderedUsageSections(reports: ProviderUsageReport[], order?: UsageModalOrder): OrderedUsageSection[] {
+  const keyed = reports.map((rep, index) => ({
+    rep,
+    key: rep.rawText ? `raw:${index}` : usageSectionKey(rep),
+  }));
+  return applyOrder(keyed, (k) => k.key, order?.sections).map(({ rep, key }) => ({
+    key,
+    rep,
+    limits: applyOrder(sortedLimits(rep.limits), (l) => l.label, order?.limits[key]),
+  }));
+}
+
 /** Renders provider usage/quota rows shared by the Usage popover and the side panel. */
 export function renderUsageCards(
   container: HTMLElement,
   reports: ProviderUsageReport[],
   providerIconUrls: Record<string, string> = {},
+  opts?: { order?: UsageModalOrder },
 ): void {
   container.replaceChildren();
 
@@ -64,17 +84,20 @@ export function renderUsageCards(
     return;
   }
 
-  for (const rep of reports) {
+  const ordered = orderedUsageSections(reports, opts?.order);
+
+  for (const { key, rep, limits } of ordered) {
     if (rep.rawText) {
       const pre = document.createElement("pre");
       pre.className = "usage-raw-pre";
+      pre.dataset.key = key;
       pre.textContent = rep.rawText;
       container.appendChild(pre);
       continue;
     }
-
     const section = document.createElement("div");
     section.className = "usage-provider";
+    section.dataset.key = key;
 
     const name = document.createElement("div");
     name.className = "usage-provider-name";
@@ -102,12 +125,13 @@ export function renderUsageCards(
       const limitList = document.createElement("div");
       limitList.className = "usage-limit-list";
 
-      for (const lim of sortedLimits(rep.limits)) {
+      for (const lim of limits) {
         const maxPercent = lim.maxPercent ?? 100;
         const fillPercent = usagePercentOfMax(lim);
         const tier = fillPercent >= 80 ? "high" : fillPercent >= 50 ? "med" : "low";
         const limRow = document.createElement("div");
         limRow.className = "usage-limit-row";
+        limRow.dataset.key = lim.label;
 
         const limTop = document.createElement("div");
         limTop.className = "usage-limit-top";

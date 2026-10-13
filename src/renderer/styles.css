@@ -4049,46 +4049,6 @@ body.hide-bottom-button-labels #dock-action-group {
   font-size: 11px;
 }
 
-.model-custom-saved-list {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid var(--border);
-}
-
-.model-custom-saved-list h4 {
-  margin: 0 0 4px 0;
-  font-size: 11px;
-  color: var(--fg-dim);
-  text-transform: uppercase;
-}
-
-.model-custom-saved-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 5px 9px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg);
-  font-size: 11px;
-  color: var(--fg);
-}
-
-.model-custom-del {
-  border: none;
-  background: transparent;
-  color: var(--fg-dim);
-  font-size: 14px;
-  cursor: pointer;
-}
-
-.model-custom-del:hover {
-  color: #f7768e;
-}
-
 .model-provider-icon {
   display: flex;
   align-items: center;
@@ -4161,61 +4121,34 @@ body.hide-bottom-button-labels #dock-action-group {
   color: var(--accent);
 }
 
-.model-row.reorderable {
-  cursor: grab;
-}
-
-.model-row.reorderable:active {
-  cursor: grabbing;
-}
-
-.model-row.dragging {
-  opacity: 0.35;
-  outline: 1px dashed var(--accent);
-}
-
-.model-row.drag-over {
-  background: color-mix(in srgb, var(--accent) 14%, var(--bg-tab));
-  outline: 1px solid var(--accent);
-}
-
 .model-row.active {
   background: color-mix(in srgb, var(--accent) 8%, var(--bg-tab));
 }
 
-.model-reorder-arrows {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  margin-left: auto;
+/* Edit mode: the popover grows in place (bottom edge pinned) and rows become draggable. */
+#model-popover.model-expanded {
+  width: 300px;
 }
 
-.model-arrow-btn {
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--bg-tab);
-  color: var(--fg-dim);
-  font-size: 9px;
-  line-height: 1;
-  padding: 3px 5px;
-  cursor: pointer;
-  transition: all 120ms ease;
+.model-grid-list.editing {
+  gap: 4px;
 }
 
-.model-arrow-btn:hover {
-  border-color: var(--accent);
-  color: var(--fg);
-  background: var(--border);
+.model-grid-list.editing .model-row-indicator {
+  display: none;
 }
 
-.model-drag-handle {
-  margin-left: 2px;
-  color: var(--fg-dim);
-  font-size: 13px;
-  opacity: 0.5;
+.model-grid-list.editing .model-row {
+  padding: 8px 10px;
+  border-radius: 8px;
+  outline: 1px dashed color-mix(in srgb, var(--fg) 18%, transparent);
+  outline-offset: -1px;
   cursor: grab;
-  padding: 0 2px;
-  flex: 0 0 auto;
+  touch-action: none;
+}
+
+.model-grid-list.editing .model-row:hover {
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-tab));
 }
 
 .model-row-edit-btn {
@@ -4309,6 +4242,76 @@ body.hide-bottom-button-labels #dock-action-group {
   display: none;
 }
 
+/*
+ * Settings enters shrunken from the very top edge of the screen and expands down into place; close
+ * plays it in reverse. Opacity is a separate, short animation so the box is already visible at the
+ * top edge instead of fading in while it is mid-flight.
+ */
+@keyframes settings-drop-move {
+  from {
+    /* Dialog is centered with height min(720px, 88vh): this lifts its top edge to y = 0. */
+    transform: translateY(calc(min(360px, 44vh) - 50vh)) scale(0.12);
+  }
+  to {
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes settings-drop-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes settings-undrop-move {
+  from {
+    transform: translateY(0) scale(1);
+  }
+  to {
+    transform: translateY(calc(min(360px, 44vh) - 50vh)) scale(0.12);
+  }
+}
+
+@keyframes settings-undrop-fade {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes modal-fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+#settings-backdrop {
+  animation-duration: 280ms;
+}
+
+#settings-backdrop.closing {
+  animation: modal-fade-out 280ms ease forwards;
+  pointer-events: none;
+}
+
+#settings-backdrop.closing #settings-dialog {
+  /*
+   * Distinct keyframe names (not `reverse` on the open ones): an unchanged animation name would just
+   * update the finished open animation in place instead of replaying, so the dialog would vanish.
+   */
+  animation:
+    settings-undrop-move 280ms cubic-bezier(0.22, 1, 0.36, 1) both,
+    settings-undrop-fade 70ms linear 210ms both;
+}
+
 #settings-dialog {
   width: min(980px, 94vw);
   height: min(720px, 88vh);
@@ -4322,7 +4325,10 @@ body.hide-bottom-button-labels #dock-action-group {
   border-radius: 14px;
   box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6);
   overflow: hidden;
-  animation: dialog-pop 180ms cubic-bezier(0.2, 0.9, 0.3, 1) forwards;
+  transform-origin: top center;
+  animation:
+    settings-drop-move 280ms cubic-bezier(0.22, 1, 0.36, 1) both,
+    settings-drop-fade 70ms linear both;
 }
 
 #confirm-dialog {
@@ -5899,6 +5905,55 @@ body.hide-bottom-button-labels #dock-action-group {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 8px;
+}
+
+/* Reorder mode: the usage popover itself expands to center; same card grid, drag to rearrange. */
+.usage-reorder-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 499;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+#usage-popover.usage-expanded {
+  width: min(760px, 94vw);
+  max-height: 86vh;
+}
+
+#usage-popover.usage-expanded .usage-body {
+  max-height: calc(86vh - 112px);
+}
+
+.usage-reordering .usage-limit-row,
+.usage-reordering .usage-provider-name,
+.usage-reordering .usage-raw-pre {
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+.usage-reordering .usage-limit-row {
+  border-radius: 10px;
+  outline: 1px dashed color-mix(in srgb, var(--fg) 18%, transparent);
+  outline-offset: 3px;
+}
+
+.usage-reordering:not(.reorder-drag-active) .usage-limit-row:hover {
+  outline-color: color-mix(in srgb, var(--accent) 60%, transparent);
+}
+
+.reorder-drag-active,
+.reorder-drag-active * {
+  cursor: grabbing !important;
+}
+
+.reorder-dragging {
+  position: relative;
+  z-index: 5;
+  pointer-events: none;
+  background: var(--bg-raised, var(--bg));
+  box-shadow: 0 12px 28px -6px rgba(0, 0, 0, 0.6);
+  outline-color: var(--accent) !important;
 }
 
 .usage-limit-row {

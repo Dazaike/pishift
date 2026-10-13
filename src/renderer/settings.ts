@@ -94,8 +94,12 @@ const SECTION_ICONS: Record<SettingsSectionId, string> = {
   backup: '<path d="M8 2.5v7m0 0L5.3 6.8M8 9.5l2.7-2.7"/><path d="M2.5 11v1.5a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1V11"/>',
 };
 
+/** Matches the `settings-drop-move` duration in styles.css. */
+const SETTINGS_CLOSE_MS = 280;
+
 export class SettingsModal {
   readonly el: HTMLDivElement;
+  private closeTimer: number | null = null;
   private currentPreset: ThemePreset;
   private showUsageInHeader: boolean;
   private fontFamily: string;
@@ -345,12 +349,29 @@ export class SettingsModal {
   }
 
   open(): void {
+    this.cancelClose();
     this.render();
     this.el.hidden = false;
   }
 
   close(): void {
-    this.el.hidden = true;
+    if (this.el.hidden || this.closeTimer !== null) return;
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      this.el.hidden = true;
+      return;
+    }
+    // Reverse of the open animation (see `.closing` in styles.css); hide once it has played.
+    this.el.classList.add("closing");
+    this.closeTimer = window.setTimeout(() => {
+      this.cancelClose();
+      this.el.hidden = true;
+    }, SETTINGS_CLOSE_MS);
+  }
+
+  private cancelClose(): void {
+    if (this.closeTimer !== null) window.clearTimeout(this.closeTimer);
+    this.closeTimer = null;
+    this.el.classList.remove("closing");
   }
 
   getPreset(): ThemePreset {
@@ -725,13 +746,13 @@ export class SettingsModal {
     const dialog = document.createElement("section");
     dialog.id = "settings-dialog";
     dialog.setAttribute("role", "dialog");
-    dialog.setAttribute("aria-label", "Themes and Settings");
+    dialog.setAttribute("aria-label", "Settings");
 
     // Fixed Header
     const header = document.createElement("header");
     header.className = "settings-header";
     const title = document.createElement("h2");
-    title.textContent = "Themes & Settings";
+    title.textContent = "Settings";
     const closeBtn = document.createElement("button");
     closeBtn.type = "button";
     closeBtn.className = "settings-close";

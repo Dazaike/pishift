@@ -3,6 +3,19 @@
 All notable changes to PiShift are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [v2.0.10] - 2026-10-13
+
+### Added
+- **Reorder the Usage & Quotas popover.** A **Reorder** button next to **Run /stats** expands the popover to the center of the screen, keeping its card grid. Drag provider/account sections (by their header) and individual limit cards (for example 5 Hour vs Weekly) into any order; the order is saved and applies every time the popover opens. The top-bar tracker and side panel keep their own order.
+- **Drag-to-reorder models.** **Edit** in the model switcher now grows the popover upward in place and lets you drag rows to reorder them. Every list/form swap in the switcher (pencil, **+ Add Model**, **Cancel**, save, delete) animates the popover's size instead of jumping.
+
+### Changed
+- **Settings** opens by dropping from the very top edge of the screen, shrunken, and expanding into place; closing plays the same motion back up to the top edge instead of vanishing. The dialog and its toolbar tooltip are renamed from "Themes & Settings" to **Settings**.
+- The model editor form no longer lists every saved model with × buttons under **Save**; delete models from the **Edit** list.
+
+### Fixed
+- **Tabs no longer show an MCP server name as their title.** omp can set the terminal title from MCP output (for example `chrome-devtools-mcp`). Auto titles containing the word "mcp", or the name of a server in the connect banner, are ignored, so the tab falls back to the folder name (or **PiShift** for temp folders). Manual renames are unaffected.
+
 ## [v2.0.9] - 2026-10-08
 
 ### Fixed
