@@ -2,6 +2,8 @@ import type { ProviderUsageReport } from "../shared/ipc";
 import type { ContextUsageSnapshot } from "../shared/transcript";
 import { attachButtonSpring, popoverMotion } from "./motion-utils";
 import { animateUsageReveal, renderContextCard, renderUsageCards, renderUsageSkeleton } from "./usage-render";
+import type { UsageModalOrder } from "../shared/usage-tracker";
+import { attachUsageDrag } from "./usage-drag";
 
 const REFRESH_ICON =
   '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3.15-6.85"/><polyline points="21 3 21 9 15 9"/></svg>';
@@ -19,6 +21,8 @@ export class UsageModal {
 
   private contextUsage: ContextUsageSnapshot | null | undefined = null;
   private isContextOnly = false;
+  private isReordering = false;
+  private backdrop: HTMLDivElement | null = null;
   private dockContextStyle: string = "badge";
 
   constructor(
@@ -27,6 +31,8 @@ export class UsageModal {
     private readonly getProviderIconUrls: () => Record<string, string> = () => ({}),
     private readonly onRunSlash: (cmd: string) => void = () => {},
     private readonly onRefreshContext: () => void = () => {},
+    private readonly getOrder: () => UsageModalOrder | undefined = () => undefined,
+    private readonly onOrderChange: (order: UsageModalOrder) => void = () => {},
   ) {
     this.onOpenStatsCallback = onOpenStats;
     this.refreshReports = refreshReports;
@@ -35,10 +41,16 @@ export class UsageModal {
     this.el.className = "usage-popover";
     this.el.hidden = true;
     this.buildChrome();
+    attachUsageDrag(this.body, {
+      isActive: () => this.isReordering,
+      getOrder: this.getOrder,
+      onChange: this.onOrderChange,
+    });
     this.paintBody({ entrance: false });
     document.body.appendChild(this.el);
     document.addEventListener("mousedown", (ev) => {
-      if (!this.el.hidden && !this.el.contains(ev.target as Node)) {
+      const target = ev.target as Node;
+      if (!this.el.hidden && !this.el.contains(target) && !(target instanceof Element && target.closest(".usage-reorder-backdrop"))) {
         const usageBtn = document.getElementById("dock-usage-btn");
         const contextBtn = document.getElementById("dock-context-btn");
         const headerUsage = document.getElementById("header-usage");
@@ -54,11 +66,15 @@ export class UsageModal {
     });
 
     document.addEventListener("keydown", (ev) => {
-      if (!this.el.hidden && ev.key === "Escape") this.close();
+      if (this.el.hidden || ev.key !== "Escape") return;
+      if (this.isReordering) this.setReordering(false);
+      else this.close();
     });
 
     window.addEventListener("resize", () => {
-      if (this.isOpen) this.position();
+      if (!this.isOpen) return;
+      if (this.el.classList.contains("usage-expanded")) this.centerExpanded();
+      else this.position();
     });
   }
 
@@ -127,6 +143,7 @@ export class UsageModal {
 
   setContextOnly(contextOnly: boolean): void {
     this.isContextOnly = contextOnly;
+    this.endReorderInstant();
     this.el.classList.toggle("context-window", contextOnly);
     const title = this.el.querySelector(".usage-header h2");
     if (title) {
@@ -176,6 +193,7 @@ export class UsageModal {
   }
 
   close(): void {
+    this.endReorderInstant();
     if (this.el.hidden) return;
     popoverMotion.animatePopoverClose(this.el, () => {
       this.el.hidden = true;
@@ -230,7 +248,10 @@ export class UsageModal {
     doneBtn.type = "button";
     doneBtn.className = "usage-footer-btn";
     doneBtn.textContent = "Close";
-    doneBtn.addEventListener("click", () => this.close());
+    doneBtn.addEventListener("click", () => {
+      if (this.isReordering) this.setReordering(false);
+      else this.close();
+    });
 
     if (this.isContextOnly) {
       const left = document.createElement("div");
@@ -271,10 +292,84 @@ export class UsageModal {
       this.onOpenStatsCallback();
     });
 
-    this.footer.append(statsBtn, doneBtn);
-    for (const btn of [statsBtn, doneBtn]) {
+    const reorderBtn = document.createElement("button");
+    reorderBtn.type = "button";
+    reorderBtn.className = "usage-footer-btn";
+    reorderBtn.classList.toggle("accent", this.isReordering);
+    reorderBtn.textContent = this.isReordering ? "Done" : "Reorder";
+    reorderBtn.title = this.isReordering
+      ? "Finish reordering"
+      : "Reorder providers, accounts, and quota cards by dragging";
+    reorderBtn.addEventListener("click", () => this.setReordering(!this.isReordering));
+
+    const left = document.createElement("div");
+    left.className = "usage-footer-left";
+    left.append(statsBtn, reorderBtn);
+    this.footer.append(left, doneBtn);
+    for (const btn of [statsBtn, reorderBtn, doneBtn]) {
       attachButtonSpring(btn);
     }
+  }
+
+  private centerExpanded(): void {
+    const el = this.el;
+    el.style.left = `${Math.round((window.innerWidth - el.offsetWidth) / 2)}px`;
+    el.style.top = `${Math.round((window.innerHeight - el.offsetHeight) / 2)}px`;
+  }
+
+  /** Expands the popover itself to the screen center (and back), animating its box so the card grid reflows live. */
+  private setReordering(on: boolean): void {
+    if (on === this.isReordering) return;
+    this.isReordering = on;
+    const el = this.el;
+    const first = el.getBoundingClientRect();
+    const apply = (expanded: boolean) => {
+      el.classList.toggle("usage-expanded", expanded);
+      if (expanded) this.centerExpanded();
+      else this.position();
+    };
+    this.body.classList.toggle("usage-reordering", on);
+    this.paintFooter();
+
+    apply(on);
+    const last = el.getBoundingClientRect();
+    if (!on) apply(true); // stay expanded (same layout) until the shrink finishes
+
+    const backdrop = this.backdrop ?? this.createBackdrop();
+    const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const box = (r: DOMRect) => ({ left: `${r.left}px`, top: `${r.top}px`, width: `${r.width}px`, height: `${r.height}px` });
+    const done = () => {
+      if (on) return;
+      apply(false);
+      backdrop.remove();
+      this.backdrop = null;
+    };
+    if (reduced) {
+      done();
+      return;
+    }
+    backdrop.animate([{ opacity: on ? 0 : 1 }, { opacity: on ? 1 : 0 }], { duration: 320, easing: "ease-out", fill: "both" });
+    const anim = el.animate([box(first), box(last)], { duration: 420, easing: "cubic-bezier(0.22, 1, 0.36, 1)" });
+    anim.onfinish = done;
+    anim.oncancel = done;
+  }
+
+  private createBackdrop(): HTMLDivElement {
+    const backdrop = document.createElement("div");
+    backdrop.className = "usage-reorder-backdrop";
+    backdrop.addEventListener("mousedown", () => this.setReordering(false));
+    document.body.insertBefore(backdrop, this.el);
+    this.backdrop = backdrop;
+    return backdrop;
+  }
+
+  /** Drops reorder mode without animation (popover is closing or changing mode). */
+  private endReorderInstant(): void {
+    this.isReordering = false;
+    this.el.classList.remove("usage-expanded");
+    this.body.classList.remove("usage-reordering");
+    this.backdrop?.remove();
+    this.backdrop = null;
   }
 
   private paintBody(opts: { entrance: boolean }): void {
@@ -292,7 +387,7 @@ export class UsageModal {
       if (this.dockContextStyle === "combined" || this.contextUsage) {
         renderContextCard(this.body, this.contextUsage);
       }
-      renderUsageCards(this.body, this.reports, this.getProviderIconUrls());
+      renderUsageCards(this.body, this.reports, this.getProviderIconUrls(), { order: this.getOrder() });
     }
 
     if (opts.entrance) animateUsageReveal(this.body);

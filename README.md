@@ -149,6 +149,7 @@ Pick a theme and adjust the interface, tabs, composer, and usage display.
 - **Live agent status:** track idle, working, and thinking states, active tool calls, model changes, and token usage.
 - **Background job monitor:** inspect runtime, reports, raw logs, and available thinking details; copy a finished report or stop a runaway job.
 - **Usage and provider quotas:** view model availability and provider limits, with optional gauges in the top bar.
+- **Reorder usage cards:** in the usage popover, **Reorder** expands it and lets you drag providers and quota cards (for example 5 Hour vs Weekly) into your preferred order.
 - **Session history:** search recent chats and folders, reopen workspaces, and restore the earlier conversation in Chat View.
 - **Completion and recovery cues:** optional completion chime, a green dot and OS notification when a session finishes while you are looking elsewhere, activity indicators, elapsed time for long-running tools, and explicit Resume or Kill controls for stalled output.
 

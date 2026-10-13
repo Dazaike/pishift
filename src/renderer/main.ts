@@ -1035,10 +1035,26 @@ function cleanAutoTitle(raw: string | undefined): string | undefined {
   return t || undefined;
 }
 
+/** omp can set the OSC title from MCP text (e.g. "chrome-devtools-mcp"); those never make a tab label. */
+function isMcpTitle(title: string, tab: Pick<Tab, "mcpServers" | "mcpServersFailed">): boolean {
+  if (/\bmcp\b/i.test(title)) return true;
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const nt = norm(title);
+  return [...tab.mcpServers, ...tab.mcpServersFailed].some((name) => {
+    const n = norm(name);
+    return n.length >= 3 && nt.includes(n);
+  });
+}
+
+function usableAutoTitle(tab: Tab): string | undefined {
+  const auto = cleanAutoTitle(tab.title);
+  return auto && !isMcpTitle(auto, tab) ? auto : undefined;
+}
+
 /** Prefer manual rename, then omp auto-title, then folder name. Default temp dir displays app name. */
 function tabDisplayName(tab: Tab): string {
   if (tab.customTitle?.trim()) return tab.customTitle.trim();
-  const auto = folderTabNames ? undefined : cleanAutoTitle(tab.title);
+  const auto = folderTabNames ? undefined : usableAutoTitle(tab);
   if (auto) return auto;
   const folder = basename(tab.cwd);
   if (!folder || folder.toLowerCase() === "temp" || folder.toLowerCase() === "tmp") {
@@ -1146,7 +1162,7 @@ function renderTabs(): void {
 
     const source = tab.customTitle
       ? "manual"
-      : !folderTabNames && cleanAutoTitle(tab.title)
+      : !folderTabNames && usableAutoTitle(tab)
         ? "auto"
         : "folder";
     tab.button.title = `${name} (${tab.cwd}) — ${source}${tab.elevated ? " · Administrator" : ""} · right-click for options · double-click to rename`;
@@ -2107,7 +2123,7 @@ function startRenameTab(tab: Tab): void {
     tabRail.setPinnedOpen(false);
     const val = input.value.trim();
     // Empty / same as auto title clears the manual override so auto titles resume.
-    const auto = cleanAutoTitle(tab.title);
+    const auto = usableAutoTitle(tab);
     if (!val || val === "PiShift" || val === "OMP" || (auto && val === auto)) {
       tab.customTitle = undefined;
     } else {
@@ -2985,6 +3001,8 @@ function parseStatusStream(tab: Tab, rawData: string): void {
   if (connectedChanged) tab.mcpServers = connected;
   if (failedChanged) tab.mcpServersFailed = failed;
   if (connectedChanged || failedChanged) {
+    renderTabs();
+    if (tab === active) document.title = `${tabDisplayName(tab)} · PiShift`;
     tab.chat?.setSessionMeta({
       model: tab.modelName || null,
       cwd: tab.cwd,
@@ -3524,6 +3542,11 @@ function getOrCreateUsageModal(): UsageModal {
       },
       () => {
         if (active) subscribeTranscript(active);
+      },
+      () => usageTrackerSettings.modalOrder,
+      (order) => {
+        usageTrackerSettings = { ...usageTrackerSettings, modalOrder: order };
+        persist();
       },
     );
   }

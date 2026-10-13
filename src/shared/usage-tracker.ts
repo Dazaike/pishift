@@ -12,12 +12,16 @@ export type UsageTrackerQuota = {
   style: UsageTrackerStyle;
 };
 
+export type UsageModalOrder = { sections: string[]; limits: Record<string, string[]> };
+
 export type UsageTrackerSettings = {
   enabled: boolean;
   /** `null` means refresh only when the user asks. */
   refreshIntervalMs: number | null;
   quotas: UsageTrackerQuota[];
   providerIconUrls: Record<string, string>;
+  /** Section/card order for the Usage & Quotas modal only. */
+  modalOrder?: UsageModalOrder;
   iconPlacement: UsageTrackerIconPlacement;
   showPercent: boolean;
   orientation?: UsageTrackerOrientation;
@@ -87,6 +91,27 @@ export const DEFAULT_SETTINGS_SECTION_COLLAPSED: Record<SettingsSectionId, boole
 };
 export function usageTrackerQuotaKey(quota: Pick<UsageTrackerQuota, "provider" | "account" | "label">): string {
   return `${quota.provider}\u0000${quota.account ?? ""}\u0000${quota.label}`;
+}
+
+export function usageSectionKey(rep: Pick<ProviderUsageReport, "provider" | "account">): string {
+  return `${rep.provider}\u0000${rep.account ?? ""}`;
+}
+
+export function applyOrder<T>(items: readonly T[], keyOf: (item: T) => string, saved: readonly string[] | undefined): T[] {
+  if (!saved || saved.length === 0) return [...items];
+  const rank = new Map<string, number>();
+  saved.forEach((k, i) => {
+    if (!rank.has(k)) rank.set(k, i);
+  });
+  const known: Array<{ item: T; rank: number; idx: number }> = [];
+  const rest: T[] = [];
+  items.forEach((item, idx) => {
+    const r = rank.get(keyOf(item));
+    if (r === undefined) rest.push(item);
+    else known.push({ item, rank: r, idx });
+  });
+  known.sort((a, b) => a.rank - b.rank || a.idx - b.idx);
+  return [...known.map((k) => k.item), ...rest];
 }
 
 /**
@@ -281,7 +306,32 @@ export function normalizeUsageTrackerSettings(value: unknown): UsageTrackerSetti
       candidate.dockContextStyle === "combined" || candidate.dockContextStyle === "off"
         ? candidate.dockContextStyle
         : "button",
+    modalOrder: normalizeModalOrder(candidate.modalOrder),
   };
+}
+
+function uniqueStrings(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const out: string[] = [];
+  for (const v of value) {
+    if (typeof v === "string" && v && !out.includes(v)) out.push(v);
+  }
+  return out;
+}
+
+function normalizeModalOrder(value: unknown): UsageModalOrder | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const raw = value as { sections?: unknown; limits?: unknown };
+  const sections = uniqueStrings(raw.sections);
+  const limits: Record<string, string[]> = {};
+  if (typeof raw.limits === "object" && raw.limits !== null && !Array.isArray(raw.limits)) {
+    for (const [key, list] of Object.entries(raw.limits)) {
+      const labels = uniqueStrings(list);
+      if (labels.length > 0) limits[key] = labels;
+    }
+  }
+  if (sections.length === 0 && Object.keys(limits).length === 0) return undefined;
+  return { sections, limits };
 }
 
 export function normalizeSettingsSectionCollapsed(value: unknown): Partial<Record<SettingsSectionId, boolean>> {

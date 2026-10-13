@@ -1,7 +1,8 @@
 import type { CustomModelConfig } from "../shared/ipc";
-import { INTERNAL_DRAG_TYPE } from "./dnd";
 import { getProviderIcon } from "./provider-icons";
 import { attachToolbarHoverPill, popoverMotion } from "./motion-utils";
+import { animateBox } from "./morph";
+import { attachPointerReorder, keysOf } from "./pointer-reorder";
 
 const VIEWPORT_MARGIN = 8;
 const ANCHOR_GAP = 12;
@@ -21,9 +22,8 @@ export class ModelModal {
   private editingModel: CustomModelConfig | null = null;
   private showAddForm = false;
   private isEditMode = false;
-  private isReordering = false;
+  private morphing = false;
   private kbIndex = -1;
-  private draggedIndex: number | null = null;
   private listPill: { dispose: () => void; sync: (immediate?: boolean) => void } | null = null;
   private onSelectCallback: (modelId: string, provider?: string) => void;
   private onModelsChange: (models: CustomModelConfig[]) => void;
@@ -57,10 +57,11 @@ export class ModelModal {
       if (ev.key === "Escape") {
         ev.preventDefault();
         ev.stopPropagation();
-        this.close();
+        if (this.isEditMode) this.setEditMode(false);
+        else this.close();
         return;
       }
-      if (this.showAddForm || this.isReordering) return;
+      if (this.showAddForm) return;
       const rows = this.models;
       if (rows.length === 0) return;
       if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
@@ -96,8 +97,7 @@ export class ModelModal {
   open(currentModel?: string): void {
     if (currentModel) this.currentModel = currentModel;
     this.showAddForm = false;
-    this.isEditMode = false;
-    this.isReordering = false;
+    this.endEditInstant();
     this.editingModel = null;
     this.kbIndex = -1;
     this.setTriggerOpen(true);
@@ -113,17 +113,19 @@ export class ModelModal {
 
   close(): void {
     if (this.el.hidden) return;
+    this.endEditInstant();
     this.setTriggerOpen(false);
     popoverMotion.animatePopoverClose(this.el, () => {
       this.el.hidden = true;
       this.showAddForm = false;
       this.isEditMode = false;
-      this.isReordering = false;
       this.editingModel = null;
     });
   }
 
   private position(): void {
+    // Mid-morph the box is animating; measuring it now would pin the popover to a transient size.
+    if (this.morphing) return;
     const anchor = this.anchor;
     if (!anchor) return;
 
@@ -162,15 +164,59 @@ export class ModelModal {
     this.models = this.models.filter((m) => m.id.toLowerCase() !== model.id.toLowerCase());
     this.models.push(model);
     this.onModelsChange(this.models);
-    this.showAddForm = false;
-    this.editingModel = null;
-    this.render();
+    this.morphRender(() => {
+      this.showAddForm = false;
+      this.editingModel = null;
+    });
   }
 
   private removeModel(id: string): void {
     this.models = this.models.filter((m) => m.id !== id);
     this.onModelsChange(this.models);
+    this.morphRender(() => {});
+  }
+
+  /**
+   * Re-renders after `change`, animating the popover's box from its old size to its new one. Its
+   * bottom edge stays pinned above the Model button, so growth (edit options, the edit form)
+   * expands upward; content reflows live.
+   */
+  private morphRender(change: () => void): void {
+    const el = this.el;
+    const first = el.getBoundingClientRect();
+    // The popover has a width transition; it would fight the box animation and the rect measurements.
+    el.style.transition = "none";
+    this.morphing = true; // render() queues a position(); skip it, the box is about to animate
+    change();
     this.render();
+    el.classList.toggle("model-expanded", this.isEditMode);
+    this.morphing = false;
+    this.position();
+    this.morphing = true;
+    const last = el.getBoundingClientRect();
+    animateBox(el, first, last, () => {
+      this.morphing = false;
+      this.position();
+      void el.offsetWidth;
+      el.style.transition = "";
+    });
+  }
+
+  private setEditMode(on: boolean): void {
+    if (on === this.isEditMode) return;
+    this.morphRender(() => {
+      this.isEditMode = on;
+      this.showAddForm = false;
+      this.editingModel = null;
+    });
+  }
+
+  /** Leaves edit mode without animation (popover opening, closing). */
+  private endEditInstant(): void {
+    this.isEditMode = false;
+    this.morphing = false;
+    this.el.classList.remove("model-expanded");
+    this.el.style.transition = "";
   }
 
   private render(): void {
@@ -204,9 +250,10 @@ export class ModelModal {
       backBtn.className = "model-btn-pill";
       backBtn.textContent = "Cancel";
       backBtn.addEventListener("click", () => {
-        this.showAddForm = false;
-        this.editingModel = null;
-        this.render();
+        this.morphRender(() => {
+          this.showAddForm = false;
+          this.editingModel = null;
+        });
       });
       headerActions.appendChild(backBtn);
     } else {
@@ -216,11 +263,7 @@ export class ModelModal {
       editBtn.className = this.isEditMode ? "model-btn-pill active" : "model-btn-pill";
       editBtn.textContent = this.isEditMode ? "Done" : "Edit";
       editBtn.title = this.isEditMode ? "Finish editing" : "Edit, add, reorder, or delete models";
-      editBtn.addEventListener("click", () => {
-        this.isEditMode = !this.isEditMode;
-        if (!this.isEditMode) this.isReordering = false;
-        this.render();
-      });
+      editBtn.addEventListener("click", () => this.setEditMode(!this.isEditMode));
       headerActions.appendChild(editBtn);
     }
 
@@ -251,22 +294,13 @@ export class ModelModal {
       addBtn.className = "model-btn-pill accent";
       addBtn.textContent = "+ Add Model";
       addBtn.addEventListener("click", () => {
-        this.editingModel = null;
-        this.showAddForm = true;
-        this.render();
+        this.morphRender(() => {
+          this.editingModel = null;
+          this.showAddForm = true;
+        });
       });
 
-      const reorderBtn = document.createElement("button");
-      reorderBtn.type = "button";
-      reorderBtn.className = this.isReordering ? "model-btn-pill active" : "model-btn-pill";
-      reorderBtn.textContent = this.isReordering ? "Done Reordering" : "Reorder";
-      reorderBtn.title = "Enable drag-and-drop handles on models";
-      reorderBtn.addEventListener("click", () => {
-        this.isReordering = !this.isReordering;
-        this.render();
-      });
-
-      editBar.append(addBtn, reorderBtn);
+      editBar.append(addBtn);
       this.el.appendChild(editBar);
     }
 
@@ -333,9 +367,10 @@ export class ModelModal {
       models[targetIndex] = model;
       this.models = models;
       this.onModelsChange(models);
-      this.showAddForm = false;
-      this.editingModel = null;
-      this.render();
+      this.morphRender(() => {
+        this.showAddForm = false;
+        this.editingModel = null;
+      });
     };
 
     const nameInput = document.createElement("input");
@@ -389,38 +424,11 @@ export class ModelModal {
 
     wrap.append(desc, nameInput, idInput, providerInput, iconInput, validationError, saveBtn);
 
-    if (this.models.length > 0) {
-      const savedList = document.createElement("div");
-      savedList.className = "model-custom-saved-list";
-      const savedTitle = document.createElement("h4");
-      savedTitle.textContent = "Manage Models (Click \u00d7 to remove):";
-      savedList.appendChild(savedTitle);
-
-      for (const m of this.models) {
-        const item = document.createElement("div");
-        item.className = "model-custom-saved-item";
-
-        const label = document.createElement("span");
-        label.textContent = `${m.name} (${m.id})`;
-
-        const delBtn = document.createElement("button");
-        delBtn.type = "button";
-        delBtn.className = "model-custom-del";
-        delBtn.textContent = "\u00d7";
-        delBtn.title = `Delete ${m.name}`;
-        delBtn.addEventListener("click", () => this.removeModel(m.id));
-
-        item.append(label, delBtn);
-        savedList.appendChild(item);
-      }
-      wrap.appendChild(savedList);
-    }
-
     return wrap;
   }
 
   private selectModel(item: CustomModelConfig): void {
-    if (this.isReordering || this.isEditMode) return;
+    if (this.isEditMode) return;
     const providerArg =
       item.provider && item.provider !== "generic" ? item.provider : undefined;
     this.currentModel = item.id;
@@ -457,7 +465,18 @@ export class ModelModal {
     }
 
     const listEl = document.createElement("div");
-    listEl.className = "model-grid-list";
+    listEl.className = this.isEditMode ? "model-grid-list editing" : "model-grid-list";
+    attachPointerReorder(container, {
+      isActive: () => this.isEditMode && !this.showAddForm,
+      resolveItem: (target) => (target.closest("button") ? null : target.closest<HTMLElement>(".model-row[data-key]")),
+      onCommit: (list) => {
+        const byId = new Map(this.models.map((m) => [m.id, m]));
+        const next = keysOf(list).flatMap((id) => byId.get(id) ?? []);
+        if (next.length !== this.models.length) return;
+        this.models = next;
+        this.onModelsChange(this.models);
+      },
+    });
 
     for (let i = 0; i < this.models.length; i++) {
       const item = this.models[i]!;
@@ -466,64 +485,12 @@ export class ModelModal {
       let cardClass = "model-row";
       if (i === this.kbIndex) cardClass += " kb-active";
       if (this.isEditMode) cardClass += " in-edit";
-      if (this.isReordering) cardClass += " reorderable";
       if (item.id === this.currentModel) cardClass += " active";
       card.className = cardClass;
-      card.draggable = this.isReordering;
-      card.dataset.index = String(i);
+      card.dataset.key = item.id;
       card.dataset.modelId = item.id;
       card.setAttribute("role", "option");
-      card.title = this.isReordering
-        ? `Drag to reorder ${item.name}`
-        : `Switch to ${item.name}`;
-
-      if (this.isReordering) {
-        card.addEventListener("dragstart", (ev) => {
-          this.draggedIndex = i;
-          card.classList.add("dragging");
-          if (ev.dataTransfer) {
-            ev.dataTransfer.effectAllowed = "move";
-            ev.dataTransfer.setData("text/plain", String(i));
-            ev.dataTransfer.setData(INTERNAL_DRAG_TYPE, "model");
-          }
-        });
-
-        card.addEventListener("dragend", () => {
-          this.draggedIndex = null;
-          card.classList.remove("dragging");
-          const overElements = listEl.querySelectorAll(".drag-over");
-          for (const el of overElements) el.classList.remove("drag-over");
-        });
-
-        card.addEventListener("dragover", (ev) => {
-          ev.preventDefault();
-          if (ev.dataTransfer) ev.dataTransfer.dropEffect = "move";
-          if (this.draggedIndex !== null && this.draggedIndex !== i) {
-            card.classList.add("drag-over");
-          }
-        });
-
-        card.addEventListener("dragleave", () => {
-          card.classList.remove("drag-over");
-        });
-
-        card.addEventListener("drop", (ev) => {
-          ev.preventDefault();
-          ev.stopPropagation();
-          card.classList.remove("drag-over");
-          if (this.draggedIndex !== null && this.draggedIndex !== i) {
-            const from = this.draggedIndex;
-            const to = i;
-            const moved = this.models.splice(from, 1)[0];
-            if (moved) {
-              this.models.splice(to, 0, moved);
-              this.onModelsChange(this.models);
-              this.render();
-            }
-          }
-          this.draggedIndex = null;
-        });
-      }
+      card.title = this.isEditMode ? `Drag to reorder ${item.name}` : `Switch to ${item.name}`;
 
       const iconWrap = document.createElement("span");
       iconWrap.className = "model-provider-icon";
@@ -546,7 +513,7 @@ export class ModelModal {
         card.appendChild(checkSpan);
       }
 
-      if (this.isEditMode && !this.isReordering) {
+      if (this.isEditMode) {
         const editBtn = document.createElement("button");
         editBtn.type = "button";
         editBtn.className = "model-row-edit-btn";
@@ -555,9 +522,10 @@ export class ModelModal {
         editBtn.textContent = "\u270e";
         editBtn.addEventListener("click", (ev) => {
           ev.stopPropagation();
-          this.editingModel = item;
-          this.showAddForm = true;
-          this.render();
+          this.morphRender(() => {
+            this.editingModel = item;
+            this.showAddForm = true;
+          });
         });
 
         const delBtn = document.createElement("button");
@@ -572,57 +540,9 @@ export class ModelModal {
         card.append(editBtn, delBtn);
       }
 
-      if (this.isReordering) {
-        const reorderArrows = document.createElement("div");
-        reorderArrows.className = "model-reorder-arrows";
-
-        if (i > 0) {
-          const upBtn = document.createElement("button");
-          upBtn.type = "button";
-          upBtn.className = "model-arrow-btn";
-          upBtn.innerHTML = `&#9650;`;
-          upBtn.title = "Move up";
-          upBtn.addEventListener("click", (ev) => {
-            ev.stopPropagation();
-            const moved = this.models.splice(i, 1)[0];
-            if (moved) {
-              this.models.splice(i - 1, 0, moved);
-              this.onModelsChange(this.models);
-              this.render();
-            }
-          });
-          reorderArrows.appendChild(upBtn);
-        }
-
-        if (i < this.models.length - 1) {
-          const downBtn = document.createElement("button");
-          downBtn.type = "button";
-          downBtn.className = "model-arrow-btn";
-          downBtn.innerHTML = `&#9660;`;
-          downBtn.title = "Move down";
-          downBtn.addEventListener("click", (ev) => {
-            ev.stopPropagation();
-            const moved = this.models.splice(i, 1)[0];
-            if (moved) {
-              this.models.splice(i + 1, 0, moved);
-              this.onModelsChange(this.models);
-              this.render();
-            }
-          });
-          reorderArrows.appendChild(downBtn);
-        }
-
-        card.appendChild(reorderArrows);
-
-        const dragHandle = document.createElement("span");
-        dragHandle.className = "model-drag-handle";
-        dragHandle.innerHTML = `&#8942;&#8942;`;
-        dragHandle.title = "Drag to reorder";
-        card.appendChild(dragHandle);
-      }
 
       card.addEventListener("click", () => {
-        if (card.classList.contains("dragging")) return;
+        if (card.classList.contains("reorder-dragging")) return;
         this.selectModel(item);
       });
 
