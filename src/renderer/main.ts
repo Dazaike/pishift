@@ -304,6 +304,7 @@ let hideTopButtonLabels = startupAppearance.hideTopButtonLabels ?? DEFAULT_PERSI
 let hideBottomButtonLabels = startupAppearance.hideBottomButtonLabels ?? DEFAULT_PERSISTED_SETTINGS.hideBottomButtonLabels ?? false;
 let collapseTopBarToMenu = startupAppearance.collapseTopBarToMenu ?? DEFAULT_PERSISTED_SETTINGS.collapseTopBarToMenu ?? true;
 let autoUpdateOmpOnOpen = DEFAULT_PERSISTED_SETTINGS.autoUpdateOmpOnOpen ?? false;
+let killOmpOnClose = DEFAULT_PERSISTED_SETTINGS.killOmpOnClose ?? true;
 let ompUpdateAvailable = false;
 let ompLatestVersion: string | null = null;
 let ompUpdating = false;
@@ -1103,6 +1104,7 @@ function persist(): void {
     hideTopButtonLabels,
     hideBottomButtonLabels,
     autoUpdateOmpOnOpen,
+    killOmpOnClose,
     doneSoundEnabled,
     doneSoundVolume,
     tabPreviews: tabPreviewsEnabled,
@@ -3713,6 +3715,11 @@ function openSettingsModal(): void {
         autoUpdateOmpOnOpen = enabled;
         persist();
       },
+      killOmpOnClose,
+      onToggleKillOmpOnClose: (enabled) => {
+        killOmpOnClose = enabled;
+        persist();
+      },
       onOmpUpdateChecked: (res) => {
         if (res.updateAvailable && res.latestVersion && isValidSemver(res.latestVersion)) {
           handleOmpUpdateDetected(res.latestVersion, "check", false);
@@ -3892,6 +3899,7 @@ function openSettingsModal(): void {
     highContrast,
     pasteMode,
     autoUpdateOmpOnOpen,
+    killOmpOnClose,
     pasteMarkerStyle,
     pasteMarkerPaint,
     pasteMarkerPulse,
@@ -4316,6 +4324,9 @@ async function boot(): Promise<void> {
   }
   if (typeof state.autoUpdateOmpOnOpen === "boolean") {
     autoUpdateOmpOnOpen = state.autoUpdateOmpOnOpen;
+  }
+  if (typeof state.killOmpOnClose === "boolean") {
+    killOmpOnClose = state.killOmpOnClose;
   }
   applyButtonLabelVisibility();
   if (state.panelPosition) {

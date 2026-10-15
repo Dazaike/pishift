@@ -144,6 +144,8 @@ export class SettingsModal {
   private onToggleCollapseTopBarToMenu: (collapse: boolean) => void;
   private autoUpdateOmpOnOpen: boolean;
   private onToggleAutoUpdateOmpOnOpen: (enabled: boolean) => void;
+  private killOmpOnClose: boolean;
+  private onToggleKillOmpOnClose: (enabled: boolean) => void;
   private onOmpUpdateChecked?: (res: OmpUpdateCheckResult) => void;
   private onPanelPositionChange: (pos: PanelPosition) => void;
   private onDefaultViewModeChange: (mode: ViewMode) => void;
@@ -208,6 +210,8 @@ export class SettingsModal {
     onToggleCollapseTopBarToMenu: (collapse: boolean) => void;
     autoUpdateOmpOnOpen?: boolean | undefined;
     onToggleAutoUpdateOmpOnOpen: (enabled: boolean) => void;
+    killOmpOnClose?: boolean | undefined;
+    onToggleKillOmpOnClose: (enabled: boolean) => void;
     onPanelPositionChange: (pos: PanelPosition) => void;
     onOmpUpdateChecked?: (res: OmpUpdateCheckResult) => void;
     onDefaultViewModeChange: (mode: ViewMode) => void;
@@ -266,6 +270,8 @@ export class SettingsModal {
     this.hideTopButtonLabels = opts.hideTopButtonLabels ?? false;
     this.autoUpdateOmpOnOpen = opts.autoUpdateOmpOnOpen ?? false;
     this.onToggleAutoUpdateOmpOnOpen = opts.onToggleAutoUpdateOmpOnOpen;
+    this.killOmpOnClose = opts.killOmpOnClose ?? true;
+    this.onToggleKillOmpOnClose = opts.onToggleKillOmpOnClose;
     this.hideBottomButtonLabels = opts.hideBottomButtonLabels ?? false;
     this.collapseTopBarToMenu = opts.collapseTopBarToMenu ?? false;
     this.onOmpUpdateChecked = opts.onOmpUpdateChecked;
@@ -400,6 +406,7 @@ export class SettingsModal {
     hideBottomButtonLabels?: boolean;
     collapseTopBarToMenu?: boolean;
     autoUpdateOmpOnOpen?: boolean;
+    killOmpOnClose?: boolean;
     panelPosition?: PanelPosition;
     defaultViewMode?: ViewMode;
     toolDensity?: ToolDensity;
@@ -453,6 +460,9 @@ export class SettingsModal {
     }
     if (typeof state.autoUpdateOmpOnOpen === "boolean") {
       this.autoUpdateOmpOnOpen = state.autoUpdateOmpOnOpen;
+    }
+    if (typeof state.killOmpOnClose === "boolean") {
+      this.killOmpOnClose = state.killOmpOnClose;
     }
     if (state.panelPosition) {
       this.panelPosition = state.panelPosition;
@@ -1018,6 +1028,27 @@ export class SettingsModal {
     autoUpdateSub.textContent =
       "Checks for OMP updates on app launch, installs any new version, and restarts the session automatically. When disabled, PiShift prompts you with the update button instead.";
     autoUpdateRow.append(autoUpdateLabel, autoUpdateSub);
+
+    // Option: Kill leftover omp.exe processes when PiShift closes
+    const killOmpRow = document.createElement("div");
+    killOmpRow.className = "settings-check-col";
+    const killOmpLabel = document.createElement("label");
+    killOmpLabel.className = "settings-check-label";
+    const killOmpCheck = document.createElement("input");
+    killOmpCheck.type = "checkbox";
+    killOmpCheck.checked = this.killOmpOnClose;
+    killOmpCheck.addEventListener("change", () => {
+      this.killOmpOnClose = killOmpCheck.checked;
+      this.onToggleKillOmpOnClose(this.killOmpOnClose);
+    });
+    const killOmpText = document.createElement("span");
+    killOmpText.textContent = "Kill leftover omp.exe processes when PiShift closes";
+    killOmpLabel.append(killOmpCheck, killOmpText);
+    const killOmpSub = document.createElement("div");
+    killOmpSub.className = "settings-desc settings-check-subtext";
+    killOmpSub.textContent =
+      "Stops omp sessions started by PiShift and any background workers they left behind (mnemopi embedder, tiny inference). omp running in other terminals is never touched.";
+    killOmpRow.append(killOmpLabel, killOmpSub);
 
     // Option: Manual check for OMP updates
     const ompCheckRow = document.createElement("div");
@@ -1602,6 +1633,7 @@ export class SettingsModal {
       bottomLabelsLabel,
       burgerMenuLabel,
       autoUpdateRow,
+      killOmpRow,
       doneSoundLabel,
       this.divider(),
       posRow,

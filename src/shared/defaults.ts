@@ -25,6 +25,7 @@ export const DEFAULT_PERSISTED_SETTINGS: Omit<PersistedState, "tabs" | "activeIn
   rawTextOnExpand: false,
   autoExpandActivity: false,
   autoUpdateOmpOnOpen: false,
+  killOmpOnClose: true,
   doneSoundEnabled: true,
   doneSoundVolume: 0.2,
   favoriteModels: ["gemini-3.7-flash", "claude-3-7-sonnet", "gpt-4o"],

@@ -506,7 +506,12 @@ if (ptyHostMode) {
     store = new StateStore(app.getPath("userData"), getDefaultCwd());
     lock = new SessionLock(app.getPath("userData"));
     if (lock.acquire()) store.markCrashed("unclean-exit");
-    ptys = new PtyManager(send, () => store.ompPath, () => bridgeListener?.port ?? null);
+    ptys = new PtyManager(
+      send,
+      () => store.ompPath,
+      () => bridgeListener?.port ?? null,
+      () => store.get().killOmpOnClose !== false,
+    );
     bridgeListener = new ControlBridgeListener((channel, payload) => {
       if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
     });
