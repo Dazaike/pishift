@@ -15,6 +15,7 @@ import {
 } from "../shared/ipc";
 import { STATUS_DIR } from "./control-bridge-listener";
 import { resolveOmpPath } from "./omp-locate";
+import { killProcessTrees, sweepOrphanOmpWorkers } from "./omp-reaper";
 import { transcriptExists } from "./transcript";
 import { buildPtyEnv } from "./pty-env";
 import { launchElevatedPty } from "./elevation";
@@ -75,6 +76,7 @@ export class PtyManager {
     private readonly emit: Emit,
     private readonly ompPath: () => string | undefined,
     private readonly controlBridgePort: () => number | null,
+    private readonly reapOnClose: () => boolean,
   ) {}
 
   /** Everything both launch paths need, resolved once so elevated and normal tabs start identically. */
@@ -305,6 +307,18 @@ export class PtyManager {
    * an abandoned ConPTY leaks an `OpenConsole.exe` per session.
    */
   killAll(): void {
+    const reap = this.reapOnClose();
+    // Tree kill goes first: it needs the omp -> worker parent link, which `kill()` can sever.
+    if (reap) killProcessTrees(this.liveRootPids());
     for (const id of [...this.sessions.keys()]) this.kill(id);
+    if (reap) sweepOrphanOmpWorkers();
+  }
+
+  private liveRootPids(): number[] {
+    const pids: number[] = [];
+    for (const session of this.sessions.values()) {
+      if (!session.pty.elevated && !session.exited && session.pty.pid > 0) pids.push(session.pty.pid);
+    }
+    return pids;
   }
 }

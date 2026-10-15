@@ -427,6 +427,8 @@ export type PersistedState = {
   ompPath?: string;
   /** Automatically update OMP upon opening the app. */
   autoUpdateOmpOnOpen?: boolean;
+  /** Kill leftover omp.exe processes (and their workers) when PiShift closes. */
+  killOmpOnClose?: boolean;
   themeName?: string;
   theme?: Partial<ThemeSettings>;
   fontFamily?: string;

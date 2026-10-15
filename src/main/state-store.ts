@@ -42,6 +42,8 @@ export function normalizeSettings(
       typeof raw.autoUpdateOmpOnOpen === "boolean"
         ? raw.autoUpdateOmpOnOpen
         : defaults.autoUpdateOmpOnOpen,
+    killOmpOnClose:
+      typeof raw.killOmpOnClose === "boolean" ? raw.killOmpOnClose : defaults.killOmpOnClose,
     themeName: raw.themeName ?? defaults.themeName,
     theme: raw.theme,
     fontFamily: typeof raw.fontFamily === "string" ? raw.fontFamily : defaults.fontFamily,

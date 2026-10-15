@@ -3,6 +3,11 @@
 All notable changes to PiShift are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [v2.0.11] - 2026-10-15
+
+### Added
+- **Kill leftover omp.exe processes when PiShift closes** (Settings, on by default). omp does not take its background workers (`__omp_worker_mnemopi_embed`, `__omp_worker_mnemopi_embed_server`, `__omp_worker_tiny_inference`, about 5 GB together) down with it, and Windows does not kill orphaned children, so they outlived PiShift. On quit, relaunch and renderer crash, PiShift now kills each live non-elevated session's process tree, then sweeps any omp worker whose parent is gone or was replaced by a newer process. omp running in other terminals has a live, older parent and is never touched. Elevated tabs are unchanged: their host reaps its own tree. Closing a single tab is unchanged.
+
 ## [v2.0.10] - 2026-10-13
 
 ### Added
