@@ -35,6 +35,7 @@ export interface TabMenuCallbacks {
   /** Per-tab elevation is offered only where it means something: Windows, and an app that is not already elevated. */
   canElevate: boolean;
   onToggleElevation: (target: TabMenuTarget) => void;
+  onRestart: (target: TabMenuTarget) => void;
 }
 
 export class TabContextMenu {
@@ -137,6 +138,10 @@ export class TabContextMenu {
         <span class="menu-icon">&#x25EB;</span>
         <span>Split Screen (Dual View)</span>
       </div>
+      <div class="menu-item" data-action="restart">
+        <span class="menu-icon">&#8635;</span>
+        <span>Restart Session</span>
+      </div>
       ${
         cb.canElevate
           ? `<div class="menu-item" data-action="elevate">
@@ -192,6 +197,7 @@ export class TabContextMenu {
         else if (action === "rename") cb.onRename(target);
         else if (action === "split") cb.onSplit?.(target);
         else if (action === "elevate") cb.onToggleElevation(target);
+        else if (action === "restart") cb.onRestart(target);
         else if (action === "close") cb.onClose(target);
         else if (action === "close-others") cb.onCloseOthers(target);
         else if (action === "close-right") cb.onCloseRight(target);
