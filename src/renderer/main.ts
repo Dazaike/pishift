@@ -1983,6 +1983,19 @@ async function setTabElevated(tab: Tab, elevated: boolean): Promise<void> {
   await restartSession(tab, true, elevated);
 }
 
+/** Restart a tab's session on the same chat, keeping its current elevation. */
+async function restartTabSession(tab: Tab): Promise<void> {
+  if (isTabBusy(tab)) {
+    const ok = await confirmDialog.confirm(
+      "Restart session?",
+      `"${tabDisplayName(tab)}" is actively running. Restarting it interrupts the current turn; the conversation resumes afterward.`,
+      "Restart",
+    );
+    if (!ok) return;
+  }
+  await restartSession(tab, true);
+}
+
 const notifiedVersions = new Set<string>();
 
 function isValidSemver(v: string | undefined | null): boolean {
@@ -2580,6 +2593,7 @@ function makeTab(cwd: string, customTitle?: string, colorTag?: string, restore?:
       onReopenClosed: () => void reopenClosedTab(),
       canElevate: api.canElevate && !appElevated,
       onToggleElevation: () => void setTabElevated(tab, !tab.elevated),
+      onRestart: () => void restartTabSession(tab),
     });
   });
 

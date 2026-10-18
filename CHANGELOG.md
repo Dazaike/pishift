@@ -3,6 +3,11 @@
 All notable changes to PiShift are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [v2.0.12] - 2026-10-18
+
+### Added
+- **Restart Session** in the tab right-click menu. Restarts that tab's terminal session and resumes the same omp chat, keeping the tab's current elevation. Shown on every platform and when the app is elevated; asks for confirmation if the tab is busy.
+
 ## [v2.0.11] - 2026-10-15
 
 ### Added

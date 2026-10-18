@@ -170,6 +170,7 @@ Pick a theme and adjust the interface, tabs, composer, and usage display.
 
 - Right-click tabs to open the directory in File Explorer, copy its path, duplicate the tab in the same directory, assign a project color, rename it, close neighboring tabs, or reopen the last closed tab. Reopening restores the folder, exact omp chat, tab position, view mode, name and color; middle-click **New Session** does the same.
 - On Windows, **Restart as Administrator** in the tab menu elevates only that session, after a UAC prompt, and resumes the same chat; the app itself stays unelevated. An amber shield marks elevated tabs, and elevation is never restored automatically.
+- **Restart Session** in the tab menu restarts that tab's session on the same chat, keeping its current elevation, and is available on every platform.
 - Toggle split screen from the top bar, menu, tab context menu, or `Ctrl+\`. Drag the divider to resize; double-click it to return to an even split.
 - Use the top bar as a window drag surface while keeping its buttons interactive.
 - Switch recent chats and recent folders from searchable popovers. Tab titles and busy indicators follow the agent's reported state.
