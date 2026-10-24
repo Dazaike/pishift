@@ -150,6 +150,79 @@ const paneSecondaryEl = document.getElementById("pane-secondary") as HTMLDivElem
 const splitDividerEl = document.getElementById("split-divider") as HTMLDivElement;
 const splitBtn = document.getElementById("btn-split") as HTMLButtonElement | null;
 const newTabButton = document.getElementById("new-tab") as HTMLButtonElement;
+
+type PaneHeader = {
+  el: HTMLDivElement;
+  dot: HTMLSpanElement;
+  glyph: HTMLSpanElement;
+  title: HTMLSpanElement;
+  busy: HTMLSpanElement;
+  orient: HTMLButtonElement;
+};
+
+const SPLIT_ICON_COLUMNS =
+  '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="12" x2="21" y2="12"/></svg>';
+const SPLIT_ICON_ROWS =
+  '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="12" y1="3" x2="12" y2="21"/></svg>';
+
+function buildPaneHeader(pane: "primary" | "secondary"): PaneHeader {
+  const el = document.createElement("div");
+  el.className = "split-pane-header";
+  el.hidden = true;
+  const dot = document.createElement("span");
+  dot.className = "split-pane-dot";
+  const glyph = document.createElement("span");
+  glyph.className = "split-pane-glyph";
+  const title = document.createElement("span");
+  title.className = "split-pane-title";
+  const busy = document.createElement("span");
+  busy.className = "split-pane-busy";
+  busy.hidden = true;
+  const orient = document.createElement("button");
+  orient.type = "button";
+  orient.className = "split-pane-btn split-pane-orient";
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "split-pane-btn split-pane-close";
+  close.setAttribute("aria-label", "Close split pane");
+  close.title = "Close pane (tab stays open)";
+  close.textContent = "×";
+  orient.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    setSplitOrientation(splitOrientation === "columns" ? "rows" : "columns");
+  });
+  close.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    closeSplitPane(pane);
+  });
+  el.append(dot, glyph, title, busy, orient, close);
+  return { el, dot, glyph, title, busy, orient };
+}
+
+const paneHeaders = { primary: buildPaneHeader("primary"), secondary: buildPaneHeader("secondary") };
+panePrimaryEl.prepend(paneHeaders.primary.el);
+paneSecondaryEl.prepend(paneHeaders.secondary.el);
+
+function syncSplitHeaders(): void {
+  for (const pane of ["primary", "secondary"] as const) {
+    const h = paneHeaders[pane];
+    h.el.hidden = !splitMode;
+    if (!splitMode) continue;
+    const rows = splitOrientation === "rows";
+    h.orient.innerHTML = rows ? SPLIT_ICON_ROWS : SPLIT_ICON_COLUMNS;
+    h.orient.title = rows ? "Place panes side by side" : "Stack panes top / bottom";
+    const tab = pane === "primary" ? primaryTab : secondaryTab;
+    if (!tab) continue;
+    const name = splitTabName(tabDisplayName(tab));
+    h.title.textContent = name.text;
+    h.glyph.textContent = name.glyph;
+    h.el.title = tab.cwd;
+    const color = TAB_COLOR_PRESETS.find((p) => p.id === tab.colorTag)?.color;
+    h.dot.style.display = color ? "" : "none";
+    h.dot.style.background = color ?? "";
+    h.busy.hidden = !(tab.busy || tab.activity !== "idle");
+  }
+}
 const settingsBtn = document.getElementById("btn-settings") as HTMLButtonElement;
 const settingsImg = settingsBtn.querySelector<HTMLImageElement>("img.btn-icon");
 if (settingsImg) settingsImg.src = settingsIcon;
@@ -359,6 +432,7 @@ let activePane: "primary" | "secondary" = "primary";
 let primaryTab: Tab | null = null;
 let secondaryTab: Tab | null = null;
 let splitRatio = 0.5;
+let splitOrientation: "columns" | "rows" = "columns";
 const doneSound = new CompletionSound(doneSoundEnabled, doneSoundVolume);
 
 function applyScrollSteps(steps: number): void {
@@ -1115,6 +1189,7 @@ function persist(): void {
     usageTracker: usageTrackerSettings,
     settingsSectionCollapsed,
     splitRatio: splitRatio !== 0.5 ? splitRatio : undefined,
+    splitOrientation: splitOrientation === "rows" ? "rows" : undefined,
     tabLayout,
     tabRailSide,
     tabRailHoverReachPx,
@@ -1169,6 +1244,7 @@ function renderTabs(): void {
         : "folder";
     tab.button.title = `${name} (${tab.cwd}) — ${source}${tab.elevated ? " · Administrator" : ""} · right-click for options · double-click to rename`;
   }
+  syncSplitHeaders();
   tabRail.sync();
   syncTabNudges();
   queueUsageTrackerLayout();
@@ -1508,6 +1584,8 @@ function setViewMode(tab: Tab, mode: ViewMode): void {
   if (tab === active) {
     syncViewMode(tab);
     syncPlanReviewModal(tab);
+  } else if (shownPane(tab)) {
+    tab.chat?.setActive(mode === "chat");
   }
   dock.focus();
 }
@@ -1537,6 +1615,68 @@ function mountTabInPane(tab: Tab, pane: "primary" | "secondary"): void {
   }
 }
 
+function paneEl(pane: "primary" | "secondary"): HTMLDivElement {
+  return pane === "primary" ? panePrimaryEl : paneSecondaryEl;
+}
+
+function shownPane(tab: Tab): "primary" | "secondary" | null {
+  if (!splitMode) return null;
+  if (tab === primaryTab) return "primary";
+  if (tab === secondaryTab) return "secondary";
+  return null;
+}
+
+function showTabInPane(tab: Tab, pane: "primary" | "secondary"): void {
+  mountTabInPane(tab, pane);
+  tab.view?.activate(paneEl(pane));
+  tab.notice?.classList.add("active");
+  tab.stallBanner?.classList.add("active");
+  tab.chat?.setActive(tab.viewMode === "chat");
+}
+
+function hideTab(tab: Tab): void {
+  tab.view?.deactivate();
+  tab.notice?.classList.remove("active");
+  tab.stallBanner?.classList.remove("active");
+  tab.chat?.setActive(false);
+}
+
+/** Make `tab` the active tab: snapshot the old dock and load the new tab's state into the shared chrome. */
+function adoptActive(tab: Tab): void {
+  if (active === tab) {
+    syncViewMode(tab);
+    return;
+  }
+  if (active) active.dock = dock.snapshot();
+  active = tab;
+  syncViewMode(tab);
+  dock.load(tab.dock);
+  dock.setCwd(tab.cwd);
+  applyModelToDock(tab.modelName, tab.thinkingLevel, tab);
+  dock.setThinkingLevel(tab.thinkingLevel || "low");
+  dock.setPlanMode(tab.plan.mode, tab.plan.pending);
+  dock.setAgentBusy(tab.busy);
+  updateHeaderActivity(tab);
+  syncAskModal(tab);
+  syncPlanReviewModal(tab);
+  syncActivityTab(tab);
+  todoPanel.setPhases(tab.todo);
+  todoPanel.setJobs(tab.jobs);
+  modelModal?.setCurrentModel(tab.modelName || "");
+  if (recentFoldersModal?.isOpen) {
+    recentFoldersModal.setCurrentCwd(tab.cwd);
+  }
+  if (recentChatsModal?.isOpen) {
+    recentChatsModal.setCurrentCwd(tab.cwd);
+    recentChatsModal.setActiveSessionId(tab.sessionKey ?? tab.sessionId);
+  }
+  document.title = `${tabDisplayName(tab)} · PiShift`;
+  renderTabs();
+  updateUsageDisplay(tab);
+  persist();
+  syncElapsedTicker();
+}
+
 function updatePaneFocusStyles(): void {
   panePrimaryEl.classList.toggle("active", activePane === "primary");
   paneSecondaryEl.classList.toggle("active", activePane === "secondary");
@@ -1549,70 +1689,52 @@ function focusPane(pane: "primary" | "secondary"): void {
   const targetTab = pane === "primary" ? primaryTab : secondaryTab;
   if (!targetTab) return;
 
-  if (active !== targetTab) {
-    if (active) {
-      active.dock = dock.snapshot();
+  if (active !== targetTab) adoptActive(targetTab);
+}
+
+function exitSplit(keep: Tab | null): void {
+  splitMode = false;
+  viewsEl.classList.remove("split-active");
+  splitDividerEl.hidden = true;
+  paneSecondaryEl.hidden = true;
+  panePrimaryEl.classList.remove("active");
+  paneSecondaryEl.classList.remove("active");
+  splitBtn?.classList.remove("active");
+  for (const t of [primaryTab, secondaryTab]) {
+    if (t && t !== keep) {
+      hideTab(t);
+      mountTabInPane(t, "primary");
     }
-    active = targetTab;
-    dock.load(targetTab.dock);
-    dock.setCwd(targetTab.cwd);
-    applyModelToDock(targetTab.modelName, targetTab.thinkingLevel, targetTab);
-    dock.setThinkingLevel(targetTab.thinkingLevel || "low");
-    dock.setPlanMode(targetTab.plan.mode, targetTab.plan.pending);
-    dock.setAgentBusy(targetTab.busy);
-    updateHeaderActivity(targetTab);
-    syncAskModal(targetTab);
-    syncPlanReviewModal(targetTab);
-    syncActivityTab(targetTab);
-    todoPanel.setPhases(targetTab.todo);
-    todoPanel.setJobs(targetTab.jobs);
-    modelModal?.setCurrentModel(targetTab.modelName || "");
-    if (recentFoldersModal?.isOpen) {
-      recentFoldersModal.setCurrentCwd(targetTab.cwd);
-    }
-    if (recentChatsModal?.isOpen) {
-      recentChatsModal.setCurrentCwd(targetTab.cwd);
-      recentChatsModal.setActiveSessionId(targetTab.sessionKey ?? targetTab.sessionId);
-    }
-    document.title = `${tabDisplayName(targetTab)} · PiShift`;
-    renderTabs();
-    updateUsageDisplay(targetTab);
-    persist();
-    syncElapsedTicker();
   }
+  primaryTab = keep;
+  secondaryTab = null;
+  activePane = "primary";
+  if (keep) {
+    showTabInPane(keep, "primary");
+    adoptActive(keep);
+    keep.view?.refit();
+  }
+  renderTabs();
+  persist();
+}
+
+function closeSplitPane(pane: "primary" | "secondary"): void {
+  if (!splitMode) return;
+  exitSplit(pane === "primary" ? secondaryTab : primaryTab);
+}
+
+function setSplitOrientation(o: "columns" | "rows"): void {
+  splitOrientation = o;
+  viewsEl.classList.toggle("split-rows", o === "rows");
+  syncSplitHeaders();
+  primaryTab?.view?.refit();
+  secondaryTab?.view?.refit();
+  persist();
 }
 
 async function toggleSplitScreen(targetTab?: Tab): Promise<void> {
   if (splitMode) {
-    splitMode = false;
-    viewsEl.classList.remove("split-active");
-    splitDividerEl.hidden = true;
-    paneSecondaryEl.hidden = true;
-    panePrimaryEl.classList.remove("active");
-    paneSecondaryEl.classList.remove("active");
-    splitBtn?.classList.remove("active");
-
-    if (secondaryTab) {
-      if (secondaryTab !== active) {
-        secondaryTab.view?.deactivate();
-        secondaryTab.notice?.classList.remove("active");
-        secondaryTab.stallBanner?.classList.remove("active");
-        secondaryTab.chat?.setActive(false);
-      }
-      mountTabInPane(secondaryTab, "primary");
-    }
-
-    if (primaryTab) {
-      mountTabInPane(primaryTab, "primary");
-    }
-
-    secondaryTab = null;
-    primaryTab = active;
-    activePane = "primary";
-    active?.view?.activate(panePrimaryEl);
-    active?.view?.refit();
-    renderTabs();
-    persist();
+    exitSplit(active);
     return;
   }
 
@@ -1622,6 +1744,7 @@ async function toggleSplitScreen(targetTab?: Tab): Promise<void> {
 
   splitMode = true;
   viewsEl.classList.add("split-active");
+  viewsEl.classList.toggle("split-rows", splitOrientation === "rows");
   splitDividerEl.hidden = false;
   paneSecondaryEl.hidden = false;
   splitBtn?.classList.add("active");
@@ -1630,23 +1753,13 @@ async function toggleSplitScreen(targetTab?: Tab): Promise<void> {
   secondaryTab = targetTab && targetTab !== primaryTab ? targetTab : (tabs.find((t) => t !== primaryTab) ?? null);
   activePane = "primary";
 
-  if (primaryTab) {
-    mountTabInPane(primaryTab, "primary");
-    primaryTab.view?.activate(panePrimaryEl);
-    primaryTab.notice?.classList.add("active");
-    primaryTab.stallBanner?.classList.add("active");
-  }
-
-  if (secondaryTab) {
-    mountTabInPane(secondaryTab, "secondary");
-    secondaryTab.view?.activate(paneSecondaryEl);
-    secondaryTab.notice?.classList.add("active");
-    secondaryTab.stallBanner?.classList.add("active");
-  }
+  if (primaryTab) showTabInPane(primaryTab, "primary");
+  if (secondaryTab) showTabInPane(secondaryTab, "secondary");
 
   updatePaneFocusStyles();
   primaryTab?.view?.refit();
   secondaryTab?.view?.refit();
+  syncSplitHeaders();
   renderTabs();
   persist();
 }
@@ -1665,63 +1778,14 @@ function activate(tab: Tab): void {
       return;
     }
 
-    if (activePane === "primary") {
-      if (primaryTab) {
-        primaryTab.dock = dock.snapshot();
-        primaryTab.view?.deactivate();
-        primaryTab.notice?.classList.remove("active");
-        primaryTab.stallBanner?.classList.remove("active");
-        primaryTab.chat?.setActive(false);
-      }
-      primaryTab = tab;
-      mountTabInPane(tab, "primary");
-      tab.view?.activate(panePrimaryEl);
-      tab.notice?.classList.add("active");
-      tab.stallBanner?.classList.add("active");
-    } else {
-      if (secondaryTab) {
-        secondaryTab.dock = dock.snapshot();
-        secondaryTab.view?.deactivate();
-        secondaryTab.notice?.classList.remove("active");
-        secondaryTab.stallBanner?.classList.remove("active");
-        secondaryTab.chat?.setActive(false);
-      }
-      secondaryTab = tab;
-      mountTabInPane(tab, "secondary");
-      tab.view?.activate(paneSecondaryEl);
-      tab.notice?.classList.add("active");
-      tab.stallBanner?.classList.add("active");
-    }
-
-    active = tab;
-    syncViewMode(tab);
-    dock.load(tab.dock);
-    dock.setCwd(tab.cwd);
-    applyModelToDock(tab.modelName, tab.thinkingLevel, tab);
-    dock.setThinkingLevel(tab.thinkingLevel || "low");
-    dock.setPlanMode(tab.plan.mode, tab.plan.pending);
-    dock.setAgentBusy(tab.busy);
-    updateHeaderActivity(tab);
-    syncAskModal(tab);
-    syncPlanReviewModal(tab);
-    syncActivityTab(tab);
-    todoPanel.setPhases(tab.todo);
-    todoPanel.setJobs(tab.jobs);
-    modelModal?.setCurrentModel(tab.modelName || "");
-    if (recentFoldersModal?.isOpen) {
-      recentFoldersModal.setCurrentCwd(tab.cwd);
-    }
-    if (recentChatsModal?.isOpen) {
-      recentChatsModal.setCurrentCwd(tab.cwd);
-      recentChatsModal.setActiveSessionId(tab.sessionKey ?? tab.sessionId);
-    }
+    const oldPaneTab = activePane === "primary" ? primaryTab : secondaryTab;
+    if (oldPaneTab) hideTab(oldPaneTab);
+    if (activePane === "primary") primaryTab = tab;
+    else secondaryTab = tab;
+    showTabInPane(tab, activePane);
+    adoptActive(tab);
     dock.focus();
-    document.title = `${tabDisplayName(tab)} · PiShift`;
-    renderTabs();
-    updateUsageDisplay(tab);
     tab.view?.refit();
-    persist();
-    syncElapsedTicker();
     return;
   }
 
@@ -1841,52 +1905,32 @@ function closeTab(tab: Tab, remember = true): void {
   tab.button.remove();
 
   if (splitMode) {
-    if (tabs.length < 2) {
-      splitMode = false;
-      viewsEl.classList.remove("split-active");
-      splitDividerEl.hidden = true;
-      paneSecondaryEl.hidden = true;
-      splitBtn?.classList.remove("active");
-      panePrimaryEl.classList.remove("active");
-      paneSecondaryEl.classList.remove("active");
-      const remaining = tabs[0];
-      if (remaining) {
-        mountTabInPane(remaining, "primary");
-        primaryTab = remaining;
-        secondaryTab = null;
-        activePane = "primary";
-        activate(remaining);
-      } else {
-        void addTab();
-      }
+    const was = tab === primaryTab ? "primary" : tab === secondaryTab ? "secondary" : null;
+    if (was === null) {
+      renderTabs();
+      persist();
       return;
     }
-
-    if (tab === primaryTab) {
-      const next = tabs.find((t) => t !== secondaryTab) ?? tabs[0]!;
-      primaryTab = next;
-      mountTabInPane(next, "primary");
-      next.view?.activate(panePrimaryEl);
-      if (active === tab) {
-        active = next;
-        activate(next);
-      } else {
-        renderTabs();
-      }
-    } else if (tab === secondaryTab) {
-      const next = tabs.find((t) => t !== primaryTab) ?? tabs[0]!;
-      secondaryTab = next;
-      mountTabInPane(next, "secondary");
-      next.view?.activate(paneSecondaryEl);
-      if (active === tab) {
-        active = next;
-        activate(next);
-      } else {
-        renderTabs();
-      }
-    } else {
-      renderTabs();
+    const other = was === "primary" ? secondaryTab : primaryTab;
+    const candidates = tabs.filter((t) => t !== other);
+    const replacement = candidates[Math.min(index, candidates.length - 1)] ?? null;
+    if (was === "primary") primaryTab = null;
+    else secondaryTab = null;
+    if (active === tab) active = null;
+    if (!replacement) {
+      exitSplit(other);
+      if (tabs.length === 0) void addTab();
+      return;
     }
+    hideTab(replacement);
+    if (was === "primary") primaryTab = replacement;
+    else secondaryTab = replacement;
+    showTabInPane(replacement, was);
+    activePane = was;
+    updatePaneFocusStyles();
+    adoptActive(replacement);
+    dock.focus();
+    replacement.view?.refit();
     return;
   }
   if (active === tab) {
@@ -2296,9 +2340,11 @@ function resetTerminalView(tab: Tab): void {
   tab.renderStallBanner = null;
   const view = createView(tab);
   tab.view = view;
-  if (tab === active) {
-    const targetPane = splitMode && tab === secondaryTab ? paneSecondaryEl : panePrimaryEl;
-    view.activate(targetPane);
+  const pane = shownPane(tab);
+  if (pane) {
+    view.activate(paneEl(pane));
+  } else if (tab === active) {
+    view.activate(panePrimaryEl);
   } else {
     panePrimaryEl.appendChild(view.el);
   }
@@ -2376,9 +2422,12 @@ function createView(tab: Tab): TermView {
 async function startSession(tab: Tab): Promise<void> {
   const view = createView(tab);
   tab.view = view;
-  if (tab === active) {
-    const targetPane = splitMode && activePane === "secondary" ? paneSecondaryEl : panePrimaryEl;
-    view.activate(targetPane);
+  const pane = shownPane(tab);
+  if (pane) {
+    view.activate(paneEl(pane));
+    if (tab === active) playViewSwitch(tab, "right");
+  } else if (tab === active) {
+    view.activate(panePrimaryEl);
     // New tabs activate before their view exists, so animate here instead.
     playViewSwitch(tab, "right");
   } else {
@@ -2421,6 +2470,7 @@ async function startSession(tab: Tab): Promise<void> {
     ensureChatView(tab).setEmptyReason("loading");
     subscribeTranscript(tab);
     if (tab === active) syncViewMode(tab);
+    else if (shownPane(tab)) tab.chat?.setActive(tab.viewMode === "chat");
   } else {
     subscribeTranscript(tab);
   }
@@ -3947,6 +3997,7 @@ splitDividerEl.addEventListener("mousedown", (e) => {
   if (e.button !== 0) return;
   isDraggingDivider = true;
   document.body.classList.add("resizing-split");
+  if (splitOrientation === "rows") document.body.classList.add("resizing-split-rows");
   splitDividerEl.classList.add("dragging");
   e.preventDefault();
 });
@@ -3954,8 +4005,10 @@ splitDividerEl.addEventListener("mousedown", (e) => {
 window.addEventListener("mousemove", (e) => {
   if (!isDraggingDivider) return;
   const rect = viewsEl.getBoundingClientRect();
-  if (rect.width <= 0) return;
-  const ratio = Math.max(0.2, Math.min(0.8, (e.clientX - rect.left) / rect.width));
+  const rows = splitOrientation === "rows";
+  if ((rows ? rect.height : rect.width) <= 0) return;
+  const pos = rows ? (e.clientY - rect.top) / rect.height : (e.clientX - rect.left) / rect.width;
+  const ratio = Math.max(0.2, Math.min(0.8, pos));
   splitRatio = ratio;
   viewsEl.style.setProperty("--split-ratio", `${(ratio * 100).toFixed(1)}%`);
 });
@@ -3963,7 +4016,7 @@ window.addEventListener("mousemove", (e) => {
 window.addEventListener("mouseup", () => {
   if (!isDraggingDivider) return;
   isDraggingDivider = false;
-  document.body.classList.remove("resizing-split");
+  document.body.classList.remove("resizing-split", "resizing-split-rows");
   splitDividerEl.classList.remove("dragging");
   primaryTab?.view?.refit();
   secondaryTab?.view?.refit();
@@ -4372,6 +4425,10 @@ async function boot(): Promise<void> {
   if (typeof state.splitRatio === "number" && state.splitRatio >= 0.2 && state.splitRatio <= 0.8) {
     splitRatio = state.splitRatio;
     viewsEl.style.setProperty("--split-ratio", `${(splitRatio * 100).toFixed(1)}%`);
+  }
+  if (state.splitOrientation === "rows") {
+    splitOrientation = "rows";
+    viewsEl.classList.add("split-rows");
   }
 
   // After a crash, boot with one placeholder tab; the real tabs wait for the user's answer.
