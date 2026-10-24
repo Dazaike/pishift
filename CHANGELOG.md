@@ -3,6 +3,12 @@
 All notable changes to PiShift are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [v2.0.13] - 2026-10-24
+
+### Added
+- **Hide a model from the switcher.** **Manage Models** has an eye on each row. Click it to leave the model out of the switch list without deleting it. Hidden rows stay in the edit list, dimmed, with a slashed eye; click again to show the model. The choice is saved with the model list.
+- **Split-screen layout options.** Switch between side-by-side columns and stacked top/bottom rows when split view is active. Each pane shows a compact header with session status and quick controls; the layout orientation is preserved in settings.
+
 ## [v2.0.12] - 2026-10-18
 
 ### Added

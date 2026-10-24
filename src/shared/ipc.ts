@@ -401,6 +401,8 @@ export type CustomModelConfig = {
   name: string;
   provider: string;
   iconUrl?: string;
+  /** Omitted from the switcher. Still shown in Manage Models so it can be unhidden. */
+  hidden?: boolean;
 };
 
 export interface RecentChatInfo {
@@ -490,6 +492,8 @@ export type PersistedState = {
   /** Invisible hover hit width (px) from the collapsed rail. Vertical only. */
   tabRailHoverReachPx?: number;
   splitRatio?: number;
+  /** Split layout: "columns" = side by side (default), "rows" = stacked top/bottom. */
+  splitOrientation?: "columns" | "rows";
   /** Chime when a session goes from working back to waiting for input. */
   doneSoundEnabled?: boolean;
   /** 0–1 playback volume for the completion chime. */

@@ -14,6 +14,47 @@ export const DEFAULT_USER_MODELS: CustomModelConfig[] = [
   { id: "grok-4.5", name: "Grok 4.5", provider: "xai-oauth" },
 ];
 
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+function eyeIcon(hidden: boolean): SVGSVGElement {
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("viewBox", "0 0 16 16");
+  svg.setAttribute("width", "14");
+  svg.setAttribute("height", "14");
+  svg.setAttribute("aria-hidden", "true");
+  const outline = document.createElementNS(SVG_NS, "path");
+  outline.setAttribute("d", "M1.25 8s2.4-4.25 6.75-4.25S14.75 8 14.75 8 12.35 12.25 8 12.25 1.25 8 1.25 8Z");
+  outline.setAttribute("fill", "none");
+  outline.setAttribute("stroke", "currentColor");
+  outline.setAttribute("stroke-width", "1.4");
+  outline.setAttribute("stroke-linejoin", "round");
+  const pupil = document.createElementNS(SVG_NS, "circle");
+  pupil.setAttribute("cx", "8");
+  pupil.setAttribute("cy", "8");
+  pupil.setAttribute("r", "1.85");
+  pupil.setAttribute("fill", "currentColor");
+  svg.append(outline, pupil);
+  if (hidden) {
+    const slash = document.createElementNS(SVG_NS, "path");
+    slash.setAttribute("d", "M3 13.25 13.25 2.75");
+    slash.setAttribute("fill", "none");
+    slash.setAttribute("stroke", "currentColor");
+    slash.setAttribute("stroke-width", "1.4");
+    slash.setAttribute("stroke-linecap", "round");
+    svg.append(slash);
+  }
+  return svg;
+}
+
+/** Edit list shows every model. The switcher drops ones marked hidden. */
+export function modelsInSwitcherList<T extends { hidden?: boolean }>(
+  models: readonly T[],
+  editing: boolean,
+): T[] {
+  return editing ? models.slice() : models.filter((model) => model.hidden !== true);
+}
+
+
 export class ModelModal {
   readonly el: HTMLDivElement;
   private readonly anchor: HTMLElement | null;
@@ -62,7 +103,7 @@ export class ModelModal {
         return;
       }
       if (this.showAddForm) return;
-      const rows = this.models;
+      const rows = modelsInSwitcherList(this.models, this.isEditMode);
       if (rows.length === 0) return;
       if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
         ev.preventDefault();
@@ -176,6 +217,31 @@ export class ModelModal {
     this.morphRender(() => {});
   }
 
+  private setModelHidden(id: string, hidden: boolean): void {
+    const current = this.models.find((model) => model.id === id);
+    if (!current || (current.hidden === true) === hidden) return;
+    if (hidden) current.hidden = true;
+    else delete current.hidden;
+    this.onModelsChange(this.models.slice());
+
+    const row = [...this.el.querySelectorAll<HTMLElement>(".model-row")].find(
+      (el) => el.dataset.modelId === id,
+    );
+    const btn = row?.querySelector<HTMLButtonElement>(".model-row-hide-btn");
+    if (!row || !btn || !this.isEditMode) {
+      this.render();
+      return;
+    }
+    row.classList.toggle("is-hidden", hidden);
+    const label = hidden
+      ? `Show ${current.name} in the switcher`
+      : `Hide ${current.name} from the switcher`;
+    btn.title = label;
+    btn.setAttribute("aria-label", label);
+    btn.setAttribute("aria-pressed", hidden ? "true" : "false");
+    btn.replaceChildren(eyeIcon(hidden));
+  }
+
   /**
    * Re-renders after `change`, animating the popover's box from its old size to its new one. Its
    * bottom edge stays pinned above the Model button, so growth (edit options, the edit form)
@@ -208,6 +274,7 @@ export class ModelModal {
       this.isEditMode = on;
       this.showAddForm = false;
       this.editingModel = null;
+      this.kbIndex = -1;
     });
   }
 
@@ -262,7 +329,7 @@ export class ModelModal {
       editBtn.type = "button";
       editBtn.className = this.isEditMode ? "model-btn-pill active" : "model-btn-pill";
       editBtn.textContent = this.isEditMode ? "Done" : "Edit";
-      editBtn.title = this.isEditMode ? "Finish editing" : "Edit, add, reorder, or delete models";
+      editBtn.title = this.isEditMode ? "Finish editing" : "Edit, add, reorder, hide, or delete models";
       editBtn.addEventListener("click", () => this.setEditMode(!this.isEditMode));
       headerActions.appendChild(editBtn);
     }
@@ -342,8 +409,9 @@ export class ModelModal {
         return;
       }
 
-      const model = { provider, id, name, iconUrl };
+      const model: CustomModelConfig = { provider, id, name, iconUrl };
       const target = this.editingModel;
+      if (target?.hidden) model.hidden = true;
       if (!target) {
         this.addModel(model);
         return;
@@ -456,10 +524,13 @@ export class ModelModal {
   private renderList(container: HTMLElement): void {
     container.replaceChildren();
 
-    if (this.models.length === 0) {
+    const listed = modelsInSwitcherList(this.models, this.isEditMode);
+    if (listed.length === 0) {
       const empty = document.createElement("div");
       empty.className = "model-empty";
-      empty.textContent = "No models added yet. Click 'Edit' -> '+ Add Model'.";
+      empty.textContent = this.models.length === 0
+        ? "No models added yet. Click 'Edit' -> '+ Add Model'."
+        : "All models are hidden. Click Edit, then the eye, to show one.";
       container.appendChild(empty);
       return;
     }
@@ -478,13 +549,14 @@ export class ModelModal {
       },
     });
 
-    for (let i = 0; i < this.models.length; i++) {
-      const item = this.models[i]!;
+    for (let i = 0; i < listed.length; i++) {
+      const item = listed[i]!;
 
       const card = document.createElement("div");
       let cardClass = "model-row";
       if (i === this.kbIndex) cardClass += " kb-active";
       if (this.isEditMode) cardClass += " in-edit";
+      if (item.hidden) cardClass += " is-hidden";
       if (item.id === this.currentModel) cardClass += " active";
       card.className = cardClass;
       card.dataset.key = item.id;
@@ -514,6 +586,26 @@ export class ModelModal {
       }
 
       if (this.isEditMode) {
+        const actions = document.createElement("div");
+        actions.className = "model-row-actions";
+
+        const hideBtn = document.createElement("button");
+        hideBtn.type = "button";
+        hideBtn.className = "model-row-hide-btn";
+        const hidden = item.hidden === true;
+        const hideLabel = hidden
+          ? `Show ${item.name} in the switcher`
+          : `Hide ${item.name} from the switcher`;
+        hideBtn.title = hideLabel;
+        hideBtn.setAttribute("aria-label", hideLabel);
+        hideBtn.setAttribute("aria-pressed", hidden ? "true" : "false");
+        hideBtn.append(eyeIcon(hidden));
+        hideBtn.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          const model = this.models.find((entry) => entry.id === item.id);
+          this.setModelHidden(item.id, model?.hidden !== true);
+        });
+
         const editBtn = document.createElement("button");
         editBtn.type = "button";
         editBtn.className = "model-row-edit-btn";
@@ -537,7 +629,8 @@ export class ModelModal {
           ev.stopPropagation();
           this.removeModel(item.id);
         });
-        card.append(editBtn, delBtn);
+        actions.append(hideBtn, editBtn, delBtn);
+        card.append(actions);
       }
 
 

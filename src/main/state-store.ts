@@ -156,6 +156,10 @@ export function normalizeSettings(
       typeof raw.splitRatio === "number" && raw.splitRatio >= 0.1 && raw.splitRatio <= 0.9
         ? raw.splitRatio
         : undefined,
+    splitOrientation:
+      raw.splitOrientation === "rows" || raw.splitOrientation === "columns"
+        ? raw.splitOrientation
+        : undefined,
     usageTracker: raw.usageTracker
       ? normalizeUsageTrackerSettings(raw.usageTracker)
       : defaults.usageTracker,
