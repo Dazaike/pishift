@@ -9,6 +9,7 @@ import {
   type TabState,
 } from "../shared/ipc";
 import { DEFAULT_PERSISTED_SETTINGS } from "../shared/defaults";
+import { sanitizeThemeOverrides } from "../shared/theme";
 import {
   normalizeSettingsSectionCollapsed,
   normalizeUsageTrackerSettings,
@@ -45,7 +46,7 @@ export function normalizeSettings(
     killOmpOnClose:
       typeof raw.killOmpOnClose === "boolean" ? raw.killOmpOnClose : defaults.killOmpOnClose,
     themeName: raw.themeName ?? defaults.themeName,
-    theme: raw.theme,
+    themeOverrides: sanitizeThemeOverrides(raw.themeOverrides),
     fontFamily: typeof raw.fontFamily === "string" ? raw.fontFamily : defaults.fontFamily,
     fontSize:
       typeof raw.fontSize === "number" && Number.isFinite(raw.fontSize)

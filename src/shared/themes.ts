@@ -1,3 +1,4 @@
+import type { ThemeOverrides } from "./theme";
 import { contrastRatio, ensureContrast, mixHex } from "./contrast";
 import type { ITheme } from "@xterm/xterm";
 
@@ -878,6 +879,12 @@ export const DEFAULT_THEME_NAME = "Vesper";
 export function getThemeByName(name?: string): ThemePreset {
   const found = THEME_PRESETS.find((t) => t.name.toLowerCase() === (name ?? "").toLowerCase());
   return found ?? THEME_PRESETS[0]!;
+}
+
+/** The preset with the user's color overrides for its name layered on top. */
+export function applyThemeOverrides(preset: ThemePreset, overrides?: ThemeOverrides): ThemePreset {
+  const own = overrides?.[preset.name];
+  return own ? { ...preset, ...own } : preset;
 }
 
 /**

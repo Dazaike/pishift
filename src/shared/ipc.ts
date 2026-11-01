@@ -393,7 +393,7 @@ export type CrashRecovery = {
 
 export type WindowBounds = { x: number; y: number; width: number; height: number };
 
-import type { ThemeSettings } from "./theme";
+import type { ThemeOverrides } from "./theme";
 import type { SettingsSectionId, UsageTrackerSettings } from "./usage-tracker";
 
 export type CustomModelConfig = {
@@ -432,7 +432,8 @@ export type PersistedState = {
   /** Kill leftover omp.exe processes (and their workers) when PiShift closes. */
   killOmpOnClose?: boolean;
   themeName?: string;
-  theme?: Partial<ThemeSettings>;
+  /** User color overrides per theme name; reset by deleting the theme's entry. */
+  themeOverrides?: ThemeOverrides;
   fontFamily?: string;
   /** Terminal zoom (xterm font size in px). */
   fontSize?: number;

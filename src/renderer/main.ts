@@ -50,7 +50,8 @@ import {
 } from "../shared/paste-attach";
 import { DEFAULT_PERSISTED_SETTINGS } from "../shared/defaults";
 import { CrashBanner } from "./crash-banner";
-import { toHighContrastPreset } from "../shared/themes";
+import { applyThemeOverrides, toHighContrastPreset } from "../shared/themes";
+import type { ThemeOverrides, ThemeSettings } from "../shared/theme";
 import { splitTabName, stripOmpTitleDecoration } from "../shared/tab-title";
 import { isToolDensity, type ToolDensity } from "../shared/tool-summary";
 import {
@@ -357,6 +358,7 @@ const bySession = new Map<string, Tab>();
 let active: Tab | null = null;
 let draggedTab: Tab | null = null;
 let currentPreset: ThemePreset = getThemeByName(startupAppearance.themeName ?? DEFAULT_PERSISTED_SETTINGS.themeName);
+let themeOverrides: ThemeOverrides = {};
 let favoriteModels: string[] = [...(DEFAULT_PERSISTED_SETTINGS.favoriteModels ?? ["gemini-3.7-flash", "claude-3-7-sonnet", "gpt-4o"])];
 let customModels: CustomModelConfig[] = [...(DEFAULT_PERSISTED_SETTINGS.customModels ?? [])];
 let installedModels: InstalledModel[] = [];
@@ -655,7 +657,24 @@ const activityTab = new ActivityTab();
 
 /** `currentPreset` holds the BASE preset (theme cards, persisted name); this is what actually paints. */
 function effectivePreset(): ThemePreset {
-  return highContrast ? toHighContrastPreset(currentPreset) : currentPreset;
+  const withOverrides = applyThemeOverrides(currentPreset, themeOverrides);
+  return highContrast ? toHighContrastPreset(withOverrides) : withOverrides;
+}
+
+function setThemeColor(key: keyof ThemeSettings, color: string): void {
+  themeOverrides = {
+    ...themeOverrides,
+    [currentPreset.name]: { ...themeOverrides[currentPreset.name], [key]: color },
+  };
+  applyTheme(currentPreset);
+  persist();
+}
+
+function resetThemeColors(): void {
+  const { [currentPreset.name]: _removed, ...rest } = themeOverrides;
+  themeOverrides = rest;
+  applyTheme(currentPreset);
+  persist();
 }
 
 function applyTheme(preset: ThemePreset): void {
@@ -1150,6 +1169,7 @@ function persist(): void {
     tabs: state,
     activeIndex: Math.max(active ? tabs.indexOf(active) : 0, 0),
     themeName: currentPreset.name,
+    themeOverrides,
     favoriteModels,
     customModels,
     showFavoritesOnly,
@@ -3729,6 +3749,9 @@ function openSettingsModal(): void {
   if (!settingsModal) {
     settingsModal = new SettingsModal({
       initialThemeName: currentPreset.name,
+      initialThemeOverrides: themeOverrides,
+      onThemeColorChange: setThemeColor,
+      onResetThemeColors: resetThemeColors,
       showUsageInHeader,
       initialFontFamily: customFontFamily,
       initialActivityColors: activityColors,
@@ -3941,6 +3964,7 @@ function openSettingsModal(): void {
   }
   settingsModal.syncState({
     themeName: currentPreset.name,
+    themeOverrides,
     showUsageInHeader,
     fontFamily: customFontFamily,
     activityColors,
@@ -4282,6 +4306,7 @@ async function boot(): Promise<void> {
   const state = await api.loadState();
   if (api.canElevate) appElevated = await api.isAppElevated();
   if (typeof state.highContrast === "boolean") highContrast = state.highContrast;
+  themeOverrides = state.themeOverrides ?? {};
   if (state.themeName || highContrast) {
     applyTheme(state.themeName ? getThemeByName(state.themeName) : currentPreset);
   }
