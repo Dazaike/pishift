@@ -3,6 +3,14 @@
 All notable changes to PiShift are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [v2.0.14] - 2026-11-01
+
+### Added
+- **Theme color customization.** Settings → Appearance / Themes has a "Customize colors" block with pickers for background, raised surface, tab, border, text, dim text, accent, cursor, and selection. Edits apply live to the interface and terminal, are stored per theme, persist across restarts (including the first paint), and travel with Export/Import Settings. **Reset colors** restores the active theme's original colors.
+
+### Changed
+- The unused `theme` field in persisted state is replaced by `themeOverrides`.
+
 ## [v2.0.13] - 2026-10-24
 
 ### Added

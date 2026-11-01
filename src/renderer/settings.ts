@@ -28,6 +28,8 @@ import {
   THEME_PRESETS,
   type ThemePreset,
 } from "./theme";
+import { applyThemeOverrides } from "../shared/themes";
+import { THEME_COLOR_FIELDS, type ThemeOverrides, type ThemeSettings } from "../shared/theme";
 import {
   clampScrollSteps,
   DEFAULT_SCROLL_STEPS,
@@ -101,6 +103,7 @@ export class SettingsModal {
   readonly el: HTMLDivElement;
   private closeTimer: number | null = null;
   private currentPreset: ThemePreset;
+  private themeOverrides: ThemeOverrides;
   private showUsageInHeader: boolean;
   private fontFamily: string;
   private activityColors: Record<GlowActivity, string>;
@@ -139,6 +142,8 @@ export class SettingsModal {
   private onActivityColorChange: (key: GlowActivity, color: string) => void;
   private onResetActivityColors: () => void;
   private onToggleActivityColorsOnTabs: (enabled: boolean) => void;
+  private onThemeColorChange: (key: keyof ThemeSettings, color: string) => void;
+  private onResetThemeColors: () => void;
   private onToggleHideTopButtonLabels: (hide: boolean) => void;
   private onToggleHideBottomButtonLabels: (hide: boolean) => void;
   private onToggleCollapseTopBarToMenu: (collapse: boolean) => void;
@@ -185,6 +190,9 @@ export class SettingsModal {
 
   constructor(opts: {
     initialThemeName: string | undefined;
+    initialThemeOverrides: ThemeOverrides | undefined;
+    onThemeColorChange: (key: keyof ThemeSettings, color: string) => void;
+    onResetThemeColors: () => void;
     showUsageInHeader: boolean | undefined;
     initialFontFamily: string | undefined;
     initialActivityColors: Partial<Record<GlowActivity, string>> | undefined;
@@ -263,6 +271,7 @@ export class SettingsModal {
     onRefreshUsage: () => Promise<void>;
   }) {
     this.currentPreset = getThemeByName(opts.initialThemeName ?? DEFAULT_THEME_NAME);
+    this.themeOverrides = opts.initialThemeOverrides ?? {};
     this.showUsageInHeader = opts.showUsageInHeader ?? true;
     this.fontFamily = opts.initialFontFamily ?? "";
     this.activityColors = { ...DEFAULT_ACTIVITY_COLORS, ...opts.initialActivityColors };
@@ -301,6 +310,8 @@ export class SettingsModal {
     this.onActivityColorChange = opts.onActivityColorChange;
     this.onResetActivityColors = opts.onResetActivityColors;
     this.onToggleActivityColorsOnTabs = opts.onToggleActivityColorsOnTabs;
+    this.onThemeColorChange = opts.onThemeColorChange;
+    this.onResetThemeColors = opts.onResetThemeColors;
     this.onToggleHideTopButtonLabels = opts.onToggleHideTopButtonLabels;
     this.onToggleHideBottomButtonLabels = opts.onToggleHideBottomButtonLabels;
     this.onToggleCollapseTopBarToMenu = opts.onToggleCollapseTopBarToMenu;
@@ -398,6 +409,7 @@ export class SettingsModal {
 
   syncState(state: {
     themeName?: string;
+    themeOverrides?: ThemeOverrides;
     showUsageInHeader?: boolean;
     fontFamily?: string;
     activityColors?: Partial<Record<GlowActivity, string>>;
@@ -434,6 +446,9 @@ export class SettingsModal {
     settingsSectionCollapsed?: Partial<Record<SettingsSectionId, boolean>>;
     thinkingControlStyle?: ThinkingControlStyle;
   }): void {
+    if (state.themeOverrides) {
+      this.themeOverrides = state.themeOverrides;
+    }
     if (state.themeName) {
       this.currentPreset = getThemeByName(state.themeName);
     }
@@ -796,7 +811,8 @@ export class SettingsModal {
     const themeList = document.createElement("div");
     themeList.className = "theme-list";
 
-    for (const preset of THEME_PRESETS) {
+    for (const basePreset of THEME_PRESETS) {
+      const preset = applyThemeOverrides(basePreset, this.themeOverrides);
       const isSelected = preset.name === this.currentPreset.name;
       const card = document.createElement("div");
       card.className = isSelected ? "theme-card active" : "theme-card";
@@ -860,8 +876,8 @@ export class SettingsModal {
       card.append(headerRow, preview);
 
       const pick = (): void => {
-        this.currentPreset = preset;
-        this.onSelectCallback(preset);
+        this.currentPreset = basePreset;
+        this.onSelectCallback(basePreset);
         this.render();
         const active = this.el.querySelector<HTMLElement>(".theme-card.active");
         if (active) {
@@ -936,7 +952,7 @@ export class SettingsModal {
     highContrastLabel.append(highContrastCheck, highContrastText);
 
     this.markSection(themeSection, "appearance");
-    this.appendSectionBody(themeSection, highContrastLabel, themeList, fontSection);
+    this.appendSectionBody(themeSection, highContrastLabel, themeList, this.renderThemeColors(), fontSection);
 
     // Section 3: Composer Glow Colors
     const activitySection = this.renderActivityColors();
@@ -1772,6 +1788,60 @@ export class SettingsModal {
     this.markSection(section, "composer");
     this.appendSectionBody(section, grid, tabsToggle);
     return section;
+  }
+
+  private renderThemeColors(): HTMLElement {
+    const wrap = document.createElement("div");
+    wrap.className = "settings-theme-colors";
+
+    const head = document.createElement("div");
+    head.className = "settings-theme-colors-head";
+    const title = document.createElement("span");
+    title.className = "settings-font-label";
+    title.textContent = `Customize colors \u2014 ${this.currentPreset.name}`;
+    const resetBtn = document.createElement("button");
+    resetBtn.type = "button";
+    resetBtn.className = "settings-activity-reset";
+    resetBtn.textContent = "Reset colors";
+    resetBtn.title = "Restore this theme's original colors";
+    resetBtn.disabled = !this.themeOverrides[this.currentPreset.name];
+    resetBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const { [this.currentPreset.name]: _removed, ...rest } = this.themeOverrides;
+      this.themeOverrides = rest;
+      this.onResetThemeColors();
+      this.render();
+    });
+    head.append(title, resetBtn);
+
+    const shown = applyThemeOverrides(this.currentPreset, this.themeOverrides);
+    const grid = document.createElement("div");
+    grid.className = "settings-activity-grid";
+    for (const { key, label } of THEME_COLOR_FIELDS) {
+      const row = document.createElement("label");
+      row.className = "settings-activity-row";
+      const swatch = document.createElement("input");
+      swatch.type = "color";
+      swatch.className = "settings-activity-swatch";
+      // Color inputs only take #rrggbb; presets may carry an alpha suffix.
+      swatch.value = shown[key].slice(0, 7);
+      swatch.addEventListener("input", () => {
+        const name = this.currentPreset.name;
+        this.themeOverrides = {
+          ...this.themeOverrides,
+          [name]: { ...this.themeOverrides[name], [key]: swatch.value },
+        };
+        resetBtn.disabled = false;
+        this.onThemeColorChange(key, swatch.value);
+      });
+      const text = document.createElement("span");
+      text.textContent = label;
+      row.append(swatch, text);
+      grid.appendChild(row);
+    }
+
+    wrap.append(head, grid);
+    return wrap;
   }
 
   private renderBackupSection(): HTMLElement {

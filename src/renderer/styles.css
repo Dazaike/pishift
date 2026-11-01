@@ -5416,6 +5416,25 @@ body.hide-bottom-button-labels #dock-action-group {
   border-color: var(--accent);
 }
 
+.settings-activity-reset:disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.settings-theme-colors {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 14px 0;
+}
+
+.settings-theme-colors-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .settings-activity-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

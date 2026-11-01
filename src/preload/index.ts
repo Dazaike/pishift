@@ -26,7 +26,7 @@ import {
   type TranscriptSnapshot,
 } from "../shared/ipc";
 import type { SlashCommand } from "../shared/slash-commands";
-import { getThemeByName, toHighContrastPreset } from "../shared/themes";
+import { applyThemeOverrides, getThemeByName, toHighContrastPreset } from "../shared/themes";
 
 // Preload runs before the HTML root exists, so touching
 // `document.documentElement` here silently failed and left the default theme
@@ -37,7 +37,10 @@ try {
   const prefix = "--pishift-theme=";
   const arg = process.argv.find((candidate) => candidate.startsWith(prefix));
   if (arg) {
-    const base = getThemeByName(decodeURIComponent(arg.slice(prefix.length)));
+    const overridesArg = process.argv.find((candidate) => candidate.startsWith("--pishift-theme-overrides="));
+    const own = overridesArg ? JSON.parse(decodeURIComponent(overridesArg.slice("--pishift-theme-overrides=".length))) : {};
+    const named = getThemeByName(decodeURIComponent(arg.slice(prefix.length)));
+    const base = applyThemeOverrides(named, { [named.name]: own });
     const preset = process.argv.includes("--pishift-high-contrast=1") ? toHighContrastPreset(base) : base;
     void webFrame.insertCSS(
       `:root:root {

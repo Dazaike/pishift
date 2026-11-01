@@ -41,7 +41,7 @@ import { checkOmpUpdate, performOmpUpdate } from "./omp-updater";
 import { PtyManager } from "./pty-manager";
 import { SessionLock } from "./session-lock";
 import { StateStore } from "./state-store";
-import { getThemeByName } from "../shared/themes";
+import { applyThemeOverrides, getThemeByName } from "../shared/themes";
 import { ControlBridgeListener } from "./control-bridge-listener";
 import { ElevationCancelledError, cancelPendingElevations, isProcessElevated } from "./elevation";
 import { runPtyHost } from "./pty-host";
@@ -81,7 +81,7 @@ function send(
 function createWindow(): BrowserWindow {
   const state = store.get();
   const { bounds, themeName } = state;
-  const theme = getThemeByName(themeName);
+  const theme = applyThemeOverrides(getThemeByName(themeName), state.themeOverrides);
   const window = new BrowserWindow({
     title: "PiShift",
     width: bounds?.width ?? 1180,
@@ -106,6 +106,7 @@ function createWindow(): BrowserWindow {
       // visible frame already matches the user's saved chrome/layout settings.
       additionalArguments: [
         `--pishift-theme=${encodeURIComponent(theme.name)}`,
+        `--pishift-theme-overrides=${encodeURIComponent(JSON.stringify(state.themeOverrides?.[theme.name] ?? {}))}`,
         `--pishift-version=${encodeURIComponent(app.getVersion())}`,
         `--pishift-hide-top-labels=${state.hideTopButtonLabels ? "1" : "0"}`,
         `--pishift-hide-bottom-labels=${state.hideBottomButtonLabels ? "1" : "0"}`,
