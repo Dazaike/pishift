@@ -3,6 +3,10 @@
 All notable changes to PiShift are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [v2.0.15] - 2026-11-26
+
+Version-only release. No application changes since v2.0.14.
+
 ## [v2.0.14] - 2026-11-01
 
 ### Added

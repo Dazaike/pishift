@@ -54,6 +54,8 @@ Get the latest build from **[GitHub Releases](https://github.com/Dazaike/pishift
 
 > PiShift is a desktop interface for **Oh My Pi**. See the [Oh My Pi project](https://github.com/can1357/oh-my-pi) for information about the underlying CLI. Release filenames and version numbers may change, so use the latest release page rather than an old filename copied from this README.
 
+See the [changelog](CHANGELOG.md) for release notes.
+
 ## Screenshots
 
 ### Two ways to work
