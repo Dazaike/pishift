@@ -21,6 +21,8 @@ app.commandLine.appendSwitch("disable-features", "FluentScrollbar,OverlayScrollb
 
 import {
   CH,
+  OMP_SESSION_ID,
+  type DetachTabRequest,
   type ExportSettingsResult,
   type ImagePreview,
   type ImportSettingsResult,
@@ -32,6 +34,7 @@ import {
   type PtyStallCleared,
   type SpawnRequest,
   type SpawnResult,
+  type TabState,
 } from "../shared/ipc";
 import { isSafeExternalUrl } from "../shared/url";
 import { loadInstalledModels, loadRecentChats, loadRecentFolders, loadSessionMessages, queryOmpUsage } from "./omp-data";
@@ -65,29 +68,83 @@ export function getDefaultCwd(): string {
   }
   return app.getPath("temp");
 }
-let win: BrowserWindow | null = null;
+const windows = new Set<BrowserWindow>();
+/** The window whose tabs and bounds are persisted. If it closes first, a surviving window takes over the bounds. */
+let primaryWindow: BrowserWindow | null = null;
+let lastFocusedWindow: BrowserWindow | null = null;
 let store: StateStore;
 let lock: SessionLock;
 let ptys: PtyManager;
 let bridgeListener: ControlBridgeListener | null = null;
 let transcripts: TranscriptWatcher | null = null;
+/** pty session id -> `webContents.id` of the window whose renderer spawned it; that window alone receives its output. */
+const sessionOwner = new Map<string, number>();
+
+function windowByContentsId(id: number): BrowserWindow | null {
+  for (const window of windows) {
+    if (!window.isDestroyed() && window.webContents.id === id) return window;
+  }
+  return null;
+}
+
 function send(
   channel: string,
   payload: PtyData | PtyExit | PtyStall | PtyStallCleared,
 ): void {
-  if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
+  const owner = sessionOwner.get(payload.id);
+  if (owner === undefined) return;
+  windowByContentsId(owner)?.webContents.send(channel, payload);
+  if (channel === CH.ptyExit) sessionOwner.delete(payload.id);
 }
 
-function createWindow(): BrowserWindow {
+/** Bridge and transcript updates are keyed by session; each renderer ignores sessions it does not host. */
+function broadcast(channel: string, payload: unknown): void {
+  for (const window of windows) {
+    if (!window.isDestroyed()) window.webContents.send(channel, payload);
+  }
+}
+
+/** Kills only the PTYs spawned by one window (its renderer crashed or it closed). */
+function killOwnedSessions(contentsId: number): void {
+  const ids: string[] = [];
+  for (const [id, owner] of sessionOwner) {
+    if (owner === contentsId) ids.push(id);
+  }
+  for (const id of ids) sessionOwner.delete(id);
+  ptys.killSessions(ids);
+}
+
+function sanitizeTabState(raw: unknown): TabState | null {
+  if (!raw || typeof raw !== "object") return null;
+  const tab = raw as Partial<TabState>;
+  if (typeof tab.cwd !== "string" || !tab.cwd) return null;
+  return {
+    cwd: tab.cwd,
+    customTitle: typeof tab.customTitle === "string" ? tab.customTitle : undefined,
+    colorTag: typeof tab.colorTag === "string" ? tab.colorTag : undefined,
+    ompSessionId:
+      typeof tab.ompSessionId === "string" && OMP_SESSION_ID.test(tab.ompSessionId) ? tab.ompSessionId : undefined,
+    viewMode: tab.viewMode === "chat" || tab.viewMode === "terminal" ? tab.viewMode : undefined,
+  };
+}
+
+/**
+ * `adopt` makes a secondary window that opens exactly that tab (tab tear-off), at the drop point
+ * with the primary window's current size. Without it this is the primary window.
+ */
+function createWindow(opts: { adopt?: TabState; x?: number; y?: number } = {}): BrowserWindow {
   const state = store.get();
   const { bounds, themeName } = state;
   const theme = applyThemeOverrides(getThemeByName(themeName), state.themeOverrides);
+  const secondary = opts.adopt !== undefined;
+  const size =
+    secondary && primaryWindow && !primaryWindow.isDestroyed() ? primaryWindow.getNormalBounds() : bounds;
   const window = new BrowserWindow({
     title: "PiShift",
-    width: bounds?.width ?? 1180,
-    height: bounds?.height ?? 760,
-    x: bounds?.x,
-    y: bounds?.y,
+    width: size?.width ?? 1180,
+    height: size?.height ?? 760,
+    x: secondary ? opts.x : bounds?.x,
+    y: secondary ? opts.y : bounds?.y,
     minWidth: 620,
     minHeight: 380,
     show: false,
@@ -114,6 +171,10 @@ function createWindow(): BrowserWindow {
         `--pishift-show-header-usage=${state.showUsageInHeader ? "1" : "0"}`,
         `--pishift-tab-previews=${state.tabPreviews === false ? "0" : "1"}`,
         `--pishift-high-contrast=${state.highContrast ? "1" : "0"}`,
+        `--pishift-window=${secondary ? "secondary" : "primary"}`,
+        ...(opts.adopt
+          ? [`--pishift-adopt=${encodeURIComponent(Buffer.from(JSON.stringify(opts.adopt)).toString("base64url"))}`]
+          : []),
       ],
     },
   });
@@ -131,7 +192,8 @@ function createWindow(): BrowserWindow {
   window.on("unmaximize", emitMaximized);
 
   const persistBounds = (): void => {
-    if (!window.isDestroyed() && !window.isMinimized() && !window.isFullScreen()) {
+    // A torn-off window must not overwrite the saved bounds with its own.
+    if (window === primaryWindow && !window.isDestroyed() && !window.isMinimized() && !window.isFullScreen()) {
       store.patch({ bounds: window.getNormalBounds() });
     }
   };
@@ -140,6 +202,18 @@ function createWindow(): BrowserWindow {
   window.on("close", () => {
     persistBounds();
     store.flush();
+  });
+  // `webContents.id` is unreadable once the window is destroyed, so capture it for `closed`.
+  const contentsId = window.webContents.id;
+  window.on("focus", () => {
+    lastFocusedWindow = window;
+  });
+  window.on("closed", () => {
+    windows.delete(window);
+    if (lastFocusedWindow === window) lastFocusedWindow = null;
+    if (primaryWindow === window) primaryWindow = windows.values().next().value ?? null;
+    // The renderer's own unload normally kills its PTYs; this covers a window that died without it.
+    killOwnedSessions(contentsId);
   });
   // Windows logoff/shutdown ends the session without emitting `before-quit`.
   window.on("session-end", () => {
@@ -151,7 +225,7 @@ function createWindow(): BrowserWindow {
   window.webContents.on("render-process-gone", (_e, details) => {
     if (details.reason === "clean-exit") return;
     store.markCrashed("renderer-gone");
-    ptys.killAll(); // the renderer that owned every PTY id is gone
+    killOwnedSessions(contentsId); // only this window's PTYs: other windows keep theirs
     const now = Date.now();
     if (window.isDestroyed() || now - lastCrashReload < 10_000) return; // never reload-loop
     lastCrashReload = now;
@@ -185,18 +259,35 @@ function createWindow(): BrowserWindow {
     void window.loadFile(join(__dirname, "../renderer/index.html"));
   }
 
+  windows.add(window);
+  if (!secondary) primaryWindow = window;
   return window;
 }
 
+/** The window that sent an IPC message; per-window requests (dialogs, caption buttons) must not hit another window. */
+function senderWindow(e: { sender: Electron.WebContents }): BrowserWindow | null {
+  const window = BrowserWindow.fromWebContents(e.sender);
+  return window && !window.isDestroyed() ? window : null;
+}
+
 function registerIpc(): void {
-  ipcMain.handle(CH.ptySpawn, async (_e, req: SpawnRequest): Promise<SpawnResult> => {
+  ipcMain.handle(CH.ptySpawn, async (e, req: SpawnRequest): Promise<SpawnResult> => {
+    const owner = e.sender.id;
     try {
       const appElevated = await isProcessElevated();
       // An already-elevated app needs no helper: every session it spawns inherits its token.
       if (req.elevated === true && !appElevated) {
-        return { ...(await ptys.spawnElevated(req)), elevated: true };
+        const spawned = await ptys.spawnElevated(req);
+        if (!windowByContentsId(owner)) {
+          ptys.kill(spawned.id); // the window closed while the UAC prompt was up
+          return { error: "The window that requested this session was closed." };
+        }
+        sessionOwner.set(spawned.id, owner);
+        return { ...spawned, elevated: true };
       }
-      return { ...ptys.spawn(req), elevated: appElevated };
+      const spawned = ptys.spawn(req);
+      sessionOwner.set(spawned.id, owner);
+      return { ...spawned, elevated: appElevated };
     } catch (err) {
       if (err instanceof ElevationCancelledError) return { error: err.message, elevationCancelled: true };
       return { error: err instanceof Error ? err.message : String(err) };
@@ -212,23 +303,25 @@ function registerIpc(): void {
   ipcMain.on(CH.ptyResumeFlow, (_e, id: string) => ptys.resumeFlow(id));
   ipcMain.on(CH.ptyKill, (_e, id: string) => ptys.kill(id));
 
-  ipcMain.handle(CH.pickDirectory, async (): Promise<string | null> => {
+  ipcMain.handle(CH.pickDirectory, async (e): Promise<string | null> => {
     const options = {
       properties: ["openDirectory" as const, "createDirectory" as const],
       title: "Choose a workspace folder",
     };
+    const win = senderWindow(e);
     const result = win
       ? await dialog.showOpenDialog(win, options)
       : await dialog.showOpenDialog(options);
     return result.canceled ? (null) : (result.filePaths[0] ?? null);
   });
 
-  ipcMain.handle(CH.exportSettings, async (): Promise<ExportSettingsResult> => {
+  ipcMain.handle(CH.exportSettings, async (e): Promise<ExportSettingsResult> => {
     const options = {
       title: "Export PiShift Settings",
       defaultPath: "pishift-settings.json",
       filters: [{ name: "JSON", extensions: ["json"] }],
     };
+    const win = senderWindow(e);
     const result = win
       ? await dialog.showSaveDialog(win, options)
       : await dialog.showSaveDialog(options);
@@ -243,12 +336,13 @@ function registerIpc(): void {
     return { canceled: false, path: result.filePath };
   });
 
-  ipcMain.handle(CH.importSettings, async (): Promise<ImportSettingsResult> => {
+  ipcMain.handle(CH.importSettings, async (e): Promise<ImportSettingsResult> => {
     const options = {
       title: "Import PiShift Settings",
       properties: ["openFile" as const],
       filters: [{ name: "JSON", extensions: ["json"] }],
     };
+    const win = senderWindow(e);
     const result = win
       ? await dialog.showOpenDialog(win, options)
       : await dialog.showOpenDialog(options);
@@ -328,7 +422,28 @@ function registerIpc(): void {
 
   ipcMain.handle(CH.readClipboardText, () => clipboard.readText());
   ipcMain.handle(CH.loadState, (): PersistedState => store.get());
-  ipcMain.on(CH.saveState, (_e, next: Partial<PersistedState>) => store.patch(next));
+  ipcMain.on(CH.saveState, (e, next: Partial<PersistedState>) => {
+    // Only the primary window owns the tab list and window bounds; a torn-off window's tabs are ephemeral.
+    if (senderWindow(e) === primaryWindow) {
+      store.patch(next);
+      return;
+    }
+    const settings = { ...next };
+    delete settings.tabs;
+    delete settings.activeIndex;
+    delete settings.bounds;
+    store.patch(settings);
+  });
+  // Respawn-based tab tear-off: the new window starts its own omp resuming the tab's chat, so the
+  // caller closes the source tab once this resolves true.
+  ipcMain.handle(CH.detachTab, (_e, req: DetachTabRequest): boolean => {
+    const adopt = sanitizeTabState(req);
+    if (!adopt) return false;
+    const coordinate = (value: unknown): number | undefined =>
+      typeof value === "number" && Number.isFinite(value) ? Math.round(value) : undefined;
+    createWindow({ adopt, x: coordinate(req.x), y: coordinate(req.y) });
+    return true;
+  });
   ipcMain.on(CH.dismissCrashRecovery, () => store.dismissCrashRecovery());
   ipcMain.handle(CH.homeDir, () => app.getPath("home"));
   ipcMain.handle(CH.defaultCwd, () => getDefaultCwd());
@@ -368,8 +483,9 @@ function registerIpc(): void {
   });
   ipcMain.on(
     CH.setChromeColors,
-    (_e, colors: { background: string; symbol: string }) => {
-      if (!win || win.isDestroyed()) return;
+    (e, colors: { background: string; symbol: string }) => {
+      const win = senderWindow(e);
+      if (!win) return;
       const background = colors?.background || DEFAULT_CHROME_BG;
       try {
         // Caption buttons are custom HTML now; only keep the window shell color in sync.
@@ -380,26 +496,23 @@ function registerIpc(): void {
     },
   );
 
-  ipcMain.on(CH.windowMinimize, () => {
-    if (!win || win.isDestroyed()) return;
-    win.minimize();
+  ipcMain.on(CH.windowMinimize, (e) => {
+    senderWindow(e)?.minimize();
   });
-  ipcMain.on(CH.windowMaximizeToggle, () => {
-    if (!win || win.isDestroyed()) return;
+  ipcMain.on(CH.windowMaximizeToggle, (e) => {
+    const win = senderWindow(e);
+    if (!win) return;
     if (win.isMaximized()) win.unmaximize();
     else win.maximize();
   });
-  ipcMain.on(CH.windowClose, () => {
-    if (!win || win.isDestroyed()) return;
-    win.close();
+  ipcMain.on(CH.windowClose, (e) => {
+    senderWindow(e)?.close();
   });
-  ipcMain.handle(CH.windowIsMaximized, () => {
-    if (!win || win.isDestroyed()) return false;
-    return win.isMaximized();
-  });
+  ipcMain.handle(CH.windowIsMaximized, (e) => senderWindow(e)?.isMaximized() ?? false);
 
-  ipcMain.on(CH.setTaskbarBusy, (_e, busy: boolean) => {
-    if (!win || win.isDestroyed()) return;
+  ipcMain.on(CH.setTaskbarBusy, (e, busy: boolean) => {
+    const win = senderWindow(e);
+    if (!win) return;
     try {
       // progress > 1 -> indeterminate marquee; < 0 -> remove the bar entirely.
       win.setProgressBar(busy ? 2 : -1, { mode: busy ? "indeterminate" : "none" });
@@ -457,26 +570,24 @@ async function ensureControlBridgeInstalled(): Promise<void> {
   try {
     const extDir = join(app.getPath("home"), ".omp", "agent", "extensions");
     const targetFile = join(extDir, "control-bridge.ts");
-    const candidates = [
-      join(app.getAppPath(), "extensions", "control-bridge.ts"),
-      join(__dirname, "../../extensions/control-bridge.ts"),
-      join(process.resourcesPath, "extensions", "control-bridge.ts"),
-      join(process.resourcesPath, "app.asar.unpacked", "extensions", "control-bridge.ts"),
+    const roots = [
+      join(app.getAppPath(), "extensions"),
+      join(__dirname, "../../extensions"),
+      join(process.resourcesPath, "extensions"),
+      join(process.resourcesPath, "app.asar.unpacked", "extensions"),
     ];
-    let sourcePath: string | null = null;
-    for (const c of candidates) {
-      try {
-        if (existsSync(c)) {
-          sourcePath = c;
-          break;
-        }
-      } catch {}
-    }
-    if (sourcePath) {
-      await mkdir(extDir, { recursive: true });
-      const content = await readFile(sourcePath, "utf-8");
-      await writeFile(targetFile, content, "utf-8");
-    }
+    const companion = join("lib", "usage-guard.ts");
+    const root = roots.find((candidate) =>
+      existsSync(join(candidate, "control-bridge.ts")) && existsSync(join(candidate, companion)),
+    );
+    if (!root) throw new Error("Incomplete control-bridge extension bundle");
+    const [guard, bridge] = await Promise.all([
+      readFile(join(root, companion), "utf-8"),
+      readFile(join(root, "control-bridge.ts"), "utf-8"),
+    ]);
+    await mkdir(join(extDir, "lib"), { recursive: true });
+    await writeFile(join(extDir, companion), guard, "utf-8");
+    await writeFile(targetFile, bridge, "utf-8");
   } catch (err) {
     console.error("Failed to ensure control-bridge extension is installed:", err);
   }
@@ -494,9 +605,13 @@ if (ptyHostMode) {
 } else {
   if (!isDev) {
     app.on("second-instance", () => {
-      if (!win) return;
-      if (win.isMinimized()) win.restore();
-      win.focus();
+      const target =
+        lastFocusedWindow && !lastFocusedWindow.isDestroyed()
+          ? lastFocusedWindow
+          : (primaryWindow ?? windows.values().next().value);
+      if (!target || target.isDestroyed()) return;
+      if (target.isMinimized()) target.restore();
+      target.focus();
     });
   }
 
@@ -514,16 +629,14 @@ if (ptyHostMode) {
       () => store.get().killOmpOnClose !== false,
     );
     bridgeListener = new ControlBridgeListener((channel, payload) => {
-      if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
+      broadcast(channel, payload);
     });
-    transcripts = new TranscriptWatcher((snapshot) => {
-      if (win && !win.isDestroyed()) win.webContents.send(CH.transcriptUpdate, snapshot);
-    });
+    transcripts = new TranscriptWatcher((snapshot) => broadcast(CH.transcriptUpdate, snapshot));
     registerIpc();
-    win = createWindow();
+    createWindow();
 
     app.on("activate", () => {
-      if (BrowserWindow.getAllWindows().length === 0) win = createWindow();
+      if (BrowserWindow.getAllWindows().length === 0) createWindow();
     });
   });
 

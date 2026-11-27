@@ -308,6 +308,10 @@ type Tab = {
   unseenDone: boolean;
   /** Pending settle timer for a finish; a re-busy inside the window cancels it. */
   doneTimer: number | null;
+  usagePauseId: string | null;
+  notifiedUsagePauses: Set<string>;
+  /** Consumed by the interrupted turn's idle transition, not by later short turns. */
+  suppressPausedCompletion: boolean;
   /** The live session runs as administrator, via its own UAC-elevated host or because the whole app does. */
   elevated: boolean;
   /** In-flight delivery of ask answers to omp's AskDialogComponent. */
@@ -1158,16 +1162,22 @@ function tabDisplayName(tab: Tab): string {
 }
 
 function persist(): void {
-  const state: TabState[] = tabs.map((tab) => ({
-    cwd: tab.cwd,
-    customTitle: tab.customTitle,
-    colorTag: tab.colorTag,
-    ompSessionId: tab.ompSessionId ?? undefined,
-    viewMode: tab.viewMode,
-  }));
+  // A torn-off window's tabs are ephemeral; only the primary window owns the saved tab list.
+  const tabList: Parameters<typeof api.saveState>[0] =
+    api.startup.windowKind === "secondary"
+      ? {}
+      : {
+          tabs: tabs.map((tab) => ({
+            cwd: tab.cwd,
+            customTitle: tab.customTitle,
+            colorTag: tab.colorTag,
+            ompSessionId: tab.ompSessionId ?? undefined,
+            viewMode: tab.viewMode,
+          })),
+          activeIndex: Math.max(active ? tabs.indexOf(active) : 0, 0),
+        };
   api.saveState({
-    tabs: state,
-    activeIndex: Math.max(active ? tabs.indexOf(active) : 0, 0),
+    ...tabList,
     themeName: currentPreset.name,
     themeOverrides,
     favoriteModels,
@@ -1391,8 +1401,9 @@ function syncTabBusy(tab: Tab): void {
     }
   } else if (finished) {
     // Cancels and exits also land on idle; only an unforced finish is "done".
-    if (tab.suppressDoneSound) {
+    if (tab.suppressDoneSound || tab.suppressPausedCompletion) {
       tab.suppressDoneSound = false;
+      tab.suppressPausedCompletion = false;
     } else {
       tab.doneTimer = window.setTimeout(() => {
         tab.doneTimer = null;
@@ -1985,6 +1996,51 @@ async function requestCloseTab(tab: Tab): Promise<void> {
   closeTab(tab);
 }
 
+/**
+ * Where a tab drag that nothing accepted should open its new window, or null when the tab was
+ * released over this window (or the drag was not a plain drop on nothing). `{}` means "outside, but
+ * the drop point is unknown": Chromium reports 0,0 on some platforms for drops outside every window.
+ */
+function tearOffPoint(ev: DragEvent): { x?: number; y?: number } | null {
+  if (ev.dataTransfer?.dropEffect !== "none") return null;
+  if (ev.screenX === 0 && ev.screenY === 0) return {};
+  const inside =
+    ev.screenX >= window.screenX &&
+    ev.screenX <= window.screenX + window.outerWidth &&
+    ev.screenY >= window.screenY &&
+    ev.screenY <= window.screenY + window.outerHeight;
+  return inside ? null : { x: ev.screenX - 120, y: ev.screenY - 20 };
+}
+
+/**
+ * Tab tear-off. The new window starts its own omp with `--resume`, so the chat survives but the
+ * terminal scrollback does not, and a running turn cannot move.
+ */
+async function detachTabToNewWindow(tab: Tab, point: { x?: number; y?: number } = {}): Promise<void> {
+  const refusal = isTabBusy(tab)
+    ? "This session is running. Stop it before moving it to a new window."
+    : !tab.ompSessionId
+      ? "This session has no saved conversation yet."
+      : null;
+  if (refusal) {
+    await confirmDialog.confirm("Can't move session", refusal, "OK");
+    return;
+  }
+  const opened = await api.detachTab({
+    cwd: tab.cwd,
+    customTitle: tab.customTitle,
+    colorTag: tab.colorTag,
+    ompSessionId: tab.ompSessionId ?? undefined,
+    viewMode: tab.viewMode,
+    ...point,
+  });
+  if (!opened || !tabs.includes(tab)) return;
+  if (splitMode && (tab === primaryTab || tab === secondaryTab)) {
+    exitSplit(tab === primaryTab ? secondaryTab : primaryTab);
+  }
+  closeTab(tab, false); // it lives on in the new window, so it is not a "reopen closed tab" candidate
+}
+
 async function requestCloseTabs(toClose: readonly Tab[]): Promise<void> {
   const busyCount = toClose.filter(isTabBusy).length;
   if (busyCount > 0) {
@@ -2020,6 +2076,8 @@ async function restartSession(tab: Tab, keepChat = false, elevated = tab.elevate
     tab.ompSessionId = null;
     tab.ompPid = null;
   }
+  tab.usagePauseId = null;
+  tab.suppressPausedCompletion = false;
   tab.ompSessionId = resumeId;
   tab.resumeOnStart = resumeId !== null;
   tab.elevated = elevated;
@@ -2586,6 +2644,9 @@ function makeTab(cwd: string, customTitle?: string, colorTag?: string, restore?:
     awaitingAsk: false,
     unseenDone: false,
     doneTimer: null,
+    usagePauseId: null,
+    notifiedUsagePauses: new Set(),
+    suppressPausedCompletion: false,
     elevated: false,
     askSend: null,
     askSendSeq: 0,
@@ -2664,6 +2725,9 @@ function makeTab(cwd: string, customTitle?: string, colorTag?: string, restore?:
       canElevate: api.canElevate && !appElevated,
       onToggleElevation: () => void setTabElevated(tab, !tab.elevated),
       onRestart: () => void restartTabSession(tab),
+      onMoveToNewWindow: (_t) => {
+        void detachTabToNewWindow(tab);
+      },
     });
   });
 
@@ -2676,13 +2740,15 @@ function makeTab(cwd: string, customTitle?: string, colorTag?: string, restore?:
     ev.dataTransfer?.setData(INTERNAL_DRAG_TYPE, "tab");
   });
 
-  button.addEventListener("dragend", () => {
+  button.addEventListener("dragend", (ev) => {
+    const tearOff = draggedTab === tab ? tearOffPoint(ev) : null;
     draggedTab = null;
     tabRail.setPinnedOpen(false);
     button.classList.remove("tab-dragging");
     for (const t of tabs) {
       t.button.classList.remove("drop-before", "drop-after");
     }
+    if (tearOff) void detachTabToNewWindow(tab, tearOff);
   });
 
   button.addEventListener("dragover", (ev) => {
@@ -3414,6 +3480,8 @@ function applyControlBridgeStatus(status: ControlBridgeState | null | undefined)
     // First discovery just names the session already on screen; a change from
     // one id to another is a real `/new` or `/resume` and must start clean.
     if (tab.ompSessionId !== null) tab.chat?.clearTranscript();
+    tab.usagePauseId = null;
+    tab.suppressPausedCompletion = false;
     tab.ompSessionId = ompId;
     persist();
     if (tab.planFile) loadPlanText(tab, tab.planFile);
@@ -3442,6 +3510,26 @@ function applyControlBridgeStatus(status: ControlBridgeState | null | undefined)
     tab.jobs = status.jobs ?? [];
     if (tab === active) todoPanel.setJobs(tab.jobs);
     return;
+  }
+
+  const pause = status.usagePause;
+  if (pause === null) {
+    tab.usagePauseId = null;
+  } else if (pause && typeof pause.id === "string" && /^[\w-]{1,120}$/.test(pause.id)
+    && typeof pause.message === "string" && !!pause.message.trim() && pause.message.length <= 500
+    && !/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(pause.message) && tab.usagePauseId !== pause.id) {
+    tab.usagePauseId = pause.id;
+    if (!tab.notifiedUsagePauses.has(pause.id)) {
+      tab.notifiedUsagePauses.add(pause.id);
+      if (tab.doneTimer !== null) {
+        window.clearTimeout(tab.doneTimer);
+        tab.doneTimer = null;
+      }
+      tab.suppressPausedCompletion = tab.busy
+        || (status.activity !== "idle" && KNOWN_ACTIVITIES.includes(status.activity));
+      if (tab === active && isTabInView(tab)) dock.showToast(pause.message, 8000);
+      else api.notify("Paused for low usage", `${tabDisplayName(tab)}: ${pause.message}`);
+    }
   }
 
   const activity: ControlBridgeActivity = KNOWN_ACTIVITIES.includes(status.activity)
@@ -3534,6 +3622,8 @@ api.onExit(({ id, exitCode }) => {
   tab.sessionKey = null;
   tab.ompSessionId = null;
   tab.ompPid = null;
+  tab.usagePauseId = null;
+  tab.suppressPausedCompletion = false;
   persist();
   tab.suppressDoneSound = true;
   setTabActivity(tab, "idle");
@@ -3714,6 +3804,10 @@ function openRecentChatsModal(): void {
           // Point the chat feed at the resumed transcript now. Waiting for the
           // control bridge to publish the id left chat mode blank whenever the
           // published id matched what the tab already had.
+          if (tab.ompSessionId !== sessionId) {
+            tab.usagePauseId = null;
+            tab.suppressPausedCompletion = false;
+          }
           tab.ompSessionId = sessionId;
           if (tab.viewMode === "chat") {
             ensureChatView(tab).setEmptyReason("loading");
@@ -4456,21 +4550,30 @@ async function boot(): Promise<void> {
     viewsEl.classList.add("split-rows");
   }
 
+  // A torn-off window shows exactly its adopted tab: no restored tab list, crash prompt or omp update check.
+  const adopted = api.startup.adopt;
   // After a crash, boot with one placeholder tab; the real tabs wait for the user's answer.
-  const recovery = state.crashRecovery;
-  const list: TabState[] = recovery
-    ? [{ cwd: await api.defaultCwd() }]
-    : state.tabs.length
-      ? state.tabs
-      : [{ cwd: (await api.pickDirectory()) ?? (await api.homeDir()) }];
-  for (const [index, entry] of list.entries()) {
-    const opened = await openTab(
-      entry.cwd,
-      index === Math.min(state.activeIndex, list.length - 1),
-      entry.customTitle,
-      entry.colorTag,
-    );
-    if (recovery) crashPlaceholder = opened;
+  const recovery = adopted ? undefined : state.crashRecovery;
+  if (adopted) {
+    await openTab(adopted.cwd, true, adopted.customTitle, adopted.colorTag, {
+      ompSessionId: adopted.ompSessionId ?? null,
+      viewMode: adopted.viewMode,
+    });
+  } else {
+    const list: TabState[] = recovery
+      ? [{ cwd: await api.defaultCwd() }]
+      : state.tabs.length
+        ? state.tabs
+        : [{ cwd: (await api.pickDirectory()) ?? (await api.homeDir()) }];
+    for (const [index, entry] of list.entries()) {
+      const opened = await openTab(
+        entry.cwd,
+        index === Math.min(state.activeIndex, list.length - 1),
+        entry.customTitle,
+        entry.colorTag,
+      );
+      if (recovery) crashPlaceholder = opened;
+    }
   }
   document.getElementById("boot-skeleton")?.remove();
   dock.focus();
@@ -4490,6 +4593,8 @@ async function boot(): Promise<void> {
       applyThinkingLevelsForModel(active.modelName, active.thinkingLevel);
     }
   } catch {}
+
+  if (adopted) return;
 
   // OMP Update Check on Startup
   if (autoUpdateOmpOnOpen) {

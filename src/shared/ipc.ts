@@ -79,6 +79,7 @@ export const CH = {
   getAppVersion: "app:get-version",
   exportSettings: "app:export-settings",
   importSettings: "app:import-settings",
+  detachTab: "app:detach-tab",
 } as const;
 
 export interface OmpUpdateCheckResult {
@@ -251,6 +252,8 @@ export interface ControlBridgeState {
    * missing value as "no information" rather than "off".
    */
   planMode?: PlanMode;
+  /** null clears a pause; absent on older bridges and on job-only updates. */
+  usagePause?: { id: string; message: string } | null;
   ask: PendingAsk | null;
   todo: TodoPhase[] | null;
   /** Absent when the running bridge predates job publishing. */
@@ -379,6 +382,12 @@ export type TabState = {
   ompSessionId?: string;
   viewMode?: ViewMode;
 };
+
+/** Opens `tab` in a new PiShift window at the given screen position (the drop point of a tab tear-off). */
+export type DetachTabRequest = TabState & { x?: number; y?: number };
+
+/** Which kind of window a renderer is, and the tab a secondary window was opened to show. */
+export type WindowStartup = { windowKind: "primary" | "secondary"; adopt: TabState | null };
 
 /** Why the previous run is considered to have ended uncleanly. */
 export type CrashReason = "unclean-exit" | "renderer-gone";

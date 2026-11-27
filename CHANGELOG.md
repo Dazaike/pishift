@@ -5,7 +5,9 @@ All notable changes to PiShift are documented here. Format follows
 
 ## [v2.0.15] - 2026-11-26
 
-Version-only release. No application changes since v2.0.14.
+### Added
+- **Low-quota pause and resume.** PiShift pauses substantial omp work when the current model's provider quota is low. Use `/usage-guard` to check, `/usage-resume` to continue after quota recovers, or `/usage-resume force` to bypass the guard once. Restart PiShift and its omp tabs to load the updated bridge. (`b09c6b8`)
+- **Move a tab to a new window.** Drag an idle tab outside the window or choose **Move to New Window** from its context menu. The new window resumes the saved omp conversation, but does not carry over terminal scrollback. Moved-out tabs are not restored on next launch. (`b09c6b8`)
 
 ## [v2.0.14] - 2026-11-01
 

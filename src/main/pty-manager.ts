@@ -307,17 +307,28 @@ export class PtyManager {
    * an abandoned ConPTY leaks an `OpenConsole.exe` per session.
    */
   killAll(): void {
+    this.reapAndKill([...this.sessions.keys()]);
+  }
+
+  /** Kill just these sessions (a window whose renderer died owns only some of them), with the same reaping as `killAll`. */
+  killSessions(requested: readonly string[]): void {
+    const ids = requested.filter((id) => this.sessions.has(id));
+    if (ids.length > 0) this.reapAndKill(ids);
+  }
+
+  private reapAndKill(ids: readonly string[]): void {
     const reap = this.reapOnClose();
     // Tree kill goes first: it needs the omp -> worker parent link, which `kill()` can sever.
-    if (reap) killProcessTrees(this.liveRootPids());
-    for (const id of [...this.sessions.keys()]) this.kill(id);
+    if (reap) killProcessTrees(this.liveRootPids(ids));
+    for (const id of ids) this.kill(id);
     if (reap) sweepOrphanOmpWorkers();
   }
 
-  private liveRootPids(): number[] {
+  private liveRootPids(ids: readonly string[]): number[] {
     const pids: number[] = [];
-    for (const session of this.sessions.values()) {
-      if (!session.pty.elevated && !session.exited && session.pty.pid > 0) pids.push(session.pty.pid);
+    for (const id of ids) {
+      const session = this.sessions.get(id);
+      if (session && !session.pty.elevated && !session.exited && session.pty.pid > 0) pids.push(session.pty.pid);
     }
     return pids;
   }

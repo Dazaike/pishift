@@ -5,6 +5,7 @@ import {
   CH,
   type ControlBridgeState,
   type ExportSettingsResult,
+  type DetachTabRequest,
   type GetJobActivityRequest,
   type ImagePreview,
   type ImportSettingsResult,
@@ -23,7 +24,9 @@ import {
   type SessionMessage,
   type SpawnRequest,
   type SpawnResult,
+  type TabState,
   type TranscriptSnapshot,
+  type WindowStartup,
 } from "../shared/ipc";
 import type { SlashCommand } from "../shared/slash-commands";
 import { applyThemeOverrides, getThemeByName, toHighContrastPreset } from "../shared/themes";
@@ -75,8 +78,30 @@ const startupAppearance = Object.freeze({
   tabPreviews: startupArg("tab-previews") !== "0",
 });
 
+/**
+ * Secondary windows are opened by a tab tear-off with the tab to show encoded in
+ * a launch argument (see `createWindow` in main). Anything malformed means a
+ * plain primary-style boot.
+ */
+function readStartup(): WindowStartup {
+  const raw = startupArg("adopt");
+  if (startupArg("window") !== "secondary" || !raw) return { windowKind: "primary", adopt: null };
+  try {
+    const parsed: unknown = JSON.parse(Buffer.from(raw, "base64url").toString("utf8"));
+    if (parsed && typeof parsed === "object" && typeof (parsed as TabState).cwd === "string") {
+      return { windowKind: "secondary", adopt: parsed as TabState };
+    }
+  } catch {
+    // Fall through to a primary boot.
+  }
+  return { windowKind: "primary", adopt: null };
+}
+
+const startup: WindowStartup = Object.freeze(readStartup());
+
 const api = {
   startupAppearance,
+  startup,
   appVersion: startupArg("version") ?? "1.9.25",
   getAppVersion: (): Promise<string> => ipcRenderer.invoke(CH.getAppVersion),
   spawn: (req: SpawnRequest): Promise<SpawnResult> => ipcRenderer.invoke(CH.ptySpawn, req),
@@ -145,6 +170,7 @@ const api = {
     ipcRenderer.invoke(CH.saveImageEdit, path, dataUrl),
   loadState: (): Promise<PersistedState> => ipcRenderer.invoke(CH.loadState),
   saveState: (next: Partial<PersistedState>): void => ipcRenderer.send(CH.saveState, next),
+  detachTab: (req: DetachTabRequest): Promise<boolean> => ipcRenderer.invoke(CH.detachTab, req),
   exportSettings: (): Promise<ExportSettingsResult> => ipcRenderer.invoke(CH.exportSettings),
   importSettings: (): Promise<ImportSettingsResult> => ipcRenderer.invoke(CH.importSettings),
   homeDir: (): Promise<string> => ipcRenderer.invoke(CH.homeDir),

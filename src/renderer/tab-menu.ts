@@ -27,6 +27,7 @@ export interface TabMenuCallbacks {
   onRename: (target: TabMenuTarget) => void;
   onSetColor: (target: TabMenuTarget, colorId?: string) => void;
   onSplit?: (target: TabMenuTarget) => void;
+  onMoveToNewWindow: (target: TabMenuTarget) => void;
   onClose: (target: TabMenuTarget) => void;
   onCloseOthers: (target: TabMenuTarget) => void;
   onCloseRight: (target: TabMenuTarget) => void;
@@ -138,6 +139,10 @@ export class TabContextMenu {
         <span class="menu-icon">&#x25EB;</span>
         <span>Split Screen (Dual View)</span>
       </div>
+      <div class="menu-item" data-action="new-window">
+        <span class="menu-icon">&#8599;</span>
+        <span>Move to New Window</span>
+      </div>
       <div class="menu-item" data-action="restart">
         <span class="menu-icon">&#8635;</span>
         <span>Restart Session</span>
@@ -196,6 +201,7 @@ export class TabContextMenu {
         else if (action === "duplicate") cb.onDuplicate(target);
         else if (action === "rename") cb.onRename(target);
         else if (action === "split") cb.onSplit?.(target);
+        else if (action === "new-window") cb.onMoveToNewWindow(target);
         else if (action === "elevate") cb.onToggleElevation(target);
         else if (action === "restart") cb.onRestart(target);
         else if (action === "close") cb.onClose(target);

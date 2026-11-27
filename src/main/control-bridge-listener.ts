@@ -36,6 +36,7 @@ export function controlBridgeFingerprint(state: ControlBridgeState): string {
     state.model ?? "",
     state.thinkingLevel ?? "",
     state.planMode ?? "",
+    state.usagePause === undefined ? "" : JSON.stringify(state.usagePause),
     state.ask?.toolCallId ?? "",
     state.todo ? JSON.stringify(state.todo) : "",
     state.jobs ? state.jobs.map((j) => `${j.id}:${j.status}`).join(",") : "",

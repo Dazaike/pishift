@@ -8,6 +8,7 @@ import * as dgram from "node:dgram";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { registerUsageGuard, type UsagePause } from "./lib/usage-guard";
 
 // ---8<--- activity-core (source of truth: src/shared/activity.ts) ---8<---
 /**
@@ -702,8 +703,10 @@ interface BridgeState {
   updateKind: BridgeUpdateKind;
   running: boolean;
   activity: AgentActivity;
+  model: string | null;
   thinkingLevel: string;
   planMode: PlanMode;
+  usagePause?: UsagePause | null;
   ask: PendingAsk | null;
   todo: TodoPhase[] | null;
   jobs: AsyncJob[];
@@ -813,7 +816,10 @@ function normalizeAskQuestions(raw: unknown): PendingAskQuestion[] {
 
 export default function controlBridge(pi: ExtensionAPI) {
   const sessionId = process.env.PISHIFT_SESSION_ID?.trim() || null;
-  if (!sessionId) return;
+  if (!sessionId) {
+    if (process.env.PISHIFT_USAGE_GUARD === "1") registerUsageGuard(pi);
+    return;
+  }
   const statusFile = join(STATUS_DIR, `${sessionId}.json`);
   const envPort = process.env.PISHIFT_CONTROL_BRIDGE_PORT?.trim();
   const udpPort =
@@ -842,6 +848,7 @@ export default function controlBridge(pi: ExtensionAPI) {
   const STALE_LIVE_MS = 3000;
   const CONTINUATION_GRACE_MS = 8_000;
   let planMode: PlanMode = "off";
+  let usagePause: UsagePause | null = null;
   let planLeafId: string | null = null;
   let publishedPlanMode: PlanMode | null = null;
   let pendingAsk: PendingAsk | null = null;
@@ -959,6 +966,7 @@ export default function controlBridge(pi: ExtensionAPI) {
         ? String(thinking)
         : "off",
       planMode: currentPlanMode,
+      ...(updateKind === "session" ? { usagePause } : {}),
       ask: pendingAsk,
       todo: todoState,
       jobs: jobSnapshots.read(() => readAvailableJobs(ctx)),
@@ -1015,6 +1023,11 @@ export default function controlBridge(pi: ExtensionAPI) {
       }
     }
   }
+
+  registerUsageGuard(pi, (ctx, pause) => {
+    usagePause = pause;
+    publish(ctx);
+  });
 
   /** Coalesced activity publish: never faster than 120 ms, never drops the last state. */
   const ACTIVITY_MIN_INTERVAL_MS = 120;

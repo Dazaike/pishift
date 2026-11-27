@@ -151,6 +151,8 @@ Pick a theme and adjust the interface, tabs, composer, and usage display.
 - **Live agent status:** track idle, working, and thinking states, active tool calls, model changes, and token usage.
 - **Background job monitor:** inspect runtime, reports, raw logs, and available thinking details; copy a finished report or stop a runaway job.
 - **Usage and provider quotas:** view model availability and provider limits, with optional gauges in the top bar.
+- **Low-usage pause:** omp pauses before substantial work at 10% remaining or less on one account, or below 5% combined across two accounts with equivalent quota windows for the current model. Larger pools use the same reserve (10% divided by account count). Short replies and read-only inspection still work. `/usage-guard` shows the quota and pause status; `/usage-resume` continues in the same conversation when quota is verified healthy, or `/usage-resume force` bypasses the guard for one run. Missing or stale account data is never counted as depleted.
+  Standalone omp can opt in with `PISHIFT_USAGE_GUARD=1` when loading `control-bridge.ts` alongside `lib/usage-guard.ts` in the same extension directory.
 - **Reorder usage cards:** in the usage popover, **Reorder** expands it and lets you drag providers and quota cards (for example 5 Hour vs Weekly) into your preferred order.
 - **Session history:** search recent chats and folders, reopen workspaces, and restore the earlier conversation in Chat View.
 - **Completion and recovery cues:** optional completion chime, a green dot and OS notification when a session finishes while you are looking elsewhere, activity indicators, elapsed time for long-running tools, and explicit Resume or Kill controls for stalled output.
@@ -173,6 +175,7 @@ Pick a theme and adjust the interface, tabs, composer, and usage display.
 - Right-click tabs to open the directory in File Explorer, copy its path, duplicate the tab in the same directory, assign a project color, rename it, close neighboring tabs, or reopen the last closed tab. Reopening restores the folder, exact omp chat, tab position, view mode, name and color; middle-click **New Session** does the same.
 - On Windows, **Restart as Administrator** in the tab menu elevates only that session, after a UAC prompt, and resumes the same chat; the app itself stays unelevated. An amber shield marks elevated tabs, and elevation is never restored automatically.
 - **Restart Session** in the tab menu restarts that tab's session on the same chat, keeping its current elevation, and is available on every platform.
+- **Move to New Window** resumes an idle tab's saved conversation in a separate window. You can also drag the tab outside its window. Terminal scrollback does not move with it.
 - Toggle split screen from the top bar, menu, tab context menu, or `Ctrl+\`. Drag the divider to resize; double-click it to return to an even split.
 - Use the top bar as a window drag surface while keeping its buttons interactive.
 - Switch recent chats and recent folders from searchable popovers. Tab titles and busy indicators follow the agent's reported state.
